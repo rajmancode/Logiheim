@@ -1,0 +1,21 @@
+{
+  "name": "first_project",
+  "world_size": [
+    2048,
+    2048
+  ],
+  "height_range": 300.0,
+  "sea_level": 0.0,
+  "heightmap": {
+    "file": "heightmap.png",
+    "format": "png",
+    "width": 1024,
+    "height": 1024
+  },
+  "masks": {
+    "water": "water.png",
+    "sand": "sand.png",
+    "rock": "rock.png"
+  },
+  "source": "Gaea 1.3.2.6, Documents/Gaea/Builds/FirstProject/001"
+}
