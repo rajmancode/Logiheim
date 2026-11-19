@@ -14,6 +14,8 @@ signal level_changed(level_index: int)
 var source: TerrainSource
 var levels: Array[HexLevel] = []
 var surfaces: Array[TerrainSurface] = []
+## River paths per level (Array of Array[RiverPath]), for gameplay and debugging.
+var river_paths: Array = []
 var active_level := -1
 var auto_lod := true
 ## World y of the sea surface.
@@ -26,6 +28,8 @@ var _materials: Array[ShaderMaterial] = []
 var _base_material: ShaderMaterial
 var _water: MeshInstance3D
 var _water_material: ShaderMaterial
+var _wave_normal: NoiseTexture2D
+var _lake_materials: Array[ShaderMaterial] = []
 var _show_grid := true
 
 
@@ -52,6 +56,7 @@ func rebuild() -> void:
 	var t0 := Time.get_ticks_msec()
 	var gen := HexMapGenerator.new(source, settings)
 	levels = gen.build_levels()
+	var courses: Array = []
 	sea_y = gen.sea_y()
 	for level in levels:
 		var t1 := Time.get_ticks_msec()
@@ -62,14 +67,27 @@ func rebuild() -> void:
 		var noise := BorderNoise.new(level.hex_size, settings.border_noise)
 		var surface := TerrainSurface.new(level, source, settings, gen)
 		var paths: Array[RiverPath] = []
+		var hydro: Hydrology = null
 		if settings.rivers_enabled:
-			paths = RiverMeshBuilder.compute_paths(level, surface)
+			# Water flow on this level's own terrain (lakes, water levels); the river
+			# courses themselves come from the finest level so every level agrees.
+			hydro = Hydrology.from_surface(surface, 2 if level.level_index == 0 else 1, settings, source)
+			if level.level_index == 0:
+				courses = RiverMeshBuilder.courses(hydro, settings)
+			paths = RiverMeshBuilder.place(courses, level, surface, hydro, noise, settings, source)
+			surface.mark_lakes(hydro)
 			surface.carve(paths)
 		surface.finish_weights()
 		var mat := TerrainMaterial.for_level(_base_material, level, noise, sea_y)
 		mat.set_shader_parameter("show_grid", _show_grid)
 		TerrainMeshBuilder.build(surface, mat, root)
 		RiverMeshBuilder.build(paths, root)
+		var lake_mat := RiverMeshBuilder.lake_material(_get_wave_normal())
+		TerrainMaterial.set_grid(lake_mat, level, noise)
+		lake_mat.set_shader_parameter("show_grid", _show_grid)
+		_lake_materials.append(lake_mat)
+		if hydro != null:
+			RiverMeshBuilder.build_lakes(hydro, lake_mat, root)
 		Vegetation.build(level, surface, settings, root)
 		if level.level_index == 0 and settings.grass_enabled:
 			GrassField.build(surface, settings, root)
@@ -77,6 +95,7 @@ func rebuild() -> void:
 		_noises.append(noise)
 		_materials.append(mat)
 		surfaces.append(surface)
+		river_paths.append(paths)
 		print("HexMap: level %d (%.0f m hexes, %d x %d terrain) in %d ms" % [
 			level.level_index, level.hex_size, surface.nx, surface.nz, Time.get_ticks_msec() - t1])
 	_build_water()
@@ -93,7 +112,9 @@ func _clear() -> void:
 	_level_roots.clear()
 	_noises.clear()
 	_materials.clear()
+	_lake_materials.clear()
 	surfaces.clear()
+	river_paths.clear()
 	levels.clear()
 
 
@@ -101,19 +122,7 @@ func _build_water() -> void:
 	if _water == null:
 		_water_material = ShaderMaterial.new()
 		_water_material.shader = load("res://shaders/water.gdshader")
-		var noise := FastNoiseLite.new()
-		noise.noise_type = FastNoiseLite.TYPE_SIMPLEX_SMOOTH
-		noise.frequency = 0.02
-		noise.fractal_octaves = 4
-		var tex := NoiseTexture2D.new()
-		tex.width = 512
-		tex.height = 512
-		tex.seamless = true
-		tex.as_normal_map = true
-		tex.bump_strength = 6.0
-		tex.generate_mipmaps = true
-		tex.noise = noise
-		_water_material.set_shader_parameter("wave_normal", tex)
+		_water_material.set_shader_parameter("wave_normal", _get_wave_normal())
 		_water = MeshInstance3D.new()
 		_water.name = "Sea"
 		_water.material_override = _water_material
@@ -127,6 +136,23 @@ func _build_water() -> void:
 	_water.mesh = plane
 	_water.position = Vector3(size.x * 0.5, sea_y, size.y * 0.5)
 	_water_material.set_shader_parameter("show_grid", _show_grid)
+
+
+func _get_wave_normal() -> NoiseTexture2D:
+	if _wave_normal == null:
+		var noise := FastNoiseLite.new()
+		noise.noise_type = FastNoiseLite.TYPE_SIMPLEX_SMOOTH
+		noise.frequency = 0.02
+		noise.fractal_octaves = 4
+		_wave_normal = NoiseTexture2D.new()
+		_wave_normal.width = 512
+		_wave_normal.height = 512
+		_wave_normal.seamless = true
+		_wave_normal.as_normal_map = true
+		_wave_normal.bump_strength = 6.0
+		_wave_normal.generate_mipmaps = true
+		_wave_normal.noise = noise
+	return _wave_normal
 
 
 func current_level() -> HexLevel:
@@ -175,6 +201,8 @@ func set_highlight(kind: String, cell: int) -> void:
 	var param := kind + "_cell"
 	if active_level >= 0 and active_level < _materials.size():
 		_materials[active_level].set_shader_parameter(param, value)
+	if active_level >= 0 and active_level < _lake_materials.size():
+		_lake_materials[active_level].set_shader_parameter(param, value)
 	if _water_material != null:
 		_water_material.set_shader_parameter(param, value)
 
@@ -182,6 +210,8 @@ func set_highlight(kind: String, cell: int) -> void:
 func set_grid_visible(on: bool) -> void:
 	_show_grid = on
 	for m in _materials:
+		m.set_shader_parameter("show_grid", on)
+	for m in _lake_materials:
 		m.set_shader_parameter("show_grid", on)
 	if _water_material != null:
 		_water_material.set_shader_parameter("show_grid", on)

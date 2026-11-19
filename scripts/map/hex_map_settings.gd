@@ -57,13 +57,22 @@ extends Resource
 
 @export_group("Rivers")
 @export var rivers_enabled := true
-## A hex becomes river when the land draining through it exceeds this share of all land.
-## Lower = more, smaller rivers. A "river" mask from Gaea adds rivers on top of this rule.
-@export_range(0.001, 0.2, 0.001) var river_catchment := 0.012
-## River width where it starts, as a fraction of the hex size.
-@export_range(0.02, 0.5) var river_width := 0.14
-## Widest a river can get, as a fraction of the hex size.
-@export_range(0.05, 0.9) var river_max_width := 0.42
+## A river starts where the land draining into a point exceeds this share of all land.
+## Lower = more, smaller streams. A "river" mask from Gaea adds rivers on top of this rule.
+@export_range(0.0005, 0.1, 0.0005) var river_catchment := 0.006
+## River width in metres where 1 km^2 drains into it. Width grows with the square root of
+## the catchment, like real rivers (a river draining 4 km^2 is twice as wide).
+@export_range(1.0, 60.0, 0.5) var river_width_scale := 18.0
+@export_range(1.0, 20.0, 0.5) var river_min_width := 2.5
+@export_range(5.0, 200.0, 1.0) var river_max_width := 45.0
+## On coarse levels rivers are drawn at least this fraction of the hex size wide, so they
+## stay readable from far away.
+@export_range(0.0, 0.3, 0.01) var river_min_width_per_hex := 0.06
+## How much rivers wind on flat ground (1 = natural meanders about 12 widths long).
+@export_range(0.0, 2.0, 0.05) var river_meander := 1.0
+## Hollows at least this big and deep fill up as lakes.
+@export var lake_min_area := 8000.0
+@export var lake_min_depth := 2.0
 
 @export_group("Vegetation")
 @export var trees_enabled := true

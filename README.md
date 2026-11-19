@@ -16,7 +16,11 @@ Gaea exports a heightmap and terrain masks. Logiheim samples them onto a hex gri
 - **Multi-scale / LOD:** several hex scales (default ×1, ×3, ×8). The camera switches to coarser levels as you zoom out. Levels are linked parent ↔ children, so you can use them as regions in gameplay.
 - **Photo-scanned textures:** CC0 PBR sets from ambientCG (colour, height, normal, AO, roughness). Layers mix by **height-based blending**, so grass grows between stones and sand fills cracks. Steep ground turns to rock, and beaches form at the waterline. Textures follow the real landscape (`natural_texturing`) instead of painting each hex one colour, with large-scale variation to hide tiling.
 - **Sea:** depth-coloured water using the depth buffer, refraction of the sea floor, wind-driven waves, foam lapping at the shoreline, whitecaps in strong wind and sky reflections.
-- **Rivers:** drainage is routed over the hex grid from the heightmap (or a Gaea `river` mask). Rivers widen downstream, run in channels carved into the terrain with muddy banks, and foam where they run steeply. Their water level never rises downstream, so they cut gorges instead of flowing uphill.
+- **Rivers and lakes:** water is routed over the actual terrain (a priority flood on a 10 m grid), so rivers follow real valleys, join into bigger rivers and collect in lakes where hollows fill up.
+  - Width grows with the square root of the land draining into the river, like real rivers (`river_width_scale`). Rivers meander on flat ground and widen into estuaries at the sea.
+  - Water runs in carved channels with muddy beds and banks, and its level never rises downstream, so rivers cut gorges instead of flowing uphill.
+  - Flow speed follows the slope (flow-mapped, so fast and slow water never smear). Rapids appear where the real landscape is steep, and small cascades at each terrace step. Trees keep clear of the banks.
+  - A Gaea `river` mask adds rivers wherever it is painted.
 - **Vegetation and rocks (made in Blender):** three conifer variants, two broadleaf trees, two bushes and four chiselled boulders (`tools/blender/make_vegetation.py`). Forests mix conifers and broadleaf, with more conifers higher up. Trees and grass sway in the wind, leaves let light through, and rocks get moss on top. Dense grass (`grass_density`) is drawn near the camera only.
 - **Hex grid:** drawn by the shaders with irregular, noise-wobbled borders (`border_noise`). The CPU uses the same noise for picking, so what you click is exactly what's outlined. Hover and selection highlights work the same way.
 - **Atmosphere:** day/night cycle with sun and moon, drifting clouds that cast moving shadows, wind that drives trees, waves and clouds together, and weather (clear, cloudy, rain) with wet ground, fog and the odd lightning flash.
@@ -61,8 +65,10 @@ scripts/map/hex_level.gd           one hex grid's cell data
 scripts/map/terrain_surface.gd     soft-stepped height grid, river carving, texture weights
 scripts/map/terrain_mesh_builder.gd chunked terrain meshes
 scripts/map/border_noise.gd        irregular hex borders (same noise as the shaders)
-scripts/map/river_network.gd       drainage, flow accumulation, river cells
-scripts/map/river_mesh_builder.gd  river paths and water ribbons
+scripts/map/hydrology.gd           water flow on the terrain grid: drainage, catchment, lakes, river tracing
+scripts/map/river_network.gd       hex-level drainage for gameplay (downstream, flow)
+scripts/map/river_mesh_builder.gd  river courses (meanders, junctions), placement per level, river and lake meshes
+scripts/map/river_path.gd          one placed river stretch
 scripts/map/terrain_material.gd    PBR texture arrays and per-level material setup
 scripts/map/vegetation.gd          trees, bushes and rocks (MultiMesh, chunked)
 scripts/map/grass_field.gd         grass near the camera
@@ -72,7 +78,7 @@ scripts/camera/strategy_camera.gd  RTS camera
 scripts/main.gd                    demo scene, HUD and controls
 shaders/hex_terrain.gdshader       terrain: height-blended PBR layers, grid, highlights
 shaders/water.gdshader             sea: depth colour, refraction, waves, shore foam
-shaders/river.gdshader             flowing river water
+shaders/river.gdshader             river water: flow mapping, depth colour, rapids
 shaders/tree_wind.gdshader         swaying trees and bushes
 shaders/rock.gdshader              boulders with moss
 shaders/grass.gdshader             grass blades

@@ -21,8 +21,10 @@ var sea_y := 0.0
 var heights := PackedFloat32Array()
 ## LAYERS weights per vertex.
 var weights := PackedFloat32Array()
-## 0..1, how close each vertex is to a river (for banks and keeping trees out).
+## 0..1, how close each vertex is to a river or lake (river bed and banks).
 var river_mask := PackedFloat32Array()
+## 1 where trees would hang over a river or lake (a few metres wider than the water).
+var clear_mask := PackedByteArray()
 ## Plateau height of each hex.
 var plateau := PackedFloat32Array()
 
@@ -80,6 +82,13 @@ func weight_at(p: Vector2, layer: int) -> float:
 	var x := clampi(roundi(p.x / spacing), 0, nx - 1)
 	var z := clampi(roundi(p.y / spacing), 0, nz - 1)
 	return weights[(z * nx + x) * LAYERS + layer]
+
+
+## True where trees and bushes should stay away (near rivers and lakes).
+func keep_clear(p: Vector2) -> bool:
+	var x := clampi(roundi(p.x / spacing), 0, nx - 1)
+	var z := clampi(roundi(p.y / spacing), 0, nz - 1)
+	return clear_mask[z * nx + x] == 1
 
 
 func river_at(p: Vector2) -> float:
@@ -140,6 +149,8 @@ func _compute_heights() -> void:
 	weights.fill(0.0)
 	river_mask.resize(nx * nz)
 	river_mask.fill(0.0)
+	clear_mask.resize(nx * nz)
+	clear_mask.fill(0)
 	var radius := _settings.step_softness * level.hex_size
 	var inv_r2 := 1.0 / (radius * radius)
 	var detail := _settings.terrain_detail * _meters
@@ -241,15 +252,31 @@ func _sink_edge(x: int, z: int) -> void:
 	heights[i] = minf(heights[i], sea_y - 12.0)
 
 
+## Marks lake beds (keeps trees and grass out, gives them muddy banks).
+func mark_lakes(hydro: Hydrology) -> void:
+	if hydro.lake_level.is_empty():
+		return
+	for z in nz:
+		for x in nx:
+			var p := Vector2(x * spacing, z * spacing)
+			if hydro.lake_at(p) >= 0:
+				# Lake beds sit under water; only a light muddy tint so the coarse lake grid
+				# doesn't show as jagged patches along the shore.
+				river_mask[z * nx + x] = maxf(river_mask[z * nx + x], 0.5)
+				clear_mask[z * nx + x] = 1
+			elif hydro.filled_at(p) > heights[z * nx + x] + 0.3:
+				clear_mask[z * nx + x] = 1
+
+
 ## Cuts river channels: the bed sits below each path's water surface and blends into the banks.
 func carve(paths: Array) -> void:
 	for path: RiverPath in paths:
 		for k in path.points.size():
 			var pt := path.points[k]
 			var w := path.widths[k]
-			var depth := clampf(w * 0.35, 0.6, 3.5)
+			var depth := RiverMeshBuilder.depth_for(w)
 			var bed := pt.y - depth
-			var r := w * 1.9
+			var r := maxf(w * 1.9, w * 0.5 + 6.0)
 			var x0 := maxi(0, floori((pt.x - r) / spacing))
 			var x1 := mini(nx - 1, ceili((pt.x + r) / spacing))
 			var z0 := maxi(0, floori((pt.z - r) / spacing))
@@ -263,7 +290,9 @@ func carve(paths: Array) -> void:
 					var prof := 1.0 - smoothstep(w * 0.3, w * 1.5, d)
 					if prof > 0.0:
 						heights[i] = minf(heights[i], lerpf(heights[i], bed, prof))
-					river_mask[i] = maxf(river_mask[i], 1.0 - smoothstep(w * 0.5, r, d))
+					river_mask[i] = maxf(river_mask[i], 1.0 - smoothstep(w * 0.45, w * 1.2, d))
+					if d < w * 0.5 + 6.0:
+						clear_mask[i] = 1
 
 
 ## Final terrain weights: hex terrain blend adjusted for sea floor, beaches, cliffs and banks.
@@ -293,7 +322,8 @@ func finish_weights() -> void:
 			_pull(base, T.ROCK, smoothstep(cliff * 0.75, cliff * 1.35, slope))
 			var bank := river_mask[vi]
 			if bank > 0.0 and under < 0.5:
-				_pull(base, T.DIRT, bank * 0.75)
+				# Muddy banks, and a muddy (not rocky) bed under the water.
+				_pull(base, T.DIRT, bank * 0.4 + smoothstep(0.75, 1.0, bank) * 0.5)
 
 			var total := 0.0
 			for k in LAYERS:

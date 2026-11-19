@@ -119,7 +119,7 @@ static func _random_point(c: Vector2, s: float, rng: RandomNumberGenerator) -> V
 
 
 static func _ok_ground(surface: TerrainSurface, p: Vector2) -> bool:
-	return surface.river_at(p) < 0.15 and surface.sample(p) > surface.sea_y + 0.6
+	return not surface.keep_clear(p) and surface.sample(p) > surface.sea_y + 0.6
 
 
 static func _place_tree(items: Dictionary, model: String, surface: TerrainSurface, settings: HexMapSettings, c: Vector2, s: float, rng: RandomNumberGenerator, mult: float) -> void:

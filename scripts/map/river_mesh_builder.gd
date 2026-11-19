@@ -1,13 +1,14 @@
 class_name RiverMeshBuilder
 extends RefCounted
-## Turns the river hexes of a level (RiverNetwork) into smooth river paths, then into ribbons.
+## Rivers and lakes.
 ##
-## 1. compute_paths(): one path per river hex, from its centre through the shared border to the
-##    downstream hex's centre (or out into the sea). Paths are smoothed and resampled, and the
-##    water level along them never rises downstream, so rivers cut gorges through ridges
-##    instead of flowing uphill.
-## 2. TerrainSurface.carve() digs the channels using those paths.
-## 3. build(): the water ribbons, with foam where the river runs steeply.
+## courses(): traces the river network once, on the finest level's Hydrology, into smooth
+##   world-space courses: corner-cut, meandering where the ground is flat, and with every
+##   tributary ending exactly on the river it joins.
+## place(): fits the courses onto one level's terrain: water level (never rising downstream),
+##   width from the catchment (square-root law), speed and white water from the slope,
+##   estuaries at the sea, and gaps where a river runs through a lake.
+## build() / build_lakes(): the water meshes.
 
 const SHADER_PATH := "res://shaders/river.gdshader"
 
@@ -35,152 +36,382 @@ static func material() -> ShaderMaterial:
 	return _material
 
 
+## Lakes use the sea shader with fresh-water colours and calmer waves.
+static func lake_material(wave_normal: Texture2D) -> ShaderMaterial:
+	var mat := ShaderMaterial.new()
+	mat.shader = load("res://shaders/water.gdshader")
+	mat.set_shader_parameter("wave_normal", wave_normal)
+	mat.set_shader_parameter("shallow_color", Color(0.2, 0.36, 0.3))
+	mat.set_shader_parameter("deep_color", Color(0.025, 0.08, 0.085))
+	mat.set_shader_parameter("clarity", 2.5)
+	mat.set_shader_parameter("colour_depth", 8.0)
+	mat.set_shader_parameter("foam_width", 0.6)
+	mat.set_shader_parameter("wave_height", 0.04)
+	return mat
+
+
+static func width_for(area: float, settings: HexMapSettings) -> float:
+	return clampf(settings.river_width_scale * sqrt(area / 1.0e6), settings.river_min_width, settings.river_max_width)
+
+
 static func depth_for(width: float) -> float:
-	return clampf(width * 0.35, 0.6, 3.5)
+	return clampf(0.3 + width * 0.09, 0.5, 4.0)
 
 
-static func compute_paths(level: HexLevel, surface: TerrainSurface) -> Array[RiverPath]:
-	var paths: Array[RiverPath] = []
-	if level.river_order.is_empty():
-		return paths
-	var s := level.hex_size
-	var n := level.cell_count()
+# --------------------------------------------------------------------------- courses
 
-	# Water level at each river hex centre, never higher than anything upstream.
-	var cap := PackedFloat32Array()
-	cap.resize(n)
-	cap.fill(INF)
-	var wy := PackedFloat32Array()
-	wy.resize(n)
-	var dist := PackedFloat32Array()
-	dist.resize(n)
-	for i in level.river_order:
-		var c := level.cell_center(i)
-		var base := surface.sample(c) - depth_for(level.river_width[i]) * 0.3
-		wy[i] = maxf(minf(base, cap[i]), surface.sea_y + 0.05)
-		var d := level.downstream[i]
-		if d >= 0:
-			cap[d] = minf(cap[d], wy[i])
+## World-space river courses: Array of {pts: PackedVector2Array, areas: PackedFloat32Array,
+## to_sea: bool, joins: bool}.
+static func courses(hydro: Hydrology, settings: HexMapSettings) -> Array:
+	var land_area := 0.0
+	for c in hydro.nx * hydro.nz:
+		if hydro.land(c):
+			land_area += hydro.spacing * hydro.spacing
+	var threshold := maxf(settings.river_catchment * land_area, hydro.spacing * hydro.spacing * 6.0)
+	var out: Array = []
+	for seg: Dictionary in hydro.trace_segments(threshold):
+		var cells: PackedInt32Array = seg.cells
+		var pts := PackedVector2Array()
+		var areas := PackedFloat32Array()
+		for c in cells:
+			pts.append(hydro.cell_pos(c))
+			areas.append(hydro.area[c] if hydro.land(c) else hydro.area[cells[maxi(0, cells.size() - 2)]])
+		var smooth := _smooth(pts, areas, 2)
+		var course := _meander(smooth[0], smooth[1], hydro, settings)
+		out.append({"pts": course[0], "areas": course[1], "to_sea": seg.to_sea, "joins": not seg.to_sea and hydro.parent[cells[cells.size() - 1]] >= 0})
+	_snap_junctions(out, hydro.spacing * 3.0)
+	return out
 
-	for i in level.river_order:
-		var j := level.downstream[i]
-		if j < 0:
-			continue
-		var c := level.cell_center(i)
-		var cj := level.cell_center(j)
-		var to_sea := HexMapGenerator.is_water(level.terrain[j])
-		var dir := (cj - c).normalized()
+
+## Corner-cutting smoothing that keeps both ends (so junctions stay put).
+static func _smooth(pts: PackedVector2Array, areas: PackedFloat32Array, iterations: int) -> Array:
+	var p := pts
+	var a := areas
+	for it in iterations:
+		if p.size() < 3:
+			break
+		var np := PackedVector2Array([p[0]])
+		var na := PackedFloat32Array([a[0]])
+		for k in p.size() - 1:
+			np.append(p[k].lerp(p[k + 1], 0.25))
+			np.append(p[k].lerp(p[k + 1], 0.75))
+			na.append(lerpf(a[k], a[k + 1], 0.25))
+			na.append(lerpf(a[k], a[k + 1], 0.75))
+		np.append(p[p.size() - 1])
+		na.append(a[a.size() - 1])
+		p = np
+		a = na
+	return [p, a]
+
+
+## Resamples a course and makes it wind on flat ground: sideways sine offsets about 12 widths
+## long (the natural meander wavelength), fading out on slopes and near both ends.
+static func _meander(pts: PackedVector2Array, areas: PackedFloat32Array, hydro: Hydrology, settings: HexMapSettings) -> Array:
+	var total := 0.0
+	for k in pts.size() - 1:
+		total += pts[k].distance_to(pts[k + 1])
+	var out_p := PackedVector2Array()
+	var out_a := PackedFloat32Array()
+	if total <= 0.0:
+		return [pts, areas]
+	var step := clampf(width_for(areas[0], settings) * 0.5, 1.0, hydro.spacing * 0.5)
+	var phase := float(hash(pts[0]) % 1000) / 1000.0 * TAU
+	var along := 0.0
+	var k := 0
+	var seg_start := 0.0
+	var seg_len := pts[0].distance_to(pts[1]) if pts.size() > 1 else 0.0
+	while along <= total:
+		while k < pts.size() - 2 and along > seg_start + seg_len:
+			seg_start += seg_len
+			k += 1
+			seg_len = pts[k].distance_to(pts[k + 1])
+		var t := clampf((along - seg_start) / maxf(seg_len, 1e-4), 0.0, 1.0)
+		var p := pts[k].lerp(pts[k + 1], t)
+		var a := lerpf(areas[k], areas[k + 1], t)
+		var w := width_for(a, settings)
+		var dir := (pts[k + 1] - pts[k]).normalized()
 		var side := Vector2(-dir.y, dir.x)
-		var rng := RandomNumberGenerator.new()
-		rng.seed = hash(Vector3i(level.coords[i].x, level.coords[i].y, level.level_index))
-		var e := (c + cj) * 0.5 + side * rng.randf_range(-1.0, 1.0) * s * 0.12
-		var ctrl := PackedVector2Array([c, c.lerp(e, 0.5) + side * rng.randf_range(-1.0, 1.0) * s * 0.18, e])
-		if to_sea:
-			ctrl.append(e + dir * s * 0.7)
-		else:
-			ctrl.append(e.lerp(cj, 0.5) + side * rng.randf_range(-1.0, 1.0) * s * 0.18)
-			ctrl.append(cj)
-		var smooth := _chaikin(ctrl, 3)
+		# Slope from the filled terrain a few widths up and down the course.
+		var probe := maxf(w * 2.0, hydro.spacing)
+		var slope := absf(hydro.filled_at(p - dir * probe) - hydro.filled_at(p + dir * probe)) / (2.0 * probe)
+		var flat := 1.0 - smoothstep(0.004, 0.035, slope)
+		var taper := smoothstep(0.0, w * 6.0, along) * smoothstep(0.0, w * 6.0, total - along)
+		var wavelength := 12.0 * w * (0.8 + 0.4 * BorderNoise.value_noise(p * 0.004))
+		phase += step * TAU / wavelength
+		var amp := w * 1.3 * settings.river_meander * flat * taper
+		out_p.append(p + side * sin(phase) * amp)
+		out_a.append(a)
+		step = clampf(w * 0.5, 1.0, hydro.spacing * 0.5)
+		along += step
+	out_p.append(pts[pts.size() - 1])
+	out_a.append(areas[areas.size() - 1])
+	return [out_p, out_a]
 
-		var w0 := level.river_width[i]
-		var w1 := w0 if to_sea else level.river_width[j]
-		var y_hi := wy[i]
-		var y_lo := surface.sea_y + 0.05 if to_sea else wy[j]
-		var step := clampf(w0 * 0.4, 0.5, surface.spacing)
-		var path := RiverPath.new()
-		path.to_sea = to_sea
-		var along := dist[i]
-		var prev_y := y_hi
-		var prev := smooth[0]
-		for k in smooth.size() - 1:
-			var a := smooth[k]
-			var b := smooth[k + 1]
-			var seg := a.distance_to(b)
-			var count := maxi(1, ceili(seg / step))
-			for m in count:
-				var p := a.lerp(b, float(m) / count)
-				along += p.distance_to(prev)
-				prev = p
-				var t := float(path.points.size()) / maxf(1.0, smooth.size() * 2.0)
-				var w := lerpf(w0, (w0 + w1) * 0.5, clampf(t, 0.0, 1.0))
-				var y := surface.sample(p) - depth_for(w) * 0.3
-				y = clampf(y, y_lo, prev_y)
-				prev_y = y
-				path.points.append(Vector3(p.x, y, p.y))
-				path.widths.append(w)
-				path.dist.append(along)
-		var last := smooth[smooth.size() - 1]
-		along += last.distance_to(prev)
-		path.points.append(Vector3(last.x, y_lo, last.y))
-		path.widths.append(w1 if not to_sea else w0)
-		path.dist.append(along)
-		if not to_sea:
-			dist[j] = maxf(dist[j], along)
-		paths.append(path)
+
+## Moves the end of every tributary onto the nearest point of the river it flows into.
+static func _snap_junctions(all: Array, radius: float) -> void:
+	for i in all.size():
+		var c: Dictionary = all[i]
+		if not c.joins:
+			continue
+		var pts: PackedVector2Array = c.pts
+		var end := pts[pts.size() - 1]
+		var best := end
+		var best_d := radius * radius
+		for j in all.size():
+			if j == i:
+				continue
+			var other: PackedVector2Array = all[j].pts
+			for q in other:
+				var d := q.distance_squared_to(end)
+				if d < best_d:
+					best_d = d
+					best = q
+		pts[pts.size() - 1] = best
+		c.pts = pts
+
+
+# --------------------------------------------------------------------------- per level
+
+## Fits the courses onto one level's terrain. Also marks the level's river and lake hexes.
+static func place(all: Array, level: HexLevel, surface: TerrainSurface, hydro: Hydrology, noise: BorderNoise, settings: HexMapSettings, source: TerrainSource) -> Array[RiverPath]:
+	var paths: Array[RiverPath] = []
+	var min_w := level.hex_size * settings.river_min_width_per_hex if level.level_index > 0 else 0.0
+	level.river.fill(0)
+	level.river_width.fill(0.0)
+	for i in level.cell_count():
+		level.lake[i] = 1 if hydro.lake_at(level.cell_center(i)) >= 0 else 0
+
+	# Pass 1: water level, width and speed along each course.
+	var placed: Array = []
+	for c: Dictionary in all:
+		var pts: PackedVector2Array = c.pts
+		var areas: PackedFloat32Array = c.areas
+		var n := pts.size()
+		var ys := PackedFloat32Array()
+		var ws := PackedFloat32Array()
+		ys.resize(n)
+		ws.resize(n)
+		var total := 0.0
+		for k in n - 1:
+			total += pts[k].distance_to(pts[k + 1])
+		var along := 0.0
+		var prev_y := INF
+		for k in n:
+			if k > 0:
+				along += pts[k].distance_to(pts[k - 1])
+			var w := maxf(width_for(areas[k], settings), min_w)
+			if c.to_sea:
+				w *= lerpf(1.0, 1.8, smoothstep(total * 0.75, total, along))
+			var y := hydro.filled_at(pts[k]) - depth_for(w) * 0.25
+			if c.to_sea and k == n - 1:
+				y = surface.sea_y + 0.03
+			y = maxf(minf(y, prev_y), surface.sea_y + 0.03)
+			prev_y = y
+			ys[k] = y
+			ws[k] = w
+		placed.append([pts, ys, ws])
+
+	# Pass 2: tributaries meet the main river at its water level.
+	for i in all.size():
+		if not all[i].joins:
+			continue
+		var pts: PackedVector2Array = placed[i][0]
+		var ys: PackedFloat32Array = placed[i][1]
+		var end := pts[pts.size() - 1]
+		for j in all.size():
+			if j == i:
+				continue
+			var other: PackedVector2Array = placed[j][0]
+			var idx := other.find(end)
+			if idx >= 0:
+				ys[ys.size() - 1] = placed[j][1][idx]
+				for k in range(ys.size() - 2, -1, -1):
+					ys[k] = maxf(ys[k], ys[k + 1])
+				break
+		placed[i][1] = ys
+
+	# Pass 3: split around lakes, add speed and turbulence, mark hexes.
+	for i in placed.size():
+		var pts: PackedVector2Array = placed[i][0]
+		var ys: PackedFloat32Array = placed[i][1]
+		var ws: PackedFloat32Array = placed[i][2]
+		var path: RiverPath = null
+		var along := 0.0
+		for k in pts.size():
+			if k > 0:
+				along += pts[k].distance_to(pts[k - 1])
+			# Rivers stop where they reach the sea or enter a lake; the open water takes over.
+			if all[i].to_sea and k > 0 and surface.sample(pts[k]) < surface.sea_y - 0.4:
+				if path != null and path.points.size() >= 2:
+					path.points.append(Vector3(pts[k].x, surface.sea_y + 0.03, pts[k].y))
+					path.widths.append(ws[k])
+					path.dist.append(along)
+					path.speeds.append(path.speeds[path.speeds.size() - 1])
+					path.turbulence.append(0.0)
+					paths.append(path)
+				path = null
+				break
+			var in_lake := hydro.lake_at(pts[k]) >= 0
+			if in_lake:
+				if path != null and path.points.size() >= 2:
+					paths.append(path)
+				path = null
+				continue
+			if path == null:
+				path = RiverPath.new()
+				path.to_sea = all[i].to_sea
+			# Rapids follow the real lie of the land: the slope of the Gaea terrain over a
+			# stretch of ~30 m, not the stairs the hex terraces put in the water surface.
+			var reach_m := maxf(ws[k] * 3.0, 30.0)
+			var dir := (pts[mini(k + 1, pts.size() - 1)] - pts[maxi(k - 1, 0)]).normalized()
+			var up := source.sample_height(pts[k] - dir * reach_m * 0.5)
+			var down := source.sample_height(pts[k] + dir * reach_m * 0.5)
+			var nat_slope := maxf(up - down, 0.0) * source.height_range * settings.height_scale / reach_m
+			# Cascades: short drops where the water steps down a terrace.
+			var k2 := mini(k + 1, pts.size() - 1)
+			var step_drop := maxf(ys[k] - ys[k2], 0.0) / maxf(pts[k].distance_to(pts[k2]), 0.3)
+			# Terrace cascades read as rapids (up to 0.6); only real falls go fully white.
+			var turb := maxf(smoothstep(0.15, 0.6, nat_slope), 0.6 * smoothstep(0.5, 1.2, step_drop) + 0.4 * smoothstep(1.5, 3.0, step_drop))
+			path.points.append(Vector3(pts[k].x, ys[k], pts[k].y))
+			path.widths.append(ws[k])
+			path.dist.append(along)
+			path.speeds.append(clampf(sqrt(maxf(nat_slope, step_drop * 0.5)) * 9.0, 0.35, 6.0))
+			path.turbulence.append(turb)
+			var cell := noise.cell_at(level, pts[k])
+			if cell >= 0 and not HexMapGenerator.is_water(level.terrain[cell]):
+				level.river[cell] = 1
+				level.river_width[cell] = maxf(level.river_width[cell], ws[k])
+		if path != null and path.points.size() >= 2:
+			paths.append(path)
 	return paths
 
+
+# --------------------------------------------------------------------------- meshes
 
 static func build(paths: Array[RiverPath], parent: Node3D) -> void:
 	if paths.is_empty():
 		return
-	var data := MeshData.new()
+	var verts := PackedVector3Array()
+	var normals := PackedVector3Array()
+	var uvs := PackedVector2Array()
+	var uv2s := PackedVector2Array()
+	var colors := PackedColorArray()
+	var indices := PackedInt32Array()
 	for path in paths:
-		_ribbon(data, path)
+		_ribbon(path, verts, normals, uvs, uv2s, colors, indices)
+	if verts.is_empty():
+		return
+	var arrays := []
+	arrays.resize(Mesh.ARRAY_MAX)
+	arrays[Mesh.ARRAY_VERTEX] = verts
+	arrays[Mesh.ARRAY_NORMAL] = normals
+	arrays[Mesh.ARRAY_TEX_UV] = uvs
+	arrays[Mesh.ARRAY_TEX_UV2] = uv2s
+	arrays[Mesh.ARRAY_COLOR] = colors
+	arrays[Mesh.ARRAY_INDEX] = indices
+	var mesh := ArrayMesh.new()
+	mesh.add_surface_from_arrays(Mesh.PRIMITIVE_TRIANGLES, arrays)
 	var mi := MeshInstance3D.new()
 	mi.name = "Rivers"
-	mi.mesh = data.to_mesh()
+	mi.mesh = mesh
 	mi.material_override = material()
 	mi.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
 	parent.add_child(mi)
 
 
-static func _ribbon(data: MeshData, path: RiverPath) -> void:
+## One indexed ribbon with per-vertex flow data, so speed and white water blend smoothly.
+## UV = (across 0..1, metres along); UV2 = (turbulence, width); COLOR.r = speed / 6 m/s.
+static func _ribbon(path: RiverPath, verts: PackedVector3Array, normals: PackedVector3Array, uvs: PackedVector2Array,
+		uv2s: PackedVector2Array, colors: PackedColorArray, indices: PackedInt32Array) -> void:
 	var n := path.points.size()
 	if n < 2:
 		return
-	var lefts := PackedVector3Array()
-	var rights := PackedVector3Array()
-	var steep := PackedFloat32Array()
+	# Soften turbulence and speed along the river (a few points either side).
+	var turb := PackedFloat32Array()
+	var speed := PackedFloat32Array()
+	turb.resize(n)
+	speed.resize(n)
+	for k in n:
+		var t_sum := 0.0
+		var s_sum := 0.0
+		var cnt := 0
+		for q in range(maxi(k - 3, 0), mini(k + 4, n)):
+			t_sum += path.turbulence[q]
+			s_sum += path.speeds[q]
+			cnt += 1
+		turb[k] = t_sum / cnt
+		speed[k] = s_sum / cnt
+	var base := verts.size()
 	for k in n:
 		var a := path.points[maxi(k - 1, 0)]
 		var b := path.points[mini(k + 1, n - 1)]
 		var t := Vector2(b.x - a.x, b.z - a.z)
-		var run := maxf(t.length(), 0.001)
-		t /= run
+		t /= maxf(t.length(), 0.001)
 		var side := Vector3(-t.y, 0.0, t.x) * path.widths[k] * 0.5
-		var lift := Vector3(0.0, 0.05, 0.0)
-		lefts.append(path.points[k] - side + lift)
-		rights.append(path.points[k] + side + lift)
-		steep.append(clampf((a.y - b.y) / run * 2.5, 0.0, 1.0))
-	for k in n - 1:
-		var d0 := path.dist[k]
-		var d1 := path.dist[k + 1]
-		var la := lefts[k]
-		var ra := rights[k]
-		var lb := lefts[k + 1]
-		var rb := rights[k + 1]
-		var nrm := (rb - la).cross(ra - la).normalized()
+		var lift := Vector3(0.0, 0.04, 0.0)
+		var along3 := (b - a).normalized()
+		var nrm := Vector3(-t.y, 0.0, t.x).cross(along3).normalized()
 		if nrm.y < 0.0:
 			nrm = -nrm
-		var uv2a := Vector2(steep[k], path.widths[k])
-		data.tri(la, ra, rb, Vector2(0.0, d0), Vector2(1.0, d0), Vector2(1.0, d1), nrm, uv2a)
-		data.tri(la, rb, lb, Vector2(0.0, d0), Vector2(1.0, d1), Vector2(0.0, d1), nrm, uv2a)
-	# Round pool at the start so joints and confluences have no gaps.
-	var c := path.points[0] + Vector3(0.0, 0.04, 0.0)
-	var r := path.widths[0] * 0.5
-	for k in 8:
-		var a := c + Vector3(cos(k * TAU / 8.0), 0.0, sin(k * TAU / 8.0)) * r
-		var b := c + Vector3(cos((k + 1) * TAU / 8.0), 0.0, sin((k + 1) * TAU / 8.0)) * r
-		data.tri(c, a, b, Vector2(0.5, path.dist[0]), Vector2(0.5, path.dist[0]), Vector2(0.5, path.dist[0]), Vector3.UP, Vector2(0.0, r * 2.0))
+		verts.append(path.points[k] - side + lift)
+		verts.append(path.points[k] + side + lift)
+		for e in 2:
+			normals.append(nrm)
+			uv2s.append(Vector2(turb[k], path.widths[k]))
+			colors.append(Color(speed[k] / 6.0, 0.0, 0.0))
+		uvs.append(Vector2(0.0, path.dist[k]))
+		uvs.append(Vector2(1.0, path.dist[k]))
+	for k in n - 1:
+		var l0 := base + k * 2
+		var r0 := l0 + 1
+		var l1 := l0 + 2
+		var r1 := l0 + 3
+		# Wound so the top face points up: Godot treats clockwise (seen from the front) as
+		# front-facing, i.e. the right-hand-rule cross product points away from the viewer.
+		var cross_up := (verts[r0] - verts[l0]).cross(verts[r1] - verts[l0]).y > 0.0
+		if cross_up:
+			indices.append_array([l0, r1, r0, l0, l1, r1])
+		else:
+			indices.append_array([l0, r0, r1, l0, r1, l1])
 
 
-static func _chaikin(pts: PackedVector2Array, iterations: int) -> PackedVector2Array:
-	var out := pts
-	for it in iterations:
-		var nxt := PackedVector2Array([out[0]])
-		for k in out.size() - 1:
-			nxt.append(out[k].lerp(out[k + 1], 0.25))
-			nxt.append(out[k].lerp(out[k + 1], 0.75))
-		nxt.append(out[out.size() - 1])
-		out = nxt
-	return out
+## Flat water at each lake's level over the lake cells (grown by two cells so the shoreline
+## comes from where the terrain rises through the surface).
+static func build_lakes(hydro: Hydrology, material: Material, parent: Node3D) -> void:
+	if hydro.lake_level.is_empty():
+		return
+	var n := hydro.nx * hydro.nz
+	var cover := hydro.lake_id.duplicate()
+	for grow in 2:
+		var nxt := cover.duplicate()
+		for c in n:
+			if cover[c] >= 0:
+				continue
+			var x := c % hydro.nx
+			var z := c / hydro.nx
+			for m in [c - 1 if x > 0 else -1, c + 1 if x < hydro.nx - 1 else -1, c - hydro.nx if z > 0 else -1, c + hydro.nx if z < hydro.nz - 1 else -1]:
+				if m >= 0 and cover[m] >= 0:
+					nxt[c] = cover[m]
+					break
+		cover = nxt
+	var data := MeshData.new()
+	var hs := hydro.spacing * 0.5
+	for c in n:
+		var id := cover[c]
+		if id < 0:
+			continue
+		var y := hydro.lake_level[id] - 0.05
+		var p := hydro.cell_pos(c)
+		var a := Vector3(p.x - hs, y, p.y - hs)
+		var b := Vector3(p.x + hs, y, p.y - hs)
+		var d := Vector3(p.x - hs, y, p.y + hs)
+		var e := Vector3(p.x + hs, y, p.y + hs)
+		data.tri(a, b, e, Vector2.ZERO, Vector2.ZERO, Vector2.ZERO, Vector3.UP, Vector2.ZERO)
+		data.tri(a, e, d, Vector2.ZERO, Vector2.ZERO, Vector2.ZERO, Vector3.UP, Vector2.ZERO)
+	var mi := MeshInstance3D.new()
+	mi.name = "Lakes"
+	mi.mesh = data.to_mesh()
+	mi.material_override = material
+	mi.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+	parent.add_child(mi)

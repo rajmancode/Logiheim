@@ -168,6 +168,8 @@ func _describe(label: String, level: HexLevel, i: int) -> String:
 		level.elevation[i], level.top_y(i), level.slope[i]]
 	if level.river[i] == 1:
 		text += ", river %.0f m wide" % level.river_width[i]
+	if level.lake[i] == 1:
+		text += ", lake"
 	var up := level.parent[i]
 	if up >= 0:
 		var pa := hex_map.levels[level.level_index + 1].coords[up]

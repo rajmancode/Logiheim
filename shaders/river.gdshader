@@ -1,52 +1,91 @@
-// Flowing river ribbons from scripts/map/river_mesh_builder.gd.
-// UV.x runs across the river (0..1), UV.y along it in metres, so scrolling UV.y moves the
-// water downstream. UV2.x = 1 on waterfalls, UV2.y = river width in metres.
+// River water (scripts/map/river_mesh_builder.gd).
+//   UV.x across the river (0..1), UV.y metres along it.
+//   UV2.x turbulence (0 calm .. 1 white water), UV2.y width in metres, COLOR.r speed / 6 m/s.
+// Flow uses two-phase flow mapping: the ripple texture is pushed downstream at each point's
+// own speed, and two copies half a cycle apart are cross-faded, so fast and slow water
+// never smear the texture over time. Depth from the depth buffer gives clear, shallow edges
+// that show the river bed, and colour deepens towards the middle.
 shader_type spatial;
-render_mode blend_mix, depth_draw_opaque, cull_disabled, diffuse_burley, specular_schlick_ggx;
+render_mode blend_mix, depth_draw_always, cull_disabled, diffuse_burley, specular_schlick_ggx;
 
 #include "res://shaders/include/environment.gdshaderinc"
 
 uniform sampler2D flow_noise : hint_normal, filter_linear_mipmap, repeat_enable;
-uniform vec3 river_color : source_color = vec3(0.10, 0.27, 0.30);
-uniform vec3 river_edge_color : source_color = vec3(0.24, 0.38, 0.33);
-uniform vec3 foam_color : source_color = vec3(0.88, 0.92, 0.94);
-uniform float flow_speed = 3.0;        // metres per second
-uniform float fall_speed = 9.0;
-uniform float noise_scale = 0.05;      // noise repeats per metre
-uniform float ripple_strength = 0.35;
+uniform sampler2D depth_texture : hint_depth_texture, filter_nearest;
+uniform sampler2D screen_texture : hint_screen_texture, filter_linear_mipmap;
+uniform vec3 shallow_color : source_color = vec3(0.17, 0.27, 0.2);
+uniform vec3 deep_color : source_color = vec3(0.035, 0.095, 0.095);
+uniform vec3 foam_color : source_color = vec3(0.9, 0.93, 0.94);
+uniform float noise_scale = 0.06;     // ripple texture repeats per metre
+uniform float cycle = 1.6;            // seconds per flow-map phase
+uniform float clarity = 0.7;          // metres of water before the bed is half hidden
 
-varying float v_fall;
-varying float v_width;
 varying vec3 v_world_pos;
+varying float v_speed;
+varying float v_turb;
+varying float v_width;
 
 void vertex() {
-	v_fall = UV2.x;
-	v_width = UV2.y;
 	v_world_pos = (MODEL_MATRIX * vec4(VERTEX, 1.0)).xyz;
+	v_speed = COLOR.r * 6.0;
+	v_turb = UV2.x;
+	v_width = UV2.y;
+}
+
+// Ripple normal (xy) and a foam-pattern value pushed `shift` metres downstream.
+// `stretch` > 1 drags the pattern into streaks along the flow (fast, falling water).
+vec3 flow_sample(vec2 base, float shift, float stretch) {
+	vec2 uv = (base - vec2(0.0, shift)) * noise_scale * vec2(1.0, 1.0 / stretch);
+	vec3 n1 = texture(flow_noise, uv).xyz * 2.0 - 1.0;
+	vec3 n2 = texture(flow_noise, uv * 2.3 + vec2(0.37, 0.11)).xyz * 2.0 - 1.0;
+	return vec3((n1.xy + n2.xy * 0.6), n1.x * 0.6 + n2.y * 0.4);
 }
 
 void fragment() {
-	float speed = mix(flow_speed, fall_speed, v_fall) * (0.8 + 0.4 * wind_strength);
+	// Two phases half a cycle apart, each pushed downstream at this point's speed.
+	float t = TIME / cycle;
+	float ph0 = fract(t);
+	float ph1 = fract(t + 0.5);
+	float shift = v_speed * cycle;
 	vec2 base = vec2(UV.x * v_width, UV.y);
-	vec2 uv1 = base * noise_scale - vec2(0.0, TIME * speed * noise_scale);
-	vec2 uv2 = base * noise_scale * 1.9 + vec2(0.37, 0.11) - vec2(0.0, TIME * speed * noise_scale * 1.35);
-	vec3 n1 = texture(flow_noise, uv1).xyz * 2.0 - 1.0;
-	vec3 n2 = texture(flow_noise, uv2).xyz * 2.0 - 1.0;
+	float stretch = 1.0 + 3.0 * v_turb;
+	vec3 s0 = flow_sample(base, ph0 * shift, stretch);
+	vec3 s1 = flow_sample(base + vec2(13.7, 7.1), ph1 * shift, stretch);
+	float wgt = abs(ph0 - 0.5) * 2.0;
+	vec3 s = mix(s0, s1, wgt);
+	float rough_water = 0.25 + 0.75 * v_turb;
+	vec2 ripple = s.xy * (0.15 + 0.35 * rough_water + 0.15 * wind_strength);
 
-	// Foam along the banks and all over waterfalls, broken up by the moving noise.
-	float bank = 1.0 - smoothstep(0.0, 0.22, min(UV.x, 1.0 - UV.x));
-	float churn = smoothstep(0.15, 0.6, n1.x * 0.5 + n2.y * 0.5 + 0.35);
-	float foam = clamp(max(bank * 0.35, v_fall * 0.8) * churn, 0.0, 1.0);
+	// Depth under the surface from the depth buffer.
+	float raw = texture(depth_texture, SCREEN_UV).r;
+	vec4 view = INV_PROJECTION_MATRIX * vec4(SCREEN_UV * 2.0 - 1.0, raw, 1.0);
+	view.xyz /= view.w;
+	vec3 bed = (INV_VIEW_MATRIX * vec4(view.xyz, 1.0)).xyz;
+	float depth = max(v_world_pos.y - bed.y, 0.0);
 
-	vec3 water = mix(river_color, river_edge_color, bank * 0.6);
-	vec3 albedo = mix(water, foam_color, foam);
-	albedo *= cloud_shadow(v_world_pos);
+	// Colour: the bed shows through shallow water, deeper water goes dark green-blue.
+	vec3 water = mix(shallow_color, deep_color, smoothstep(0.0, 2.5, depth));
+	vec2 refr = SCREEN_UV + ripple * 0.01 * clamp(depth, 0.0, 1.0);
+	vec3 bed_col = textureLod(screen_texture, refr, 0.0).rgb;
+	vec3 col = mix(water, bed_col * mix(vec3(1.0), shallow_color * 2.0, 0.4), exp(-depth / clarity));
 
-	vec2 ripple = (n1.xy + n2.xy) * ripple_strength * (1.0 - v_fall * 0.5);
-	vec3 rn = normalize(NORMAL + (VIEW_MATRIX * vec4(ripple.x, 0.0, ripple.y, 0.0)).xyz);
+	// White water: rapids and falls, plus a little along the banks; broken up by the flow.
+	float bank = 1.0 - smoothstep(0.0, 0.18, min(UV.x, 1.0 - UV.x));
+	// Foam covers more of the surface the rougher the water: streaks over dark water in
+	// rapids (about half the surface at full turbulence), nothing on calm stretches.
+	float pn = s.z * 0.5 + 0.5;
+	float edge0 = 1.0 - 0.55 * v_turb;
+	float foam = smoothstep(edge0, edge0 + 0.12, pn) * 0.85 * smoothstep(0.05, 0.25, v_turb);
+	foam = max(foam, bank * 0.15 * v_turb * smoothstep(0.5, 0.7, pn));
+	col = mix(col, foam_color, foam);
+	col *= cloud_shadow(v_world_pos);
 
-	ALBEDO = albedo;
-	ROUGHNESS = mix(0.06, 0.55, foam);
-	SPECULAR = 0.6;
-	NORMAL = rn;
+	vec3 wn = normalize(vec3(ripple.x, 1.0, ripple.y));
+	ALBEDO = col;
+	ROUGHNESS = mix(0.1, 0.6, foam);
+	SPECULAR = 0.35;
+	NORMAL = normalize((VIEW_MATRIX * vec4(wn, 0.0)).xyz);
+	// Soft banks: fade out where the water gets very shallow.
+	ALPHA = clamp(depth / 0.25, 0.0, 1.0) * smoothstep(0.0, 0.06, min(UV.x, 1.0 - UV.x)) + foam * 0.3;
+	ALPHA = clamp(ALPHA, 0.0, 1.0);
 }

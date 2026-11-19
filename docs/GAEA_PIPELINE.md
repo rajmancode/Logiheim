@@ -15,7 +15,7 @@ data/gaea/my_map/
   rock.png
   snow.png
   forest.png
-  river.png            # optional, adds rivers on top of the drainage rule
+  river.png            # optional, adds rivers where it is painted
 ```
 
 ## map.json
@@ -50,7 +50,7 @@ Use a 16-bit or float heightmap. Godot reduces 16-bit PNGs to 8 bits when it loa
    - `snow`: Gaea's snow node output, or a height selector near the peaks.
    - `sand`: a narrow height band just above sea level, or erosion deposits near the shore.
    - `forest`: soil/flow/moisture-style data, minus rock and snow.
-   - `river` (optional): a Flow / Rivers node output, thresholded so only the main channels are white. Logiheim works out rivers from the heightmap on its own, so you only need this to force rivers where you want them.
+   - `river` (optional): a Flow / Rivers node output. Logiheim treats it as extra rain, so rivers form where it is bright. Logiheim works out rivers from the heightmap on its own, so you only need this to force rivers where you want them.
 3. Make every export cover the **same area**. The resolutions can differ.
 
 Node and format names vary between Gaea versions, so treat the list above as intent rather than exact menu paths.
@@ -62,7 +62,10 @@ Any mask you leave out falls back to a height or slope rule in `HexMapSettings` 
 - **Finest level (level 0):** the heightmap and masks are sampled at the hex centre plus six points 60% of the way to the corners. Height is the average of those samples, slope is the sample range divided by the hex width, and each mask is averaged.
 - **Classification order:** water → snow → rock → sand → forest → dirt → grass. If a mask exists it decides; otherwise the fallback rule does.
 - **Elevation:** `round(height × height_range × height_scale / step_height)`. Water sits flat at sea level, and land is always at least one step above it.
-- **Rivers:** each level is drained separately. A priority flood from the sea and map edge gives every land hex one downstream neighbour (pits spill over their lowest rim), then flow accumulates downstream. A hex becomes river when its catchment exceeds `river_catchment` × the total land area, or when the `river` mask is above `mask_threshold`. Every hex below a river hex is river too, so rivers always reach the sea or the map edge.
+- **Rivers and lakes** (`scripts/map/hydrology.gd`): water is routed over the finest level's terrain on a 10 m grid. A priority flood from the sea and the map edge gives every point one downstream neighbour and fills hollows to their spill level. Hollows larger than `lake_min_area` and deeper than `lake_min_depth` become lakes. Catchment then accumulates downstream, and a river starts wherever it passes `river_catchment` × the total land area.
+  - The courses are smoothed and given meanders on flat ground, and tributaries end exactly on the river they join. The same courses are used on every level.
+  - Width = `river_width_scale` × √(catchment in km²), between `river_min_width` and `river_max_width`. Coarse levels draw rivers at least `river_min_width_per_hex` × the hex size wide.
+  - A hex is marked as river (`level.river`, `level.river_width`) where a river passes through it, and as lake (`level.lake`) when its centre is under a lake. `level.downstream` / `level.flow` still give hex-to-hex drainage for gameplay.
 - **Coarser levels:** each coarse hex takes the majority terrain of the finest hexes inside it and their mean land height. Every level stores `parent` and `children` links to the next level, so gameplay can move between scales (a region contains tiles, for example).
 
 ## Exporting the game

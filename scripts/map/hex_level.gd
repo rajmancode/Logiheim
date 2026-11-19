@@ -26,7 +26,7 @@ var downstream := PackedInt32Array()    ## neighbour this cell drains into, -1 =
 var flow := PackedFloat32Array()        ## land area draining through this cell, m^2
 var river := PackedByteArray()          ## 1 if a river runs through this cell
 var river_width := PackedFloat32Array() ## metres
-var river_order := PackedInt32Array()   ## river cells, upstream before downstream
+var lake := PackedByteArray()           ## 1 if the hex centre is under a lake
 
 var min_elevation := 0
 var max_elevation := 0
@@ -46,6 +46,7 @@ func allocate() -> void:
 	flow.resize(n)
 	river.resize(n)
 	river_width.resize(n)
+	lake.resize(n)
 	for i in n:
 		children[i] = []
 
