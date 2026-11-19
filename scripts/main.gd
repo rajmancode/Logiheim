@@ -6,7 +6,7 @@ const MAPS_ROOT := "res://data/gaea"
 
 var hex_map: HexMap
 var cam: StrategyCamera
-var sun: DirectionalLight3D
+var atmosphere: Atmosphere
 var hud: Label
 var hud_panel: PanelContainer
 
@@ -18,7 +18,9 @@ var show_grid := true
 
 
 func _ready() -> void:
-	_setup_environment()
+	atmosphere = Atmosphere.new()
+	atmosphere.name = "Atmosphere"
+	add_child(atmosphere)
 	hex_map = HexMap.new()
 	hex_map.name = "HexMap"
 	hex_map.settings = HexMapSettings.new()
@@ -57,7 +59,7 @@ func _load_map(i: int) -> void:
 	var size := hex_map.source.world_size
 	cam.ground_height = hex_map.surface_height(size * 0.5)
 	cam.frame_rect(Rect2(Vector2.ZERO, size))
-	sun.directional_shadow_max_distance = maxf(size.x, size.y) * 2.0
+	atmosphere.configure(size, hex_map.levels[0].max_top_y())
 
 
 func _rebuild() -> void:
@@ -70,6 +72,7 @@ func _process(_delta: float) -> void:
 	if hex_map.current_level() == null:
 		return
 	hex_map.update_lod(cam.distance)
+	atmosphere.update_view(cam.position, cam.distance)
 	var p := cam.position
 	cam.ground_height = hex_map.surface_height(Vector2(p.x, p.z))
 
@@ -121,6 +124,14 @@ func _unhandled_input(event: InputEvent) -> void:
 				_load_map(map_index + 1)
 		KEY_H:
 			hud_panel.visible = not hud_panel.visible
+		KEY_N:
+			atmosphere.cycle_running = not atmosphere.cycle_running
+		KEY_COMMA:
+			atmosphere.shift_time(-1.0)
+		KEY_PERIOD:
+			atmosphere.shift_time(1.0)
+		KEY_R:
+			atmosphere.cycle_weather()
 
 
 func _on_level_changed(_i: int) -> void:
@@ -138,11 +149,13 @@ func _update_hud() -> void:
 		level.level_index + 1, hex_map.levels.size(), level.hex_size, level.cols, level.rows,
 		level.cell_count(), "auto LOD" if hex_map.auto_lod else "manual LOD"])
 	lines.append("Step %.1f m   height x%.2f   view %.0f m" % [s.step_height, s.height_scale, cam.distance])
+	lines.append(atmosphere.describe())
 	lines.append(_describe("Hover", level, hovered))
 	lines.append(_describe("Selected", level, selected))
 	lines.append("")
 	lines.append("WASD / arrows / middle-drag: pan    wheel: zoom    Q E / right-drag: rotate    click: select")
 	lines.append("[ ]: hex size    - =: height scale    1-5: force level    0: auto LOD    G: grid    T: trees    H: hide")
+	lines.append("N: pause/run day cycle    , .: time -/+ 1 h    R: weather (clear / cloudy / rain)")
 	hud.text = "\n".join(lines)
 
 
@@ -153,6 +166,8 @@ func _describe(label: String, level: HexLevel, i: int) -> String:
 	var text := "%s: (%d, %d) %s, elevation %d (%.0f m), slope %.2f" % [
 		label, a.x, a.y, HexMapGenerator.TERRAIN_NAMES[level.terrain[i]],
 		level.elevation[i], level.top_y(i), level.slope[i]]
+	if level.river[i] == 1:
+		text += ", river %.0f m wide" % level.river_width[i]
 	var up := level.parent[i]
 	if up >= 0:
 		var pa := hex_map.levels[level.level_index + 1].coords[up]
@@ -160,48 +175,6 @@ func _describe(label: String, level: HexLevel, i: int) -> String:
 	if not level.children[i].is_empty():
 		text += ", %d children" % level.children[i].size()
 	return text
-
-
-func _setup_environment() -> void:
-	var sky_mat := ProceduralSkyMaterial.new()
-	sky_mat.sky_top_color = Color(0.32, 0.5, 0.75)
-	sky_mat.sky_horizon_color = Color(0.7, 0.76, 0.82)
-	sky_mat.ground_horizon_color = Color(0.7, 0.76, 0.82)
-	sky_mat.ground_bottom_color = Color(0.2, 0.22, 0.25)
-	var sky := Sky.new()
-	sky.sky_material = sky_mat
-
-	var env := Environment.new()
-	env.background_mode = Environment.BG_SKY
-	env.sky = sky
-	env.ambient_light_source = Environment.AMBIENT_SOURCE_SKY
-	env.ambient_light_energy = 0.8
-	env.reflected_light_source = Environment.REFLECTION_SOURCE_SKY
-	env.tonemap_mode = Environment.TONE_MAPPER_FILMIC
-	env.tonemap_white = 6.0
-	env.ssao_enabled = true
-	env.ssao_radius = 2.0
-	env.ssao_intensity = 1.5
-	env.fog_enabled = true
-	env.fog_light_color = Color(0.68, 0.74, 0.82)
-	env.fog_density = 0.00012
-	env.fog_aerial_perspective = 0.4
-	env.adjustment_enabled = true
-	env.adjustment_saturation = 1.1
-
-	var world_env := WorldEnvironment.new()
-	world_env.environment = env
-	add_child(world_env)
-
-	sun = DirectionalLight3D.new()
-	sun.name = "Sun"
-	sun.rotation_degrees = Vector3(-48.0, -35.0, 0.0)
-	sun.light_energy = 1.25
-	sun.light_color = Color(1.0, 0.96, 0.9)
-	sun.shadow_enabled = true
-	sun.directional_shadow_max_distance = 4000.0
-	sun.directional_shadow_blend_splits = true
-	add_child(sun)
 
 
 func _setup_hud() -> void:

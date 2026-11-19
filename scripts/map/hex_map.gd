@@ -12,8 +12,13 @@ var levels: Array[HexLevel] = []
 var active_level := -1
 var auto_lod := true
 
+const HIGHLIGHT_COLORS := {"hover": Color(1.0, 0.85, 0.35), "select": Color(0.35, 0.8, 1.0)}
+
 var _level_roots: Array[Node3D] = []
+## Outline noise for each level, shared by meshes, rivers, highlights and picking.
+var _noises: Array[BorderNoise] = []
 var _material: ShaderMaterial
+var _highlights: Dictionary = {}
 
 
 ## Loads map.json from map_dir and builds the map. Returns false if loading failed.
@@ -43,7 +48,11 @@ func rebuild() -> void:
 		root.name = "Level%d" % level.level_index
 		root.visible = false
 		add_child(root)
-		HexMeshBuilder.build(level, settings, _material, root)
+		var noise := BorderNoise.new(level.hex_size, settings.border_noise, settings.border_segments)
+		_noises.append(noise)
+		HexMeshBuilder.build(level, settings, noise, _material, root)
+		if settings.rivers_enabled:
+			RiverMeshBuilder.build(level, noise, root)
 		if settings.trees_enabled:
 			TreeScatter.build(level, settings, root)
 		_level_roots.append(root)
@@ -58,6 +67,7 @@ func _clear() -> void:
 	for root in _level_roots:
 		root.queue_free()
 	_level_roots.clear()
+	_noises.clear()
 	levels.clear()
 	set_highlight("hover", -1)
 	set_highlight("select", -1)
@@ -93,17 +103,63 @@ func update_lod(camera_distance: float) -> void:
 	set_level(want)
 
 
-## kind is "hover" or "select"; cell -1 clears it.
+## kind is "hover" or "select"; cell -1 clears it. Draws an overlay that follows the hex's
+## noisy outline.
 func set_highlight(kind: String, cell: int) -> void:
-	if _material == null:
-		return
+	var mi: MeshInstance3D = _highlights.get(kind)
+	if mi == null:
+		mi = MeshInstance3D.new()
+		mi.name = "Highlight_" + kind
+		mi.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+		var mat := ShaderMaterial.new()
+		mat.shader = load("res://shaders/highlight.gdshader")
+		mat.set_shader_parameter("color", HIGHLIGHT_COLORS.get(kind, Color.WHITE))
+		mat.render_priority = 1 if kind == "select" else 2
+		mi.material_override = mat
+		add_child(mi)
+		_highlights[kind] = mi
 	var level := current_level()
-	if level == null or cell < 0:
-		_material.set_shader_parameter(kind + "_cell", Vector3(0, 0, -1))
+	if level == null or cell < 0 or active_level >= _noises.size():
+		mi.visible = false
 		return
 	var c := level.cell_center(cell)
-	_material.set_shader_parameter(kind + "_cell", Vector3(c.x, c.y, level.hex_size))
-	_material.set_shader_parameter(kind + "_y", level.top_y(cell))
+	var y := level.top_y(cell) + 0.15
+	var center := Vector3(c.x, y, c.y)
+	var rim := Vector2(1.0, 0.0)
+	var data := HexMeshBuilder.MeshData.new()
+	var outline := _outline(level, cell)
+	for k in outline.size():
+		var a := outline[k]
+		var b := outline[(k + 1) % outline.size()]
+		data.tri(center, Vector3(a.x, y, a.y), Vector3(b.x, y, b.y), Vector2.ZERO, rim, rim, Vector3.UP, Vector2.ZERO)
+	mi.mesh = data.to_mesh()
+	mi.visible = true
+
+
+## The hex's noisy outline as a closed polygon (world x, z).
+func _outline(level: HexLevel, cell: int) -> PackedVector2Array:
+	var noise: BorderNoise = _noises[level.level_index]
+	var c := level.cell_center(cell)
+	var poly := PackedVector2Array()
+	for k in 6:
+		var pts := noise.hex_edge(c, level.hex_size, k)
+		for s in pts.size() - 1:
+			poly.append(pts[s])
+	return poly
+
+
+## Exact cell under p using the noisy outlines: the plain hex or one of its neighbours.
+func _cell_at_noisy(level: HexLevel, p: Vector2) -> int:
+	var ci := level.cell_at(p)
+	if ci < 0 or level.level_index >= _noises.size() or _noises[level.level_index].amplitude <= 0.0:
+		return ci
+	if Geometry2D.is_point_in_polygon(p, _outline(level, ci)):
+		return ci
+	for k in 6:
+		var j := level.index_of(HexCoords.neighbor(level.coords[ci], k))
+		if j >= 0 and Geometry2D.is_point_in_polygon(p, _outline(level, j)):
+			return j
+	return ci
 
 
 func set_grid_visible(on: bool) -> void:
@@ -124,6 +180,8 @@ func pick(origin: Vector3, dir: Vector3) -> int:
 	while t <= t_end and iterations < 6000:
 		var p := origin + dir * t
 		var ci := level.cell_at(Vector2(p.x, p.z))
+		if ci >= 0 and p.y <= level.top_y(ci):
+			ci = _cell_at_noisy(level, Vector2(p.x, p.z))
 		if ci >= 0 and p.y <= level.top_y(ci):
 			return ci
 		t += step

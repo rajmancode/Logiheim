@@ -21,6 +21,13 @@ var elevation := PackedInt32Array()     ## stepped elevation, in steps
 var parent := PackedInt32Array()        ## cell index in the next coarser level, -1 if none
 var children: Array = []                ## Array[int] cell indices in the next finer level
 
+## Drainage and rivers (filled by RiverNetwork).
+var downstream := PackedInt32Array()    ## neighbour this cell drains into, -1 = sea / off the map
+var flow := PackedFloat32Array()        ## land area draining through this cell, m^2
+var river := PackedByteArray()          ## 1 if a river runs through this cell
+var river_width := PackedFloat32Array() ## metres
+var river_order := PackedInt32Array()   ## river cells, upstream before downstream
+
 var min_elevation := 0
 var max_elevation := 0
 
@@ -34,6 +41,11 @@ func allocate() -> void:
 	parent.resize(n)
 	parent.fill(-1)
 	children.resize(n)
+	downstream.resize(n)
+	downstream.fill(-1)
+	flow.resize(n)
+	river.resize(n)
+	river_width.resize(n)
 	for i in n:
 		children[i] = []
 

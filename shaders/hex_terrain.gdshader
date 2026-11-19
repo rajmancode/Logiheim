@@ -1,9 +1,12 @@
 // Stepped hex terrain: triplanar texture arrays (one layer per terrain type), whiteout
 // normal blending, macro variation against tiling, soil-to-rock cliff walls with fake AO,
-// animated water, grid lines and hover/selection highlights.
+// animated water and grid lines, plus moving cloud shadows,
+// wind-driven waves and a wet look in rain (shared state from environment.gdshaderinc).
 // Vertex data comes from scripts/map/hex_mesh_builder.gd.
 shader_type spatial;
 render_mode blend_mix, depth_draw_opaque, cull_back, diffuse_burley, specular_schlick_ggx;
+
+#include "res://shaders/include/environment.gdshaderinc"
 
 const int TERRAIN_COUNT = 8;
 const float ROCK_LAYER = 5.0;
@@ -31,13 +34,6 @@ uniform vec3 water_deep_color = vec3(0.008, 0.045, 0.085);
 uniform vec3 water_shallow_color = vec3(0.02, 0.16, 0.18);
 uniform float water_wave_scale = 0.006;
 uniform float water_wave_strength = 0.35;
-
-uniform vec4 hover_color = vec4(1.0, 0.85, 0.35, 1.0);
-uniform vec3 hover_cell = vec3(0.0, 0.0, -1.0);   // centre x, centre z, size (<= 0 disables)
-uniform float hover_y = 0.0;
-uniform vec4 select_color = vec4(0.35, 0.8, 1.0, 1.0);
-uniform vec3 select_cell = vec3(0.0, 0.0, -1.0);
-uniform float select_y = 0.0;
 
 varying vec3 v_world_pos;
 varying vec3 v_world_normal;
@@ -76,17 +72,6 @@ vec3 sample_normal(vec3 p, vec3 n, vec3 w, float layer) {
 	return normalize(tx.zyx * w.x + ty.xzy * w.y + tz.xyz * w.z);
 }
 
-// 0 outside the hex, a faint fill inside and a bright rim near the edge.
-float hex_highlight(vec2 p, vec3 cell) {
-	if (cell.z <= 0.0) {
-		return 0.0;
-	}
-	vec2 d = abs(p - cell.xy);
-	float v = max(d.x, 0.5 * d.x + 0.8660254 * d.y) / (0.8660254 * cell.z);
-	float inside = 1.0 - step(1.0, v);
-	return inside * (smoothstep(0.78, 0.94, v) * 0.85 + 0.15);
-}
-
 void fragment() {
 	vec3 n = normalize(v_world_normal);
 	vec3 w = triplanar_weights(n);
@@ -101,11 +86,13 @@ void fragment() {
 
 	if (ti <= 1 && !is_wall) {
 		// Water surface: two scrolling normal layers.
-		vec2 uv1 = v_world_pos.xz * water_wave_scale + TIME * vec2(0.012, 0.007);
-		vec2 uv2 = v_world_pos.xz * water_wave_scale * 1.9 - TIME * vec2(0.009, 0.014);
+		// Waves drift with the wind and get choppier as it picks up.
+		vec2 drift = wind_direction * wind_time * 0.03;
+		vec2 uv1 = v_world_pos.xz * water_wave_scale - drift + TIME * vec2(0.004, 0.002);
+		vec2 uv2 = v_world_pos.xz * water_wave_scale * 1.9 - drift * 1.6 - TIME * vec2(0.003, 0.005);
 		vec3 n1 = texture(water_normal, uv1).xyz * 2.0 - 1.0;
 		vec3 n2 = texture(water_normal, uv2).xyz * 2.0 - 1.0;
-		vec2 slope = (n1.xy + n2.xy) * water_wave_strength;
+		vec2 slope = (n1.xy + n2.xy) * water_wave_strength * (0.6 + 0.9 * wind_strength);
 		wn = normalize(vec3(slope.x, 1.0, slope.y));
 		albedo = ti == 0 ? water_deep_color : water_shallow_color;
 		rough = terrain_roughness[ti];
@@ -124,8 +111,11 @@ void fragment() {
 			base *= 1.0 - wall_ao_strength * smoothstep(0.0, wall_ao_depth, UV.y);
 			base *= 1.0 + 0.12 * (1.0 - smoothstep(0.0, 0.8, UV.y));
 		}
-		albedo = base;
+		// Rain darkens the ground and makes it shinier.
+		albedo = base * (1.0 - 0.35 * wetness);
+		rough = mix(rough, rough * 0.45, wetness);
 	}
+	albedo *= cloud_shadow(v_world_pos);
 
 	vec3 emission = vec3(0.0);
 	if (!is_wall) {
@@ -133,11 +123,6 @@ void fragment() {
 			float e = smoothstep(1.0 - grid_width, 1.0, UV.x);
 			albedo *= 1.0 - e * grid_strength;
 		}
-		float h = hex_highlight(v_world_pos.xz, hover_cell) * (1.0 - step(0.05, abs(v_world_pos.y - hover_y)));
-		float s = hex_highlight(v_world_pos.xz, select_cell) * (1.0 - step(0.05, abs(v_world_pos.y - select_y)));
-		albedo = mix(albedo, hover_color.rgb, h * 0.3);
-		albedo = mix(albedo, select_color.rgb, s * 0.3);
-		emission = hover_color.rgb * h * 0.5 + select_color.rgb * s * 0.5;
 	}
 
 	ALBEDO = albedo;

@@ -1,6 +1,9 @@
 class_name TreeScatter
 extends RefCounted
 ## Scatters simple low-poly conifers on forest hexes using one MultiMesh per level.
+## shaders/tree_wind.gdshader makes them sway with the shared wind (see Atmosphere).
+
+const SHADER_PATH := "res://shaders/tree_wind.gdshader"
 
 static var _tree_mesh: ArrayMesh
 
@@ -17,6 +20,7 @@ static func build(level: HexLevel, settings: HexMapSettings, parent: Node3D) -> 
 	for i in level.cell_count():
 		if level.terrain[i] != HexMapGenerator.Terrain.FOREST:
 			continue
+		var on_river := level.river[i] == 1
 		rng.seed = hash(Vector3i(level.coords[i].x, level.coords[i].y, level.level_index))
 		var c := level.cell_center(i)
 		var y := level.top_y(i)
@@ -25,7 +29,9 @@ static func build(level: HexLevel, settings: HexMapSettings, parent: Node3D) -> 
 		while placed < per_hex and attempts < per_hex * 4:
 			attempts += 1
 			var p := Vector2(rng.randf_range(-s, s), rng.randf_range(-s, s))
-			if not HexCoords.contains(p, s * 0.82):
+			if not HexCoords.contains(p, s * 0.72):
+				continue
+			if on_river and p.length() < s * 0.45:
 				continue
 			var scale := tree_h * rng.randf_range(0.7, 1.3)
 			var basis := Basis(Vector3.UP, rng.randf() * TAU).scaled(Vector3(scale, scale * rng.randf_range(0.85, 1.2), scale))
@@ -52,13 +58,17 @@ static func build(level: HexLevel, settings: HexMapSettings, parent: Node3D) -> 
 static func _get_mesh() -> ArrayMesh:
 	if _tree_mesh != null:
 		return _tree_mesh
-	var trunk_mat := StandardMaterial3D.new()
-	trunk_mat.albedo_color = Color(0.32, 0.22, 0.14)
-	trunk_mat.roughness = 0.95
-	var leaf_mat := StandardMaterial3D.new()
-	leaf_mat.albedo_color = Color(0.16, 0.32, 0.15)
-	leaf_mat.vertex_color_use_as_albedo = true
-	leaf_mat.roughness = 0.9
+	var shader: Shader = load(SHADER_PATH)
+	var trunk_mat := ShaderMaterial.new()
+	trunk_mat.shader = shader
+	trunk_mat.set_shader_parameter("albedo", Color(0.32, 0.22, 0.14))
+	trunk_mat.set_shader_parameter("use_instance_color", false)
+	trunk_mat.set_shader_parameter("roughness", 0.95)
+	var leaf_mat := ShaderMaterial.new()
+	leaf_mat.shader = shader
+	leaf_mat.set_shader_parameter("albedo", Color(0.16, 0.32, 0.15))
+	leaf_mat.set_shader_parameter("use_instance_color", true)
+	leaf_mat.set_shader_parameter("roughness", 0.9)
 
 	_tree_mesh = ArrayMesh.new()
 	var trunk := CylinderMesh.new()

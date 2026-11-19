@@ -13,7 +13,10 @@ Gaea exports a heightmap and terrain masks. Logiheim samples them onto a hex gri
 - **Hex heights from terrain:** every hex is a prism whose height comes from the Gaea heightmap, quantised to `step_height`. Cliff walls are drawn only where a neighbouring hex is lower.
 - **Multi-scale / LOD:** several hex scales (default ×1, ×3, ×8). The camera switches to coarser levels as you zoom out. Levels are linked parent ↔ children, so you can use them as regions in gameplay.
 - **Textures:** triplanar texture arrays with one layer per terrain type, normal maps, macro variation to hide tiling, cliff walls that go from soil to rock with fake AO, animated water, grid lines, and hover/selection highlights.
-- **Forests:** low-poly conifers placed with a MultiMesh.
+- **Forests:** low-poly conifers placed with a MultiMesh that sway in the wind, with gusts rolling across the map. Maps without a forest mask get noise-based forest patches on gentle land.
+- **Organic borders:** hex outlines wobble with a world-space noise field (`border_noise`), so tiles don't look like perfect hexagons but still fit together exactly.
+- **Rivers:** drainage is routed over the hex grid from the heightmap (or a Gaea `river` mask). Rivers widen downstream, flow with animated foam, and drop as waterfalls where the terrain steps down.
+- **Atmosphere:** day/night cycle with sun and moon, drifting clouds that cast moving shadows, wind that drives trees, waves and clouds together, and weather (clear, cloudy, rain) with wet ground, fog and the odd lightning flash.
 
 ## Getting started
 
@@ -31,6 +34,9 @@ Gaea exports a heightmap and terrain masks. Logiheim samples them onto a hex gri
 | `-` `=` | Vertical exaggeration |
 | `1`–`5` / `0` | Force a LOD level / automatic LOD |
 | G / T / H | Toggle grid / trees / HUD |
+| N | Pause / run the day cycle |
+| `,` `.` | Time of day −1 h / +1 h |
+| R | Weather: clear → cloudy → rain |
 
 ## Using your own Gaea maps
 
@@ -49,11 +55,20 @@ scripts/map/hex_map_settings.gd    all tunables (Resource)
 scripts/map/hex_map_generator.gd   sampling, classification, LOD aggregation, parent links
 scripts/map/hex_level.gd           one hex grid's cell data
 scripts/map/hex_mesh_builder.gd    chunked stepped-prism meshes
+scripts/map/border_noise.gd        noisy hex outlines shared by neighbours
+scripts/map/river_network.gd       drainage, flow accumulation, river cells
+scripts/map/river_mesh_builder.gd  river ribbons and waterfalls
 scripts/map/terrain_material.gd    texture arrays and shader setup
 scripts/map/tree_scatter.gd        forest MultiMesh
 scripts/map/hex_map.gd             HexMap node: build, LOD switching, picking, highlights
+scripts/env/atmosphere.gd          sky, sun/moon, day cycle, weather, wind, clouds, rain
 scripts/camera/strategy_camera.gd  RTS camera
 scripts/main.gd                    demo scene, HUD and controls
 shaders/hex_terrain.gdshader       terrain shader
+shaders/river.gdshader             flowing water and waterfalls
+shaders/tree_wind.gdshader         swaying trees
+shaders/clouds.gdshader            cloud layer
+shaders/highlight.gdshader         hover / selection overlay
+shaders/include/environment.gdshaderinc  shared wind, cloud and wetness state (global shader parameters)
 tools/                             Python generators for placeholder data (numpy, pillow)
 ```

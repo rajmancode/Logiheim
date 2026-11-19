@@ -15,6 +15,7 @@ data/gaea/my_map/
   rock.png
   snow.png
   forest.png
+  river.png            # optional, adds rivers on top of the drainage rule
 ```
 
 ## map.json
@@ -36,7 +37,7 @@ data/gaea/my_map/
 | `height_range` | How many metres a height value of 1.0 represents. Use the height setting from your Gaea project. |
 | `sea_level` | Normalised (0–1) water line. Optional; if it's missing, `HexMapSettings.sea_level` is used. |
 | `heightmap.format` | `r16` (16-bit unsigned, little-endian), `r32` (32-bit float), or any image Godot can load (`exr`, `png`). For raw files, also give `width`/`height`; if you leave them out the map is assumed square. Add `"endian": "big"` if needed. For floats outside 0–1, add `"min"`/`"max"`. |
-| `masks` | Optional. Recognised names: `water`, `deep_water`, `sand`, `rock`, `snow`, `forest`, `dirt`. |
+| `masks` | Optional. Recognised names: `water`, `deep_water`, `sand`, `rock`, `snow`, `forest`, `dirt`, `river`. |
 
 Use a 16-bit or float heightmap. Godot reduces 16-bit PNGs to 8 bits when it loads them, which produces visible banding.
 
@@ -49,6 +50,7 @@ Use a 16-bit or float heightmap. Godot reduces 16-bit PNGs to 8 bits when it loa
    - `snow`: Gaea's snow node output, or a height selector near the peaks.
    - `sand`: a narrow height band just above sea level, or erosion deposits near the shore.
    - `forest`: soil/flow/moisture-style data, minus rock and snow.
+   - `river` (optional): a Flow / Rivers node output, thresholded so only the main channels are white. Logiheim works out rivers from the heightmap on its own, so you only need this to force rivers where you want them.
 3. Make every export cover the **same area**. The resolutions can differ.
 
 Node and format names vary between Gaea versions, so treat the list above as intent rather than exact menu paths.
@@ -60,6 +62,7 @@ Any mask you leave out falls back to a height or slope rule in `HexMapSettings` 
 - **Finest level (level 0):** the heightmap and masks are sampled at the hex centre plus six points 60% of the way to the corners. Height is the average of those samples, slope is the sample range divided by the hex width, and each mask is averaged.
 - **Classification order:** water → snow → rock → sand → forest → dirt → grass. If a mask exists it decides; otherwise the fallback rule does.
 - **Elevation:** `round(height × height_range × height_scale / step_height)`. Water sits flat at sea level, and land is always at least one step above it.
+- **Rivers:** each level is drained separately. A priority flood from the sea and map edge gives every land hex one downstream neighbour (pits spill over their lowest rim), then flow accumulates downstream. A hex becomes river when its catchment exceeds `river_catchment` × the total land area, or when the `river` mask is above `mask_threshold`. Every hex below a river hex is river too, so rivers always reach the sea or the map edge.
 - **Coarser levels:** each coarse hex takes the majority terrain of the finest hexes inside it and their mean land height. Every level stores `parent` and `children` links to the next level, so gameplay can move between scales (a region contains tiles, for example).
 
 ## Exporting the game

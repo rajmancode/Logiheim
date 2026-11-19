@@ -14,6 +14,7 @@ var settings: HexMapSettings
 var sea_level := 0.3
 var _sea_step := 0
 var _meters_per_unit := 1.0
+var _forest_noise := FastNoiseLite.new()
 
 
 func _init(p_source: TerrainSource, p_settings: HexMapSettings) -> void:
@@ -22,6 +23,10 @@ func _init(p_source: TerrainSource, p_settings: HexMapSettings) -> void:
 	sea_level = source.sea_level if source.sea_level >= 0.0 else settings.sea_level
 	_meters_per_unit = source.height_range * settings.height_scale
 	_sea_step = roundi(sea_level * _meters_per_unit / settings.step_height)
+	_forest_noise.noise_type = FastNoiseLite.TYPE_SIMPLEX_SMOOTH
+	_forest_noise.frequency = 1.0 / 220.0
+	_forest_noise.fractal_octaves = 3
+	_forest_noise.seed = 9001
 
 
 static func is_water(t: int) -> bool:
@@ -56,6 +61,8 @@ func build_levels() -> Array[HexLevel]:
 			_aggregate(level, levels[0])
 			_link(levels[i - 1], level)
 		level.update_elevation_range()
+		if settings.rivers_enabled:
+			RiverNetwork.build(level, source, settings)
 		levels.append(level)
 	return levels
 
@@ -107,14 +114,23 @@ func _sample_cell(level: HexLevel, i: int) -> void:
 		mask_sum[key] /= n
 	var h_mean := h_sum / n
 	var slope := (h_max - h_min) * source.height_range / (1.2 * level.hex_size)
-	var t := classify(h_mean, slope, mask_sum)
+	var t := classify(h_mean, slope, mask_sum, _forest_fallback(c, h_mean, slope))
 	level.height[i] = h_mean
 	level.slope[i] = slope
 	level.terrain[i] = t
 	level.elevation[i] = elevation_for(h_mean, t)
 
 
-func classify(h: float, slope: float, m: Dictionary) -> int:
+## Used only when the map has no forest mask: patches of forest on gentle land above the beach.
+func _forest_fallback(p: Vector2, h: float, slope: float) -> bool:
+	if settings.forest_fallback <= 0.0:
+		return false
+	if h < sea_level + settings.beach_height * 2.0 or slope > settings.rock_slope * 0.7:
+		return false
+	return _forest_noise.get_noise_2dv(p) * 0.5 + 0.5 < settings.forest_fallback
+
+
+func classify(h: float, slope: float, m: Dictionary, forest_fallback := false) -> int:
 	if _flag(m, "water", h < sea_level):
 		var deep := _flag(m, "deep_water", h < sea_level - settings.shallow_depth)
 		return Terrain.DEEP_WATER if deep else Terrain.SHALLOW_WATER
@@ -124,7 +140,7 @@ func classify(h: float, slope: float, m: Dictionary) -> int:
 		return Terrain.ROCK
 	if _flag(m, "sand", h < sea_level + settings.beach_height):
 		return Terrain.SAND
-	if _flag(m, "forest", false):
+	if _flag(m, "forest", forest_fallback):
 		return Terrain.FOREST
 	if _flag(m, "dirt", false):
 		return Terrain.DIRT
