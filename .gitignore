@@ -1,0 +1,14 @@
+# Godot 4
+.godot/
+/android/
+*.translation
+export/
+export_presets.cfg.bak
+
+# Python
+__pycache__/
+*.pyc
+
+# OS
+.DS_Store
+Thumbs.db

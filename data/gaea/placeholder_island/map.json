@@ -1,0 +1,23 @@
+{
+  "name": "Placeholder Island",
+  "world_size": [
+    2048,
+    2048
+  ],
+  "height_range": 260.0,
+  "sea_level": 0.1111,
+  "heightmap": {
+    "file": "heightmap.r16",
+    "format": "r16",
+    "width": 1024,
+    "height": 1024
+  },
+  "masks": {
+    "water": "water.png",
+    "sand": "sand.png",
+    "rock": "rock.png",
+    "snow": "snow.png",
+    "forest": "forest.png"
+  },
+  "source": "placeholder (tools/make_placeholder_terrain.py)"
+}

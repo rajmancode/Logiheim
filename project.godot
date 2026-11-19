@@ -1,0 +1,22 @@
+; Engine configuration file.
+; Open this folder with Godot 4.3 or newer.
+
+config_version=5
+
+[application]
+
+config/name="Logiheim"
+config/description="Hex strategy map generated from Gaea terrain exports."
+run/main_scene="res://scenes/main.tscn"
+config/features=PackedStringArray("4.3", "Forward Plus")
+config/icon="res://icon.svg"
+
+[display]
+
+window/size/viewport_width=1600
+window/size/viewport_height=900
+
+[rendering]
+
+anti_aliasing/quality/msaa_3d=2
+textures/default_filters/anisotropic_filtering_level=3

@@ -1,0 +1,23 @@
+{
+  "name": "Placeholder Valley",
+  "world_size": [
+    3072,
+    1536
+  ],
+  "height_range": 320.0,
+  "sea_level": 0.1565,
+  "heightmap": {
+    "file": "heightmap.r16",
+    "format": "r16",
+    "width": 1024,
+    "height": 512
+  },
+  "masks": {
+    "water": "water.png",
+    "sand": "sand.png",
+    "rock": "rock.png",
+    "snow": "snow.png",
+    "forest": "forest.png"
+  },
+  "source": "placeholder (tools/make_placeholder_terrain.py)"
+}
