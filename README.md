@@ -2,20 +2,23 @@
 
 A hex strategy map built in **Godot 4.3+**, with terrain generated in **Gaea**.
 
-Gaea exports a heightmap and terrain masks. Logiheim samples them onto a hex grid and draws **stepped 3D hex tiles** with textures.
+Gaea exports a heightmap and terrain masks. Logiheim samples them onto a hex grid and draws a **realistic, soft-stepped landscape**. Every hex keeps its own height as a gentle terrace, so the board still reads as hexes, but the ground between them is continuous terrain with real relief, photo-scanned textures, carved rivers, a proper sea, forests, rocks and grass.
 
-![Top-down preview of the placeholder island at 20 m hexes](docs/images/preview_island.png)
+![The placeholder island at 20 m hexes: beaches, forests, a river in its carved channel](docs/images/preview_island.png)
+
+![first_project from Gaea: grassland, rock and rivers on soft hex terraces](docs/images/preview_first_project.png)
 
 ## Features
 
 - **Adjustable hex size:** `base_hex_size` (or `[` / `]` in game) rebuilds the grid at any scale.
 - **Variable map size:** each map defines its own world size in metres, square or not. The grid fits itself to the map.
-- **Hex heights from terrain:** every hex is a prism whose height comes from the Gaea heightmap, quantised to `step_height`. Cliff walls are drawn only where a neighbouring hex is lower.
+- **Soft-stepped terrain:** each hex has a plateau at its stepped height (`step_height`) that slopes smoothly into its neighbours (`step_softness`), with the real Gaea relief layered on top (`terrain_detail`). The sea floor deepens offshore.
 - **Multi-scale / LOD:** several hex scales (default ×1, ×3, ×8). The camera switches to coarser levels as you zoom out. Levels are linked parent ↔ children, so you can use them as regions in gameplay.
-- **Textures:** triplanar texture arrays with one layer per terrain type, normal maps, macro variation to hide tiling, cliff walls that go from soil to rock with fake AO, animated water, grid lines, and hover/selection highlights.
-- **Forests:** low-poly conifers placed with a MultiMesh that sway in the wind, with gusts rolling across the map. Maps without a forest mask get noise-based forest patches on gentle land.
-- **Organic borders:** hex outlines wobble with a world-space noise field (`border_noise`), so tiles don't look like perfect hexagons but still fit together exactly.
-- **Rivers:** drainage is routed over the hex grid from the heightmap (or a Gaea `river` mask). Rivers widen downstream, flow with animated foam, and drop as waterfalls where the terrain steps down.
+- **Photo-scanned textures:** CC0 PBR sets from ambientCG (colour, height, normal, AO, roughness). Layers mix by **height-based blending**, so grass grows between stones and sand fills cracks. Steep ground turns to rock, and beaches form at the waterline. Textures follow the real landscape (`natural_texturing`) instead of painting each hex one colour, with large-scale variation to hide tiling.
+- **Sea:** depth-coloured water using the depth buffer, refraction of the sea floor, wind-driven waves, foam lapping at the shoreline, whitecaps in strong wind and sky reflections.
+- **Rivers:** drainage is routed over the hex grid from the heightmap (or a Gaea `river` mask). Rivers widen downstream, run in channels carved into the terrain with muddy banks, and foam where they run steeply. Their water level never rises downstream, so they cut gorges instead of flowing uphill.
+- **Vegetation and rocks (made in Blender):** three conifer variants, two broadleaf trees, two bushes and four chiselled boulders (`tools/blender/make_vegetation.py`). Forests mix conifers and broadleaf, with more conifers higher up. Trees and grass sway in the wind, leaves let light through, and rocks get moss on top. Dense grass (`grass_density`) is drawn near the camera only.
+- **Hex grid:** drawn by the shaders with irregular, noise-wobbled borders (`border_noise`). The CPU uses the same noise for picking, so what you click is exactly what's outlined. Hover and selection highlights work the same way.
 - **Atmosphere:** day/night cycle with sun and moon, drifting clouds that cast moving shadows, wind that drives trees, waves and clouds together, and weather (clear, cloudy, rain) with wet ground, fog and the odd lightning flash.
 
 ## Getting started
@@ -33,7 +36,7 @@ Gaea exports a heightmap and terrain masks. Logiheim samples them onto a hex gri
 | `[` `]` | Smaller / larger hexes |
 | `-` `=` | Vertical exaggeration |
 | `1`–`5` / `0` | Force a LOD level / automatic LOD |
-| G / T / H | Toggle grid / trees / HUD |
+| G / T / H | Toggle grid / trees & bushes / HUD |
 | N | Pause / run the day cycle |
 | `,` `.` | Time of day −1 h / +1 h |
 | R | Weather: clear → cloudy → rain |
@@ -42,9 +45,10 @@ Gaea exports a heightmap and terrain masks. Logiheim samples them onto a hex gri
 
 See **[docs/GAEA_PIPELINE.md](docs/GAEA_PIPELINE.md)**. In short, export a 16-bit heightmap and some grayscale masks into `data/gaea/<map>/`, then add a `map.json`.
 
-## Better textures
+## Textures and models
 
-The textures in `assets/textures/terrain/` are procedural placeholders made by `tools/make_terrain_textures.py`. To use real ones, replace them with CC0 PBR sets (for example from ambientCG or Poly Haven). Keep the same names, `<layer>_albedo.jpg` and `<layer>_normal.png`, and use OpenGL-style (`NormalGL`) normal maps. The layers are `sand, grass, forest_floor, rock, snow, dirt`. They're loaded at 512² into a texture array; change `TerrainMaterial.LAYER_SIZE` for higher resolution.
+- **Terrain textures** come from [ambientCG](https://ambientcg.com) (CC0, see `assets/textures/terrain/CREDITS.md`). To swap one, download another 1K-JPG set, change the asset id in `tools/pack_ambientcg.py` and run `python tools/pack_ambientcg.py <download folder>`. Each layer is packed into `<layer>_albedo.png` (RGB colour + height) and `<layer>_normal.png` (NormalGL + AO + roughness).
+- **Trees, bushes and rocks** are generated in Blender: `blender -b --python tools/blender/make_vegetation.py -- assets/models/vegetation`. Any `.glb` with materials named `Bark`, `Leaves` or `Rock` (and vertex-colour AO) can replace them.
 
 ## Project layout
 
@@ -54,21 +58,28 @@ scripts/map/terrain_source.gd      loads map.json, heightmap and masks
 scripts/map/hex_map_settings.gd    all tunables (Resource)
 scripts/map/hex_map_generator.gd   sampling, classification, LOD aggregation, parent links
 scripts/map/hex_level.gd           one hex grid's cell data
-scripts/map/hex_mesh_builder.gd    chunked stepped-prism meshes
-scripts/map/border_noise.gd        noisy hex outlines shared by neighbours
+scripts/map/terrain_surface.gd     soft-stepped height grid, river carving, texture weights
+scripts/map/terrain_mesh_builder.gd chunked terrain meshes
+scripts/map/border_noise.gd        irregular hex borders (same noise as the shaders)
 scripts/map/river_network.gd       drainage, flow accumulation, river cells
-scripts/map/river_mesh_builder.gd  river ribbons and waterfalls
-scripts/map/terrain_material.gd    texture arrays and shader setup
-scripts/map/tree_scatter.gd        forest MultiMesh
+scripts/map/river_mesh_builder.gd  river paths and water ribbons
+scripts/map/terrain_material.gd    PBR texture arrays and per-level material setup
+scripts/map/vegetation.gd          trees, bushes and rocks (MultiMesh, chunked)
+scripts/map/grass_field.gd         grass near the camera
 scripts/map/hex_map.gd             HexMap node: build, LOD switching, picking, highlights
 scripts/env/atmosphere.gd          sky, sun/moon, day cycle, weather, wind, clouds, rain
 scripts/camera/strategy_camera.gd  RTS camera
 scripts/main.gd                    demo scene, HUD and controls
-shaders/hex_terrain.gdshader       terrain shader
-shaders/river.gdshader             flowing water and waterfalls
-shaders/tree_wind.gdshader         swaying trees
+shaders/hex_terrain.gdshader       terrain: height-blended PBR layers, grid, highlights
+shaders/water.gdshader             sea: depth colour, refraction, waves, shore foam
+shaders/river.gdshader             flowing river water
+shaders/tree_wind.gdshader         swaying trees and bushes
+shaders/rock.gdshader              boulders with moss
+shaders/grass.gdshader             grass blades
 shaders/clouds.gdshader            cloud layer
-shaders/highlight.gdshader         hover / selection overlay
 shaders/include/environment.gdshaderinc  shared wind, cloud and wetness state (global shader parameters)
-tools/                             Python generators for placeholder data (numpy, pillow)
+shaders/include/hex_grid.gdshaderinc     hex grid lines and highlights
+tools/make_placeholder_terrain.py  placeholder Gaea exports (numpy, pillow)
+tools/pack_ambientcg.py            packs ambientCG texture sets
+tools/blender/make_vegetation.py   Blender script for trees, bushes and rocks
 ```

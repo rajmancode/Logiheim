@@ -12,11 +12,26 @@ extends Resource
 ## Chunk edge length in hexes. Each chunk is one mesh, for frustum culling.
 @export_range(4, 64) var chunk_size := 16
 
+@export_group("Terrain")
+## Terrain vertices per hex size (5 m spacing for 20 m hexes at 4).
+@export_range(1.0, 10.0, 0.5) var terrain_resolution := 4.0
+## How far each hex's flat plateau blends into its neighbours, in hex sizes.
+## About 1.0 gives hard-ish terraces, 1.6 smooth hills (the hex steps almost vanish).
+@export_range(0.9, 2.0, 0.05) var step_softness := 1.25
+## How much of the real Gaea relief shows inside each hex (0 = flat plateaus).
+@export_range(0.0, 1.5, 0.05) var terrain_detail := 0.5
+## Sea floor depth in metres right off the coast, and how much it deepens per metre offshore.
+@export var seabed_depth := 2.5
+@export var seabed_slope := 0.06
+## Rise/run above which the ground turns to bare rock.
+@export var cliff_slope := 0.85
+## How much ground textures follow the real landscape (Gaea masks, height, slope) instead of
+## each hex's single terrain type. 0 = one texture per hex, 1 = fully natural.
+@export_range(0.0, 1.0, 0.05) var natural_texturing := 0.65
+
 @export_group("Borders")
-## How far hex outlines wobble, as a fraction of the hex size. 0 gives perfect hexagons.
+## How far hex borders wobble, as a fraction of the hex size. 0 gives perfect hexagons.
 @export_range(0.0, 0.3, 0.01) var border_noise := 0.13
-## Points per hex edge for the wobble. Keep it even so rivers cross at an outline point.
-@export_range(1, 8) var border_segments := 4
 
 @export_group("Elevation")
 ## Vertical exaggeration applied to the Gaea height range.
@@ -50,8 +65,16 @@ extends Resource
 ## Widest a river can get, as a fraction of the hex size.
 @export_range(0.05, 0.9) var river_max_width := 0.42
 
-@export_group("Decoration")
+@export_group("Vegetation")
 @export var trees_enabled := true
 ## Rough spacing between trees on forest hexes, in metres.
-@export var tree_spacing := 7.0
-@export_range(1, 64) var max_trees_per_hex := 14
+@export var tree_spacing := 6.5
+@export_range(1, 128) var max_trees_per_hex := 40
+## Real tree height range in metres (scaled up a little on coarse levels so they stay readable).
+@export var tree_height := Vector2(11.0, 22.0)
+@export var rocks_enabled := true
+@export var grass_enabled := true
+## Grass clumps per square metre on grassy ground (finest level only).
+@export_range(0.0, 2.0, 0.01) var grass_density := 0.6
+## Grass is drawn only this close to the camera, in metres.
+@export var grass_view_distance := 260.0

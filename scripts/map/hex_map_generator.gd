@@ -29,6 +29,11 @@ func _init(p_source: TerrainSource, p_settings: HexMapSettings) -> void:
 	_forest_noise.seed = 9001
 
 
+## World y of the sea surface.
+func sea_y() -> float:
+	return _sea_step * settings.step_height
+
+
 static func is_water(t: int) -> bool:
 	return t <= Terrain.SHALLOW_WATER
 
@@ -122,6 +127,10 @@ func _sample_cell(level: HexLevel, i: int) -> void:
 
 
 ## Used only when the map has no forest mask: patches of forest on gentle land above the beach.
+func forest_fallback_at(p: Vector2, h: float, slope: float) -> bool:
+	return _forest_fallback(p, h, slope)
+
+
 func _forest_fallback(p: Vector2, h: float, slope: float) -> bool:
 	if settings.forest_fallback <= 0.0:
 		return false

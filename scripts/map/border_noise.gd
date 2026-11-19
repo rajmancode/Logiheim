@@ -1,61 +1,66 @@
 class_name BorderNoise
 extends RefCounted
-## Wobbles hex outlines so the map doesn't look like perfect hexagons.
+## Makes hex borders irregular. Instead of moving outline points, every lookup point is
+## nudged by a smooth 2D offset field before finding its hex: cell(p) = hex_at(p + offset(p)).
 ##
-## The displacement is a 2D noise field that depends only on world position, and corner
-## points are snapped before sampling. Two hexes that share an edge therefore compute exactly
-## the same outline, so tops and cliff walls still meet without gaps or overlaps.
+## The same field is computed in shaders/include/hex_grid.gdshaderinc (integer-hash value
+## noise, identical maths), so grid lines and highlights drawn on the GPU match picking and
+## placement done here on the CPU.
 
-## Maximum displacement in metres.
+const MASK := 0xFFFFFFFF
+
+## Maximum offset in metres.
 var amplitude := 0.0
-## Points per hex edge (more = smoother wobble).
-var segments := 1
-
-var _nx := FastNoiseLite.new()
-var _ny := FastNoiseLite.new()
+## Noise frequency, 1/metres.
+var frequency := 0.05
 
 
-func _init(hex_size: float, strength: float, p_segments: int) -> void:
+func _init(hex_size: float, strength: float) -> void:
 	amplitude = maxf(0.0, hex_size * strength)
-	segments = maxi(1, p_segments)
-	var seed_value := 1337
-	for n: FastNoiseLite in [_nx, _ny]:
-		n.noise_type = FastNoiseLite.TYPE_SIMPLEX_SMOOTH
-		n.frequency = 1.3 / hex_size
-		n.fractal_type = FastNoiseLite.FRACTAL_FBM
-		n.fractal_octaves = 2
-		n.seed = seed_value
-		seed_value += 4242
+	frequency = 1.0 / (0.9 * hex_size)
 
 
-func displace(p: Vector2) -> Vector2:
+func offset(p: Vector2) -> Vector2:
 	if amplitude <= 0.0:
-		return p
-	return p + Vector2(_nx.get_noise_2dv(p), _ny.get_noise_2dv(p)) * amplitude
+		return Vector2.ZERO
+	var q := p * frequency
+	var o := Vector2(value_noise(q + Vector2(13.7, 4.1)), value_noise(q + Vector2(-7.3, 21.9)))
+	var q2 := q * 2.3
+	o += Vector2(value_noise(q2 + Vector2(3.1, -9.4)), value_noise(q2 + Vector2(17.2, 5.6))) * 0.35
+	return (o / 1.35 * 2.0 - Vector2.ONE) * amplitude
 
 
-## Displaced outline of edge k of the hex at `center` (corner k to corner k + 1), as
-## segments + 1 world points. Neighbours get the same points in reverse order.
-func hex_edge(center: Vector2, size: float, k: int) -> PackedVector2Array:
-	var a := _corner(center, size, k)
-	var b := _corner(center, size, (k + 1) % 6)
-	var flip := b.x < a.x or (b.x == a.x and b.y < a.y)
-	var p0 := b if flip else a
-	var p1 := a if flip else b
-	var out := PackedVector2Array()
-	for s in segments + 1:
-		out.append(displace(p0.lerp(p1, float(s) / segments)))
-	if flip:
-		out.reverse()
-	return out
+## Index of the cell whose (irregular) area contains world point p, or -1.
+func cell_at(level: HexLevel, p: Vector2) -> int:
+	return level.cell_at(p + offset(p))
 
 
-## Displaced midpoint of edge k (where a river crosses into the neighbour).
-func edge_mid(center: Vector2, size: float, k: int) -> Vector2:
-	var a := _corner(center, size, k)
-	var b := _corner(center, size, (k + 1) % 6)
-	return displace((a + b) * 0.5)
+## Same as env_noise() in the shaders: smooth value noise on an integer lattice, 0..1.
+static func value_noise(p: Vector2) -> float:
+	var ix := floori(p.x)
+	var iy := floori(p.y)
+	var fx := p.x - ix
+	var fy := p.y - iy
+	var ux := fx * fx * (3.0 - 2.0 * fx)
+	var uy := fy * fy * (3.0 - 2.0 * fy)
+	var a := lattice_hash(ix, iy)
+	var b := lattice_hash(ix + 1, iy)
+	var c := lattice_hash(ix, iy + 1)
+	var d := lattice_hash(ix + 1, iy + 1)
+	return lerpf(lerpf(a, b, ux), lerpf(c, d, ux), uy)
 
 
-static func _corner(center: Vector2, size: float, k: int) -> Vector2:
-	return (center + HexCoords.corner(k, size)).snapped(Vector2(0.001, 0.001))
+## 32-bit integer hash, bit-for-bit the same as env_hash() in environment.gdshaderinc.
+static func lattice_hash(ix: int, iy: int) -> float:
+	var h := _mul(ix & MASK, 1597334677) ^ _mul(iy & MASK, 3812015801)
+	h ^= h >> 16
+	h = _mul(h, 2146121005)
+	h ^= h >> 15
+	h = _mul(h, 2221713035)
+	h ^= h >> 16
+	return float(h) / 4294967295.0
+
+
+## (a * b) mod 2^32 without overflowing 64-bit ints.
+static func _mul(a: int, b: int) -> int:
+	return (a * (b & 0xFFFF) + (((a * (b >> 16)) & 0xFFFF) << 16)) & MASK

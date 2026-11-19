@@ -36,7 +36,7 @@ void fragment() {
 	// Foam along the banks and all over waterfalls, broken up by the moving noise.
 	float bank = 1.0 - smoothstep(0.0, 0.22, min(UV.x, 1.0 - UV.x));
 	float churn = smoothstep(0.15, 0.6, n1.x * 0.5 + n2.y * 0.5 + 0.35);
-	float foam = clamp(max(bank * 0.55, v_fall * 0.9) * churn, 0.0, 1.0);
+	float foam = clamp(max(bank * 0.35, v_fall * 0.8) * churn, 0.0, 1.0);
 
 	vec3 water = mix(river_color, river_edge_color, bank * 0.6);
 	vec3 albedo = mix(water, foam_color, foam);
