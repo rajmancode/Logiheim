@@ -16,6 +16,8 @@ data/gaea/my_map/
   snow.png
   forest.png
   river.png            # optional, adds rivers where it is painted
+  lake.png             # optional, paints lakes exactly
+  res_iron.png         # optional, forces a resource (res_<key>, see below)
 ```
 
 ## map.json
@@ -37,7 +39,7 @@ data/gaea/my_map/
 | `height_range` | How many metres a height value of 1.0 represents. Use the height setting from your Gaea project. |
 | `sea_level` | Normalised (0–1) water line. Optional; if it's missing, `HexMapSettings.sea_level` is used. |
 | `heightmap.format` | `r16` (16-bit unsigned, little-endian), `r32` (32-bit float), or any image Godot can load (`exr`, `png`). For raw files, also give `width`/`height`; if you leave them out the map is assumed square. Add `"endian": "big"` if needed. For floats outside 0–1, add `"min"`/`"max"`. |
-| `masks` | Optional. Recognised names: `water`, `deep_water`, `sand`, `rock`, `snow`, `forest`, `dirt`, `river`. |
+| `masks` | Optional. Recognised names: `water`, `deep_water`, `sand`, `rock`, `snow`, `forest`, `dirt`, `river`, `lake`, and `res_<key>` for resources. |
 
 Use a 16-bit or float heightmap. Godot reduces 16-bit PNGs to 8 bits when it loads them, which produces visible banding.
 
@@ -66,6 +68,8 @@ Any mask you leave out falls back to a height or slope rule in `HexMapSettings` 
   - The courses are smoothed and given meanders on flat ground, and tributaries end exactly on the river they join. The same courses are used on every level.
   - Width = `river_width_scale` × √(catchment in km²), between `river_min_width` and `river_max_width`. Coarse levels draw rivers at least `river_min_width_per_hex` × the hex size wide.
   - A hex is marked as river (`level.river`, `level.river_width`) where a river passes through it, and as lake (`level.lake`) when its centre is under a lake. `level.downstream` / `level.flow` still give hex-to-hex drainage for gameplay.
+- **Extra lakes** (`scripts/map/lake_maker.gd`): `lake_count` lakes are added by damming the flattest river valleys (raising an imaginary dam until the lake reaches `lake_target_area`), including one highland tarn. A `lake` mask lakes the painted area (water covers about 85% of it). The ground is deepened inside the basin and raised into a natural dam wherever the water would spill, so rivers flow in and out of these lakes like natural ones.
+- **Resources** (`scripts/map/natural_resources.gd`): each finest-level hex gets at most one resource, chosen by rules on terrain, height, slope, rivers, lakes, coast and open sea. Rare kinds are placed first and keep a minimum distance from each other. To force one, paint a mask named `res_<key>`. The keys are `timber, oak, tar, stone, soapstone, iron, bog_iron, coal, gold, silver, gems, fish, whales, seals, farmland, wool, horses, game, furs, clay, salt, peat, amber`. Data is in `level.resource` and `level.resource_amount` (1–3).
 - **Coarser levels:** each coarse hex takes the majority terrain of the finest hexes inside it and their mean land height. Every level stores `parent` and `children` links to the next level, so gameplay can move between scales (a region contains tiles, for example).
 
 ## Exporting the game

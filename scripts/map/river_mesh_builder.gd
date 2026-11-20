@@ -378,7 +378,7 @@ static func _ribbon(path: RiverPath, verts: PackedVector3Array, normals: PackedV
 
 ## Flat water at each lake's level over the lake cells (grown by two cells so the shoreline
 ## comes from where the terrain rises through the surface).
-static func build_lakes(hydro: Hydrology, material: Material, parent: Node3D) -> void:
+static func build_lakes(hydro: Hydrology, surface: TerrainSurface, material: Material, parent: Node3D) -> void:
 	if hydro.lake_level.is_empty():
 		return
 	var n := hydro.nx * hydro.nz
@@ -391,7 +391,9 @@ static func build_lakes(hydro: Hydrology, material: Material, parent: Node3D) ->
 			var x := c % hydro.nx
 			var z := c / hydro.nx
 			for m in [c - 1 if x > 0 else -1, c + 1 if x < hydro.nx - 1 else -1, c - hydro.nx if z > 0 else -1, c + hydro.nx if z < hydro.nz - 1 else -1]:
-				if m >= 0 and cover[m] >= 0:
+				# Only grow under ground that rises above the water (the shore hides the
+				# edge); never out over lower ground such as the far side of a dam.
+				if m >= 0 and cover[m] >= 0 and surface.sample(hydro.cell_pos(c)) > hydro.lake_level[cover[m]] - 0.2:
 					nxt[c] = cover[m]
 					break
 		cover = nxt

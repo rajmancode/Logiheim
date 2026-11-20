@@ -21,6 +21,14 @@ Gaea exports a heightmap and terrain masks. Logiheim samples them onto a hex gri
   - Water runs in carved channels with muddy beds and banks, and its level never rises downstream, so rivers cut gorges instead of flowing uphill.
   - Flow speed follows the slope (flow-mapped, so fast and slow water never smear). Rapids appear where the real landscape is steep, and small cascades at each terrace step. Trees keep clear of the banks.
   - A Gaea `river` mask adds rivers wherever it is painted.
+  - Besides natural hollows, `lake_count` extra lakes are made by damming flat river valleys behind a natural moraine, plus a highland tarn. A Gaea `lake` mask paints lakes exactly.
+- **Natural resources (23, Norse-themed):** placed per hex from the land itself, with rare finds kept apart and common ones in patches (`resource_abundance`).
+  - **Core:** timber, stone, iron ore, fish, farmland.
+  - **Precious:** gold in river gravels below mountains, silver, gems, amber on beaches.
+  - **Industry:** coal, clay on riverbanks, sea salt.
+  - **Wildlife:** game, horses, furs in the cold uplands.
+  - **Norse:** bog iron, ship oak, pine tar, soapstone, wool, seals & walrus ivory, whales, peat.
+  - Each shows in the world as a prop made in Blender (ore outcrops, quarry, tar kiln, bog pools, salt pans, herds, whales, fish shoals, farm fields...), plus a toggleable icon overlay. Coarse levels show the rarest find in each hex.
 - **Vegetation and rocks (made in Blender):** three conifer variants, two broadleaf trees, two bushes and four chiselled boulders (`tools/blender/make_vegetation.py`). Forests mix conifers and broadleaf, with more conifers higher up. Trees and grass sway in the wind, leaves let light through, and rocks get moss on top. Dense grass (`grass_density`) is drawn near the camera only.
 - **Hex grid:** drawn by the shaders with irregular, noise-wobbled borders (`border_noise`). The CPU uses the same noise for picking, so what you click is exactly what's outlined. Hover and selection highlights work the same way.
 - **Atmosphere:** day/night cycle with sun and moon, drifting clouds that cast moving shadows, wind that drives trees, waves and clouds together, and weather (clear, cloudy, rain) with wet ground, fog and the odd lightning flash.
@@ -44,6 +52,7 @@ Gaea exports a heightmap and terrain masks. Logiheim samples them onto a hex gri
 | N | Pause / run the day cycle |
 | `,` `.` | Time of day −1 h / +1 h |
 | R | Weather: clear → cloudy → rain |
+| I | Resource icons on / off |
 
 ## Using your own Gaea maps
 
@@ -69,6 +78,9 @@ scripts/map/hydrology.gd           water flow on the terrain grid: drainage, cat
 scripts/map/river_network.gd       hex-level drainage for gameplay (downstream, flow)
 scripts/map/river_mesh_builder.gd  river courses (meanders, junctions), placement per level, river and lake meshes
 scripts/map/river_path.gd          one placed river stretch
+scripts/map/lake_maker.gd          extra lakes: dammed valleys, tarns, Gaea lake mask
+scripts/map/natural_resources.gd   resource types and placement rules
+scripts/map/resource_props.gd      resource props, farm fields and fish shoals in the world
 scripts/map/terrain_material.gd    PBR texture arrays and per-level material setup
 scripts/map/vegetation.gd          trees, bushes and rocks (MultiMesh, chunked)
 scripts/map/grass_field.gd         grass near the camera
@@ -82,10 +94,15 @@ shaders/river.gdshader             river water: flow mapping, depth colour, rapi
 shaders/tree_wind.gdshader         swaying trees and bushes
 shaders/rock.gdshader              boulders with moss
 shaders/grass.gdshader             grass blades
+shaders/resource_prop.gdshader     resource props (glints on gold, silver, gems, amber)
+shaders/farm_field.gdshader        farm fields
+shaders/fish_shoal.gdshader        fish shoals
 shaders/clouds.gdshader            cloud layer
 shaders/include/environment.gdshaderinc  shared wind, cloud and wetness state (global shader parameters)
 shaders/include/hex_grid.gdshaderinc     hex grid lines and highlights
 tools/make_placeholder_terrain.py  placeholder Gaea exports (numpy, pillow)
 tools/pack_ambientcg.py            packs ambientCG texture sets
 tools/blender/make_vegetation.py   Blender script for trees, bushes and rocks
+tools/blender/make_resources.py    Blender script for resource props
+tools/make_resource_icons.py       resource icon SVGs
 ```

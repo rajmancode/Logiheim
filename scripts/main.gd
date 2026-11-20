@@ -132,6 +132,8 @@ func _unhandled_input(event: InputEvent) -> void:
 			atmosphere.shift_time(1.0)
 		KEY_R:
 			atmosphere.cycle_weather()
+		KEY_I:
+			hex_map.set_resource_icons_visible(not hex_map.resource_icons_visible())
 
 
 func _on_level_changed(_i: int) -> void:
@@ -155,7 +157,7 @@ func _update_hud() -> void:
 	lines.append("")
 	lines.append("WASD / arrows / middle-drag: pan    wheel: zoom    Q E / right-drag: rotate    click: select")
 	lines.append("[ ]: hex size    - =: height scale    1-5: force level    0: auto LOD    G: grid    T: trees    H: hide")
-	lines.append("N: pause/run day cycle    , .: time -/+ 1 h    R: weather (clear / cloudy / rain)")
+	lines.append("N: pause/run day cycle    , .: time -/+ 1 h    R: weather (clear / cloudy / rain)    I: resource icons")
 	hud.text = "\n".join(lines)
 
 
@@ -170,6 +172,8 @@ func _describe(label: String, level: HexLevel, i: int) -> String:
 		text += ", river %.0f m wide" % level.river_width[i]
 	if level.lake[i] == 1:
 		text += ", lake"
+	if level.resource[i] != 0:
+		text += ", %s (%s)" % [NaturalResources.display_name(level.resource[i]), ["", "small", "good", "rich"][level.resource_amount[i]]]
 	var up := level.parent[i]
 	if up >= 0:
 		var pa := hex_map.levels[level.level_index + 1].coords[up]

@@ -73,6 +73,19 @@ extends Resource
 ## Hollows at least this big and deep fill up as lakes.
 @export var lake_min_area := 8000.0
 @export var lake_min_depth := 2.0
+## Extra lakes made by damming flat river valleys (plus one highland tarn), on top of natural
+## hollows and any Gaea "lake" mask. 0 = none.
+@export_range(0, 12) var lake_count := 3
+## Rough size of each generated lake, m^2 (tarns are half this).
+@export var lake_target_area := 40000.0
+
+@export_group("Resources")
+@export var resources_enabled := true
+## Multiplies how often every resource appears (2 = twice as many).
+@export_range(0.0, 4.0, 0.05) var resource_abundance := 1.0
+## Props are drawn this much larger than life on the finest level (and more on coarser
+## levels) so they read from the strategy camera.
+@export_range(1.0, 5.0, 0.1) var resource_prop_scale := 1.6
 
 @export_group("Vegetation")
 @export var trees_enabled := true

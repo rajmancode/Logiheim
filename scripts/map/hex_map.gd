@@ -16,6 +16,8 @@ var levels: Array[HexLevel] = []
 var surfaces: Array[TerrainSurface] = []
 ## River paths per level (Array of Array[RiverPath]), for gameplay and debugging.
 var river_paths: Array = []
+## Water flow per level (lakes, catchment), or null when rivers are off.
+var hydrology: Array = []
 var active_level := -1
 var auto_lod := true
 ## World y of the sea surface.
@@ -31,6 +33,8 @@ var _water_material: ShaderMaterial
 var _wave_normal: NoiseTexture2D
 var _lake_materials: Array[ShaderMaterial] = []
 var _show_grid := true
+var _show_icons := true
+var _icon_roots: Array[Node3D] = []
 
 
 ## Loads map.json from map_dir and builds the map. Returns false if loading failed.
@@ -57,6 +61,7 @@ func rebuild() -> void:
 	var gen := HexMapGenerator.new(source, settings)
 	levels = gen.build_levels()
 	var courses: Array = []
+	var lakes: LakeMaker = null
 	sea_y = gen.sea_y()
 	for level in levels:
 		var t1 := Time.get_ticks_msec()
@@ -71,7 +76,14 @@ func rebuild() -> void:
 		if settings.rivers_enabled:
 			# Water flow on this level's own terrain (lakes, water levels); the river
 			# courses themselves come from the finest level so every level agrees.
-			hydro = Hydrology.from_surface(surface, 2 if level.level_index == 0 else 1, settings, source)
+			var stride := 2 if level.level_index == 0 else 1
+			if level.level_index == 0:
+				# Plan extra lakes on the finest terrain, then shape every level to hold them.
+				hydro = Hydrology.from_surface(surface, stride, settings, source)
+				lakes = LakeMaker.plan(hydro, source, settings)
+			if lakes != null:
+				lakes.apply(surface)
+			hydro = Hydrology.from_surface(surface, stride, settings, source)
 			if level.level_index == 0:
 				courses = RiverMeshBuilder.courses(hydro, settings)
 			paths = RiverMeshBuilder.place(courses, level, surface, hydro, noise, settings, source)
@@ -87,7 +99,7 @@ func rebuild() -> void:
 		lake_mat.set_shader_parameter("show_grid", _show_grid)
 		_lake_materials.append(lake_mat)
 		if hydro != null:
-			RiverMeshBuilder.build_lakes(hydro, lake_mat, root)
+			RiverMeshBuilder.build_lakes(hydro, surface, lake_mat, root)
 		Vegetation.build(level, surface, settings, root)
 		if level.level_index == 0 and settings.grass_enabled:
 			GrassField.build(surface, settings, root)
@@ -96,8 +108,14 @@ func rebuild() -> void:
 		_materials.append(mat)
 		surfaces.append(surface)
 		river_paths.append(paths)
+		hydrology.append(hydro)
 		print("HexMap: level %d (%.0f m hexes, %d x %d terrain) in %d ms" % [
 			level.level_index, level.hex_size, surface.nx, surface.nz, Time.get_ticks_msec() - t1])
+	if settings.resources_enabled:
+		NaturalResources.place(levels, source, sea_y, settings.resource_abundance, settings.mask_threshold)
+		for li in mini(2, levels.size()):
+			ResourceProps.build(levels[li], surfaces[li], hydrology[li], _level_roots[li], settings.resource_prop_scale * (1.0 + 1.2 * li))
+		_build_resource_icons()
 	_build_water()
 	print("HexMap: built %d levels for '%s' in %d ms" % [levels.size(), source.name, Time.get_ticks_msec() - t0])
 
@@ -110,11 +128,13 @@ func _clear() -> void:
 	for root in _level_roots:
 		root.queue_free()
 	_level_roots.clear()
+	_icon_roots.clear()
 	_noises.clear()
 	_materials.clear()
 	_lake_materials.clear()
 	surfaces.clear()
 	river_paths.clear()
+	hydrology.clear()
 	levels.clear()
 
 
@@ -205,6 +225,74 @@ func set_highlight(kind: String, cell: int) -> void:
 		_lake_materials[active_level].set_shader_parameter(param, value)
 	if _water_material != null:
 		_water_material.set_shader_parameter(param, value)
+
+
+## Resource icons: one badge per resource hex on each level, always facing the camera at a
+## fixed size on screen, with "x2"/"x3" for richer deposits.
+func _build_resource_icons() -> void:
+	var textures: Dictionary = {}
+	for li in levels.size():
+		var level := levels[li]
+		var root := Node3D.new()
+		root.name = "ResourceIcons"
+		root.visible = _show_icons
+		_level_roots[li].add_child(root)
+		_icon_roots.append(root)
+		for i in level.cell_count():
+			var kind := level.resource[i]
+			if kind == 0:
+				continue
+			# Zoomed out, show what's worth fighting over: common finds only where rich.
+			if li > 0 and kind in NaturalResources.COMMON and level.resource_amount[i] < 3:
+				continue
+			if not textures.has(kind):
+				var path := "res://assets/icons/resources/%s.svg" % NaturalResources.key(kind)
+				textures[kind] = load(path) if ResourceLoader.exists(path) else null
+			var tex: Texture2D = textures[kind]
+			if tex == null:
+				continue
+			var c := level.cell_center(i)
+			var pos := Vector3(c.x, maxf(surfaces[li].sample(c), sea_y) + level.hex_size * 0.25, c.y)
+			var sprite := Sprite3D.new()
+			sprite.texture = tex
+			sprite.billboard = BaseMaterial3D.BILLBOARD_ENABLED
+			sprite.fixed_size = true
+			sprite.pixel_size = 0.00028
+			sprite.no_depth_test = true
+			sprite.shaded = false
+			sprite.render_priority = 10
+			sprite.position = pos
+			# Fade out far away so the horizon doesn't fill with icons.
+			sprite.visibility_range_end = level.hex_size * 40.0
+			sprite.visibility_range_end_margin = level.hex_size * 8.0
+			sprite.visibility_range_fade_mode = GeometryInstance3D.VISIBILITY_RANGE_FADE_SELF
+			root.add_child(sprite)
+			if level.resource_amount[i] > 1:
+				var label := Label3D.new()
+				label.text = "x%d" % level.resource_amount[i]
+				label.billboard = BaseMaterial3D.BILLBOARD_ENABLED
+				label.fixed_size = true
+				label.pixel_size = 0.00028
+				label.font_size = 40
+				label.outline_size = 12
+				label.no_depth_test = true
+				label.render_priority = 11
+				label.offset = Vector2(52, -46)
+				label.position = pos
+				label.visibility_range_end = level.hex_size * 40.0
+				label.visibility_range_end_margin = level.hex_size * 8.0
+				label.visibility_range_fade_mode = GeometryInstance3D.VISIBILITY_RANGE_FADE_SELF
+				root.add_child(label)
+
+
+func set_resource_icons_visible(on: bool) -> void:
+	_show_icons = on
+	for r in _icon_roots:
+		r.visible = on
+
+
+func resource_icons_visible() -> bool:
+	return _show_icons
 
 
 func set_grid_visible(on: bool) -> void:
