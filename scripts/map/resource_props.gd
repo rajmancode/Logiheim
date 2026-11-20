@@ -26,7 +26,7 @@ const PROPS := {
 	K.SILVER: ["outcrop_silver", 1, 2, "any", false],
 	K.GEMS: ["crystals", 1, 1, "any", false],
 	K.FISH: ["@shoal", 2, 3, "water", false],
-	K.WHALES: ["a:whale", 1, 2, "deep", false],
+	K.WHALES: ["a:whale", 1, 1, "deep", false],
 	K.SEALS: ["a:seal|a:seal|a:walrus", 3, 5, "coast", true],
 	K.FARMLAND: ["@field", 2, 4, "any", false],
 	K.WOOL: ["a:sheep", 6, 10, "clearing", true],
@@ -114,6 +114,11 @@ static func build(level: HexLevel, surface: TerrainSurface, hydro: Hydrology, pa
 						basis = basis.scaled(Vector3(h * 1.15, h, h * 1.15))
 						y -= 0.3
 						_add(items, model, Transform3D(basis, Vector3(p.x, y, p.y)), Color(0.8, 0.92, 0.6))
+					elif model.begins_with("a:") and level.level_index == 0:
+						# Finest level: a living, animated animal.
+						var home := herd_spot if def[4] and herd_spot.x != INF else p
+						_spawn_animal(parent, model.trim_prefix("a:"), Vector3(p.x, y, p.y), yaw, size, custom,
+							surface, home, s * (0.6 if def[3] == "deep" else 0.9) * sqrt(scale), rng.randi())
 					else:
 						basis = basis.scaled(Vector3.ONE * size)
 						_add(items, model, Transform3D(basis, Vector3(p.x, y - 0.05 * size, p.y)), custom)
@@ -268,41 +273,84 @@ static func _mesh(model: String) -> Mesh:
 	return result
 
 
-## An animal mesh with its own animated material (pivots from animals.json).
+## The animal's mesh in its rest pose, for static instances on coarse levels (textured with
+## the fur baked in Blender).
 static func _animal_mesh(animal: String) -> Mesh:
 	var key := "a:" + animal
 	if _meshes.has(key):
 		return _meshes[key]
-	var path := "%s/%s.glb" % [ANIMAL_DIR, animal]
+	var scene := _animal_scene(animal)
 	var result: ArrayMesh = null
-	if ResourceLoader.exists(path):
-		var scene := load(path) as PackedScene
-		if scene != null:
-			var inst := scene.instantiate()
-			var found := Vegetation._find_mesh(inst)
-			if found != null:
-				result = found.duplicate() as ArrayMesh
-			inst.free()
-	if result == null:
-		push_warning("ResourceProps: missing animal %s" % path)
-		_meshes[key] = null
-		return null
-	var meta: Dictionary = _animal_meta().get(animal, {})
-	var mat := ShaderMaterial.new()
-	mat.shader = load("res://shaders/animal.gdshader")
-	if not meta.is_empty():
-		var np: Array = meta.neck_pivot
-		var tp: Array = meta.tail_pivot
-		mat.set_shader_parameter("neck_pivot", Vector3(np[0], np[1], np[2]))
-		mat.set_shader_parameter("tail_pivot", Vector3(tp[0], tp[1], tp[2]))
-		mat.set_shader_parameter("head_down", meta.head_down)
-		mat.set_shader_parameter("tail_swish", meta.tail_swish)
-		mat.set_shader_parameter("mode", int(meta.mode))
-		mat.set_shader_parameter("body_length", meta.length)
-	for s in result.get_surface_count():
-		result.surface_set_material(s, mat)
+	if scene != null:
+		var inst := scene.instantiate()
+		var found := Vegetation._find_mesh(inst)
+		if found != null:
+			result = found.duplicate() as ArrayMesh
+			for i in result.get_surface_count():
+				result.surface_set_material(i, _fur(result.surface_get_material(i), Color.WHITE))
+		inst.free()
 	_meshes[key] = result
 	return result
+
+
+static var _scenes: Dictionary = {}
+static var _furs: Dictionary = {}
+
+
+static func _animal_scene(animal: String) -> PackedScene:
+	if not _scenes.has(animal):
+		var path := "%s/%s.glb" % [ANIMAL_DIR, animal]
+		_scenes[animal] = load(path) as PackedScene if ResourceLoader.exists(path) else null
+		if _scenes[animal] == null:
+			push_warning("ResourceProps: missing animal %s" % path)
+	return _scenes[animal]
+
+
+## The imported fur material, tinted for a coat variant, with a soft sheen like light on fur.
+static func _fur(base: Material, tint: Color) -> Material:
+	var key := str(base.get_instance_id()) + tint.to_html() if base != null else "none"
+	if _furs.has(key):
+		return _furs[key]
+	var mat: Material = base
+	if base is BaseMaterial3D:
+		var m := (base as BaseMaterial3D).duplicate() as BaseMaterial3D
+		m.albedo_color = tint
+		m.roughness = 0.85
+		m.rim_enabled = true
+		m.rim = 0.3
+		m.rim_tint = 0.6
+		mat = m
+	_furs[key] = mat
+	return mat
+
+
+## A rigged, animated animal that wanders its pasture (AnimalAgent).
+static func _spawn_animal(parent: Node3D, animal: String, pos: Vector3, yaw: float, size: float, coat: Color,
+		surface: TerrainSurface, home: Vector2, radius: float, seed_value: int) -> void:
+	var scene := _animal_scene(animal)
+	if scene == null:
+		return
+	var model := scene.instantiate()
+	var meta: Dictionary = _animal_meta().get(animal, {})
+	var agent := AnimalAgent.new()
+	agent.name = "Animal_" + animal
+	agent.position = pos
+	if str(meta.get("kind", "land")) == "sea":
+		# Whales are already huge: real size, each on its own circle.
+		size = 1.0
+		var r2 := RandomNumberGenerator.new()
+		r2.seed = seed_value
+		radius *= r2.randf_range(1.2, 2.2)
+		home = Vector2(pos.x, pos.z) + Vector2(r2.randf_range(-1.0, 1.0), r2.randf_range(-1.0, 1.0)) * radius * 0.5
+	agent.scale = Vector3.ONE * size
+	agent.setup(surface, home, radius, float(meta.get("walk_speed", 1.0)) * size, str(meta.get("kind", "land")), yaw, seed_value)
+	agent.add_child(model)
+	for node in model.find_children("*", "MeshInstance3D", true, false):
+		var mi := node as MeshInstance3D
+		for i in mi.mesh.get_surface_count():
+			mi.set_surface_override_material(i, _fur(mi.mesh.surface_get_material(i), coat))
+		mi.visibility_range_end = 700.0
+	parent.add_child(agent)
 
 
 static var _meta: Dictionary = {}

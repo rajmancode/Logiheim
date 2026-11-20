@@ -1,146 +1,56 @@
 {
- "sheep": {
-  "neck_pivot": [
-   0.5125,
-   0.558,
-   -0.0
-  ],
-  "tail_pivot": [
-   -0.68,
-   0.558,
-   -0.0
-  ],
-  "head_down": 1.1,
-  "tail_swish": 0.25,
-  "mode": 0,
-  "length": 0.85
- },
  "horse": {
-  "neck_pivot": [
-   0.6835,
-   1.2,
-   -0.0
-  ],
-  "tail_pivot": [
-   -0.925,
-   1.2,
-   -0.0
-  ],
-  "head_down": 1.25,
-  "tail_swish": 0.45,
-  "mode": 0,
-  "length": 1.15
+  "kind": "land",
+  "walk_speed": 1.431,
+  "height": 1.42,
+  "length": 1.45
+ },
+ "sheep": {
+  "kind": "land",
+  "walk_speed": 0.676,
+  "height": 0.72,
+  "length": 0.88
  },
  "deer": {
-  "neck_pivot": [
-   0.5695,
-   1.038,
-   -0.0
-  ],
-  "tail_pivot": [
-   -0.757,
-   1.038,
-   -0.0
-  ],
-  "head_down": 1.25,
-  "tail_swish": 0.5,
-  "mode": 0,
-  "length": 0.95
+  "kind": "land",
+  "walk_speed": 1.292,
+  "height": 1.22,
+  "length": 1.38
  },
  "reindeer": {
-  "neck_pivot": [
-   0.5945,
-   0.92,
-   -0.0
-  ],
-  "tail_pivot": [
-   -0.782,
-   0.92,
-   -0.0
-  ],
-  "head_down": 1.25,
-  "tail_swish": 0.5,
-  "mode": 0,
-  "length": 1.0
+  "kind": "land",
+  "walk_speed": 1.154,
+  "height": 1.1,
+  "length": 1.28
  },
  "boar": {
-  "neck_pivot": [
-   0.5405,
-   0.64,
-   -0.0
-  ],
-  "tail_pivot": [
-   -0.664,
-   0.64,
-   -0.0
-  ],
-  "head_down": 0.7,
-  "tail_swish": 0.6,
-  "mode": 0,
-  "length": 0.85
+  "kind": "land",
+  "walk_speed": 0.84,
+  "height": 0.85,
+  "length": 1.05
  },
  "fox": {
-  "neck_pivot": [
-   0.2885,
-   0.334,
-   -0.0
-  ],
-  "tail_pivot": [
-   -0.36,
-   0.334,
-   -0.0
-  ],
-  "head_down": 0.9,
-  "tail_swish": 0.5,
-  "mode": 0,
-  "length": 0.5
+  "kind": "land",
+  "walk_speed": 0.72,
+  "height": 0.4,
+  "length": 0.6
  },
  "seal": {
-  "neck_pivot": [
-   0.45,
-   0.22,
-   -0.0
-  ],
-  "tail_pivot": [
-   -0.75,
-   0.1,
-   -0.0
-  ],
-  "head_down": -0.5,
-  "tail_swish": 0.3,
-  "mode": 0,
+  "kind": "shore",
+  "walk_speed": 0.5,
+  "height": 0.5,
   "length": 2.0
  },
  "walrus": {
-  "neck_pivot": [
-   0.855,
-   0.418,
-   -0.0
-  ],
-  "tail_pivot": [
-   -1.425,
-   0.19,
-   -0.0
-  ],
-  "head_down": -0.5,
-  "tail_swish": 0.3,
-  "mode": 0,
-  "length": 3.8
+  "kind": "shore",
+  "walk_speed": 0.925,
+  "height": 0.925,
+  "length": 3.7
  },
  "whale": {
-  "neck_pivot": [
-   0,
-   0,
-   0
-  ],
-  "tail_pivot": [
-   0,
-   0,
-   0
-  ],
-  "head_down": 0.0,
-  "tail_swish": 0.0,
-  "mode": 1,
+  "kind": "sea",
+  "walk_speed": 1.6,
+  "height": 2.0,
   "length": 12.5
  }
 }

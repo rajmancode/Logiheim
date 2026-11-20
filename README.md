@@ -31,7 +31,11 @@ Gaea exports a heightmap and terrain masks. Logiheim samples them onto a hex gri
   - **Norse:** bog iron, ship oak, pine tar, soapstone, wool, seals & walrus ivory, whales, peat.
   - **Lakes and wetlands:** lake ore raked from lake beds, reed beds for thatch, freshwater fish.
   - Each shows in the world as a prop made in Blender (ore outcrops, quarry, tar kiln, bog pools, reed beds, salt pans, fish shoals, farm fields...), plus a toggleable icon overlay. Each deposit gets one icon at its centre showing its size in hexes, with faint mini badges on its other hexes.
-- **Animals (made in Blender):** Norse sheep, horses, red deer, reindeer, wild boar, red fox, harbour seals, walrus and humpback whales. Each is sculpted from an anatomical skeleton filled with blending metaballs, with painted coats and coat variations. They graze, chew, look around and swish their tails, and whales swim, each on its own timing (`tools/blender/make_animals.py`, `shaders/animal.gdshader`).
+- **Animals (made in Blender):** Fjord horses, Norse sheep, red deer, reindeer, wild boar, red fox, harbour seals, walrus and humpback whales (`tools/blender/make_animals.py`).
+  - Each is built from real body measurements: an anatomical skeleton with muscle masses (ribcage, belly, shoulders, haunches, head and jaw) sculpted with metaballs.
+  - Each has a fur texture and fur normal map baked in Blender, and a rig with looping walk, graze and idle animations (whale: swim; seals: rest and galumph).
+  - On the finest level every animal is alive (`scripts/map/animal_agent.gd`): it grazes, looks around and walks to new spots in its pasture across the terrain, avoiding water. Whales swim circles, and seals mostly rest on the shore. Animals far from the camera pause.
+  - Coat colour varies per animal: dun, chestnut, bay and black horses, and white, cream, brown and black sheep.
 - **Vegetation and rocks (made in Blender):** three conifer variants, two broadleaf trees, two bushes and four chiselled boulders (`tools/blender/make_vegetation.py`). Forests mix conifers and broadleaf, with more conifers higher up. Trees and grass sway in the wind, leaves let light through, and rocks get moss on top. Dense grass (`grass_density`) is drawn near the camera only.
 - **Hex grid:** drawn by the shaders with irregular, noise-wobbled borders (`border_noise`). The CPU uses the same noise for picking, so what you click is exactly what's outlined. Hover and selection highlights work the same way.
 - **Atmosphere:** day/night cycle with sun and moon, drifting clouds that cast moving shadows, wind that drives trees, waves and clouds together, and weather (clear, cloudy, rain) with wet ground, fog and the odd lightning flash.
@@ -84,6 +88,7 @@ scripts/map/river_path.gd          one placed river stretch
 scripts/map/lake_maker.gd          extra lakes: dammed valleys, tarns, Gaea lake mask
 scripts/map/natural_resources.gd   resource types, placement rules, multi-hex deposits
 scripts/map/floodplain.gd          floodplains: detection, levelling, oxbow ponds
+scripts/map/animal_agent.gd        living animals: graze / idle / walk routine, terrain following
 scripts/map/resource_props.gd      resource props, farm fields and fish shoals in the world
 scripts/map/terrain_material.gd    PBR texture arrays and per-level material setup
 scripts/map/vegetation.gd          trees, bushes and rocks (MultiMesh, chunked)
@@ -101,7 +106,6 @@ shaders/grass.gdshader             grass blades
 shaders/resource_prop.gdshader     resource props (glints on gold, silver, gems, amber)
 shaders/farm_field.gdshader        farm fields
 shaders/fish_shoal.gdshader        fish shoals
-shaders/animal.gdshader            animated animals (graze, look, tail, whale swim)
 shaders/clouds.gdshader            cloud layer
 shaders/include/environment.gdshaderinc  shared wind, cloud and wetness state (global shader parameters)
 shaders/include/hex_grid.gdshaderinc     hex grid lines and highlights
@@ -109,6 +113,6 @@ tools/make_placeholder_terrain.py  placeholder Gaea exports (numpy, pillow)
 tools/pack_ambientcg.py            packs ambientCG texture sets
 tools/blender/make_vegetation.py   Blender script for trees, bushes and rocks
 tools/blender/make_resources.py    Blender script for resource props
-tools/blender/make_animals.py      Blender script for the animals (+ animals.json pivots)
+tools/blender/make_animals.py      Blender script for the animals: anatomy, fur bake, rig, animations (+ animals.json)
 tools/make_resource_icons.py       resource icon SVGs
 ```

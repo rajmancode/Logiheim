@@ -1,93 +1,101 @@
-"""Builds the animals (sheep, horse, red deer, reindeer, boar, fox, seal, walrus, whale).
+"""Builds Logiheim's animals: sculpted, fur-textured, rigged and animated.
 
 Run headless (Blender 4.x):
     blender -b --python tools/blender/make_animals.py -- assets/models/animals
+Set ANIMALS=horse,sheep to rebuild only some of them.
 
-Each animal is sculpted from an anatomical skeleton: every bone is filled with blending
-metaballs that taper with the bone radii (like clay over an armature), the field becomes a
-smoothed mesh, and the result is painted by body region (coat, belly, legs, mane,
-muzzle, hooves, eyes...). Real size in metres; Blender X = forward, Z = up (glTF Y up).
-
-Every vertex also gets animation weights in a second UV map "anim":
-    u = how much it moves with the head (0 at the neck base .. 1 for the head),
-    v = tail weight (0 at the root .. 1 at the tip); for the whale, position along the body.
-shaders/animal.gdshader uses them (plus the pivots written to animals.json) to make the
-animals graze, look around, chew, swish their tails and, for the whale, swim.
+For every species:
+  1. Anatomy from real measurements (withers/croup height, body length, chest depth...)
+     gives joint positions: spine, neck, head, ears, tail, and jointed legs
+     (shoulder-elbow-knee-fetlock-hoof in front, hip-stifle-hock-fetlock-hoof behind).
+  2. Flesh: metaballs along every bone plus ellipsoid muscle masses (ribcage, belly,
+     shoulders, haunches, cranium, jaw), converted to a smoothed mesh.
+  3. Coat: painted by body region, then baked with fine fur noise into an albedo texture
+     and a fur normal map (Cycles bake, smart UVs).
+  4. Rig: an armature on the same joints, skinned with automatic weights.
+  5. Looping animations as NLA tracks: "idle", "graze", "walk" (whale: "swim"; seals:
+     "idle", "graze" = resting, "walk" = galumphing).
+Exported as .glb (skin + animations + embedded textures) plus animals.json with each
+species' walking speed and behaviour.
 """
 import json
 import math
 import os
-import random
 import sys
 
+import addon_utils
 import bmesh
 import bpy
-from mathutils import Vector, noise
+from mathutils import Quaternion, Vector, noise
 
 OUT = sys.argv[sys.argv.index("--") + 1] if "--" in sys.argv else "assets/models/animals"
+TEX = 1024
+FPS = 24
 META = {}
+Y = Vector((0, 1, 0))   # side axis: rotating about it pitches forward/back
+Z = Vector((0, 0, 1))   # up axis: rotating about it yaws left/right
+ELLIPSOID_K = 1.0 / 0.573   # metaball ellipsoid surface sits at 0.573 x radius x size
+BALL_K = 0.85 / 0.575
 
 
-# --------------------------------------------------------------------------- skeleton -> mesh
+# --------------------------------------------------------------------------- body description
 
-class Skeleton:
+class Body:
+    """Rig bones, flesh pieces and paint labels for one animal."""
+
     def __init__(self):
-        self.co = []      # Vector
-        self.r = []       # radius
-        self.edges = []   # (a, b, label, t0, t1)
+        self.bones = []      # (name, head, tail, parent, deform)
+        self.segments = []   # (a, b, ra, rb, label) flesh along a line
+        self.masses = []     # (centre, half_extents (x,y,z), rotation quaternion, label)
 
-    def node(self, co, r):
-        self.co.append(Vector(co))
-        self.r.append(r)
-        return len(self.co) - 1
+    def bone(self, name, head, tail, parent=None, deform=True):
+        self.bones.append((name, Vector(head), Vector(tail), parent, deform))
 
-    def chain(self, points, label, t0=0.0, t1=1.0, start=None):
-        """points: list of (co, r). Returns node indices. Optionally starts from an existing node."""
-        ids = [start] if start is not None else []
-        for co, r in points:
-            ids.append(self.node(co, r))
-        n = len(ids) - 1
-        for k in range(n):
-            a, b = ids[k], ids[k + 1]
-            self.edges.append((a, b, label, t0 + (t1 - t0) * k / n, t0 + (t1 - t0) * (k + 1) / n))
-        return ids
+    def limb(self, a, b, ra, rb, label):
+        self.segments.append((Vector(a), Vector(b), ra, rb, label))
 
-    def nearest(self, p):
-        """Label, t and radius-normalised distance of the bone nearest to p."""
-        best = (None, 0.0, 1e9)
-        for a, b, label, t0, t1 in self.edges:
-            pa, pb = self.co[a], self.co[b]
-            ab = pb - pa
-            l2 = max(ab.length_squared, 1e-9)
-            s = max(0.0, min(1.0, (p - pa).dot(ab) / l2))
-            q = pa + ab * s
-            r = self.r[a] + (self.r[b] - self.r[a]) * s
-            d = (p - q).length / max(r, 1e-4)
+    def mass(self, c, half, label, rot=None):
+        self.masses.append((Vector(c), Vector(half), rot or Quaternion(), label))
+
+    def label_at(self, p):
+        best = ("body", 0.0, 1e9)
+        for a, b, ra, rb, label in self.segments:
+            ab = b - a
+            s = max(0.0, min(1.0, (p - a).dot(ab) / max(ab.length_squared, 1e-9)))
+            r = ra + (rb - ra) * s
+            d = (p - (a + ab * s)).length / max(r, 1e-4)
             if d < best[2]:
-                best = (label, t0 + (t1 - t0) * s, d)
+                best = (label, s, d)
+        for c, half, rot, label in self.masses:
+            q = rot.inverted() @ (p - c)
+            d = Vector((q.x / half.x, q.y / half.y, q.z / half.z)).length
+            if d < best[2]:
+                best = (label, 0.5, d)
         return best
 
 
-def meta_object(name, sk, resolution, target_faces=6000):
-    """Fills every bone with a chain of blending metaballs (tapering with the bone radii),
-    converts the field to a mesh, smooths it and decimates to about `target_faces`."""
+def build_flesh(name, body, resolution, faces):
     mb = bpy.data.metaballs.new(name)
     mb.resolution = resolution
     mb.render_resolution = resolution
     mb.threshold = 0.6
-    # With stiffness 2 a lone ball's surface sits at ~0.575 x its radius; overlapping balls
-    # fatten a little, hence 0.85.
-    k = 0.85 / 0.575
-    for a, b, *_ in sk.edges:
-        pa, pb = sk.co[a], sk.co[b]
-        ra, rb = sk.r[a], sk.r[b]
-        n = max(2, math.ceil((pb - pa).length / max(min(ra, rb) * 0.7, 1e-3)))
+    for a, b, ra, rb, _ in body.segments:
+        n = max(2, math.ceil((b - a).length / max(min(ra, rb) * 0.6, 1e-3)))
         for i in range(n + 1):
             t = i / n
             e = mb.elements.new()
-            e.co = pa.lerp(pb, t)
-            e.radius = (ra + (rb - ra) * t) * k
+            e.co = a.lerp(b, t)
+            e.radius = (ra + (rb - ra) * t) * BALL_K
             e.stiffness = 2.0
+    for c, half, rot, _ in body.masses:
+        e = mb.elements.new()
+        e.type = "ELLIPSOID"
+        e.co = c
+        r = max(half.x, half.y, half.z)
+        e.radius = r * ELLIPSOID_K * 0.92
+        e.size_x, e.size_y, e.size_z = half.x / r, half.y / r, half.z / r
+        e.rotation = rot
+        e.stiffness = 2.0
     obj = bpy.data.objects.new(name, mb)
     bpy.context.scene.collection.objects.link(obj)
     bpy.context.view_layer.objects.active = obj
@@ -97,83 +105,430 @@ def meta_object(name, sk, resolution, target_faces=6000):
     obj = bpy.context.view_layer.objects.active
     obj.name = name
     sm = obj.modifiers.new("smooth", "SMOOTH")
-    sm.factor = 0.5
-    sm.iterations = 4
+    sm.factor = 0.6
+    sm.iterations = 5
     bpy.ops.object.modifier_apply(modifier="smooth")
-    faces = len(obj.data.polygons)
-    if faces > target_faces:
+    if len(obj.data.polygons) > faces:
         dec = obj.modifiers.new("dec", "DECIMATE")
-        dec.ratio = target_faces / faces
+        dec.ratio = faces / len(obj.data.polygons)
         bpy.ops.object.modifier_apply(modifier="dec")
+    for p in obj.data.polygons:
+        p.use_smooth = True
     return obj
 
 
-def add_spheres(obj, spheres):
-    """Adds small spheres (eyes, nostrils) as extra geometry: [(co, r, label)]."""
+def add_eyes(obj, eyes):
+    before = len(obj.data.vertices)
     bm = bmesh.new()
     bm.from_mesh(obj.data)
-    extra = []
-    for co, r, label in spheres:
+    for co, r in eyes:
         geo = bmesh.ops.create_icosphere(bm, subdivisions=2, radius=r)
         for v in geo["verts"]:
             v.co += Vector(co)
-            extra.append((v, label))
     bm.to_mesh(obj.data)
     bm.free()
-    return {i for i in range(len(obj.data.vertices) - len(extra), len(obj.data.vertices))}, [l for _, l in extra]
+    clean_mesh(obj)
+    return set(range(before, len(obj.data.vertices)))
 
 
-def finish(obj, sk, paint, anim, extra_ids=(), extra_labels=(), displace=None, decimate=0.6):
-    """Paints vertex colours, writes the anim UVs, decimates and returns the object."""
+def clean_mesh(obj):
+    """Removes degenerate geometry left by metaball conversion and decimation; an invalid
+    mesh makes the glTF exporter drop it."""
+    bm = bmesh.new()
+    bm.from_mesh(obj.data)
+    bmesh.ops.dissolve_degenerate(bm, edges=bm.edges[:], dist=1e-5)
+    bmesh.ops.remove_doubles(bm, verts=bm.verts[:], dist=1e-5)
+    loose = [v for v in bm.verts if not v.link_faces]
+    bmesh.ops.delete(bm, geom=loose, context="VERTS")
+    bmesh.ops.triangulate(bm, faces=bm.faces[:])
+    bm.to_mesh(obj.data)
+    bm.free()
+    obj.data.validate(clean_customdata=False)
+    obj.data.update()
+
+
+# --------------------------------------------------------------------------- coat + bake
+
+def paint_and_bake(obj, body, paint, eye_ids, fur_scale, fur_bump, name):
     mesh = obj.data
-    extra_map = dict(zip(sorted(extra_ids), extra_labels))
-    labels = {}
+    col = mesh.color_attributes.new("Col", "FLOAT_COLOR", "POINT")
     for v in mesh.vertices:
-        if v.index in extra_map:
-            labels[v.index] = (extra_map[v.index], 1.0)
+        if v.index in eye_ids:
+            c = (0.02, 0.018, 0.015)
         else:
-            label, t, _ = sk.nearest(v.co)
-            labels[v.index] = (label, t)
-    if displace:
-        for v in mesh.vertices:
-            label, t = labels[v.index]
-            v.co += v.normal * displace(v.co, label, t)
-    col = mesh.color_attributes.new("Col", "BYTE_COLOR", "CORNER")
-    mesh.uv_layers.new(name="UVMap")
-    an = mesh.uv_layers.new(name="anim")
-    for poly in mesh.polygons:
-        poly.use_smooth = True
-        for li in poly.loop_indices:
-            vi = mesh.loops[li].vertex_index
-            v = mesh.vertices[vi]
-            label, t = labels[vi]
+            label, t, _ = body.label_at(v.co)
             c = paint(v.co, v.normal, label, t)
-            col.data[li].color = (c[0], c[1], c[2], 1.0)
-            an.data[li].uv = anim(v.co, label, t)
-    mesh.color_attributes.active_color = col
-    mesh.uv_layers.active = mesh.uv_layers["UVMap"]
-    if decimate < 1.0:
-        dec = obj.modifiers.new("dec", "DECIMATE")
-        dec.ratio = decimate
-        bpy.context.view_layer.objects.active = obj
-        bpy.ops.object.modifier_apply(modifier="dec")
-    return obj
-
-
-def to_godot(co):
-    """Blender (x, y, z) -> glTF/Godot (x, z, -y)."""
-    return [round(co[0], 4), round(co[2], 4), round(-co[1], 4)]
-
-
-def export(obj, name, meta):
+        col.data[v.index].color = (c[0] ** 2.2, c[1] ** 2.2, c[2] ** 2.2, 1.0)
     bpy.ops.object.select_all(action="DESELECT")
-    obj.select_set(True)
     bpy.context.view_layer.objects.active = obj
-    path = os.path.join(OUT, name + ".glb")
-    bpy.ops.export_scene.gltf(filepath=path, export_format="GLB", use_selection=True, export_apply=True,
-                              export_yup=True, export_colors=True, export_texcoords=True, export_normals=True)
-    META[name] = meta
-    print("exported", path, len(obj.data.polygons), "faces")
+    obj.select_set(True)
+    bpy.ops.object.mode_set(mode="EDIT")
+    bpy.ops.mesh.select_all(action="SELECT")
+    bpy.ops.uv.smart_project(angle_limit=math.radians(66), island_margin=0.004)
+    bpy.ops.object.mode_set(mode="OBJECT")
+
+    # Bake material: painted coat x fine fur noise x large patches; fur bump for normals.
+    mat = bpy.data.materials.new(name + "_bake")
+    mat.use_nodes = True
+    nt = mat.node_tree
+    nodes, links = nt.nodes, nt.links
+    bsdf = nodes["Principled BSDF"]
+    attr = nodes.new("ShaderNodeAttribute")
+    attr.attribute_name = "Col"
+    coord = nodes.new("ShaderNodeTexCoord")
+    mapping = nodes.new("ShaderNodeMapping")
+    mapping.inputs["Scale"].default_value = (fur_scale * 0.35, fur_scale, fur_scale)  # hair lies along the body
+    links.new(coord.outputs["Object"], mapping.inputs["Vector"])
+    fur = nodes.new("ShaderNodeTexNoise")
+    fur.inputs["Scale"].default_value = 1.0
+    fur.inputs["Detail"].default_value = 6.0
+    fur.inputs["Roughness"].default_value = 0.7
+    links.new(mapping.outputs["Vector"], fur.inputs["Vector"])
+    patch = nodes.new("ShaderNodeTexNoise")
+    patch.inputs["Scale"].default_value = 3.0
+    links.new(coord.outputs["Object"], patch.inputs["Vector"])
+    r1 = nodes.new("ShaderNodeMapRange")
+    r1.inputs["To Min"].default_value = 0.8
+    r1.inputs["To Max"].default_value = 1.16
+    links.new(fur.outputs["Fac"], r1.inputs["Value"])
+    r2 = nodes.new("ShaderNodeMapRange")
+    r2.inputs["To Min"].default_value = 0.9
+    r2.inputs["To Max"].default_value = 1.1
+    links.new(patch.outputs["Fac"], r2.inputs["Value"])
+    m1 = nodes.new("ShaderNodeMixRGB")
+    m1.blend_type = "MULTIPLY"
+    m1.inputs["Fac"].default_value = 1.0
+    links.new(attr.outputs["Color"], m1.inputs["Color1"])
+    links.new(r1.outputs["Result"], m1.inputs["Color2"])
+    m2 = nodes.new("ShaderNodeMixRGB")
+    m2.blend_type = "MULTIPLY"
+    m2.inputs["Fac"].default_value = 1.0
+    links.new(m1.outputs["Color"], m2.inputs["Color1"])
+    links.new(r2.outputs["Result"], m2.inputs["Color2"])
+    links.new(m2.outputs["Color"], bsdf.inputs["Base Color"])
+    bump = nodes.new("ShaderNodeBump")
+    bump.inputs["Strength"].default_value = fur_bump
+    bump.inputs["Distance"].default_value = 0.004
+    links.new(fur.outputs["Fac"], bump.inputs["Height"])
+    links.new(bump.outputs["Normal"], bsdf.inputs["Normal"])
+    mesh.materials.clear()
+    mesh.materials.append(mat)
+
+    sc = bpy.context.scene
+    sc.render.engine = "CYCLES"
+    sc.cycles.samples = 1
+    sc.cycles.device = "CPU"
+    images = {}
+    for kind in ("albedo", "normal"):
+        img = bpy.data.images.new(f"{name}_{kind}", TEX, TEX)
+        if kind == "normal":
+            img.colorspace_settings.name = "Non-Color"
+        tex = nodes.new("ShaderNodeTexImage")
+        tex.image = img
+        nodes.active = tex
+        if kind == "albedo":
+            bpy.ops.object.bake(type="DIFFUSE", pass_filter={"COLOR"}, margin=6)
+        else:
+            bpy.ops.object.bake(type="NORMAL", normal_space="TANGENT", margin=6)
+        images[kind] = img
+        nodes.remove(tex)
+
+    # Final material for export: the baked maps (embedded in the .glb).
+    final = bpy.data.materials.new(name)
+    final.use_nodes = True
+    fn = final.node_tree
+    fb = fn.nodes["Principled BSDF"]
+    ta = fn.nodes.new("ShaderNodeTexImage")
+    ta.image = images["albedo"]
+    fn.links.new(ta.outputs["Color"], fb.inputs["Base Color"])
+    tn = fn.nodes.new("ShaderNodeTexImage")
+    tn.image = images["normal"]
+    nm = fn.nodes.new("ShaderNodeNormalMap")
+    fn.links.new(tn.outputs["Color"], nm.inputs["Color"])
+    fn.links.new(nm.outputs["Normal"], fb.inputs["Normal"])
+    fb.inputs["Roughness"].default_value = 0.85
+    mesh.materials.clear()
+    mesh.materials.append(final)
+    try:
+        mesh.color_attributes.remove(col)
+    except RuntimeError:
+        pass   # harmless: the exporter skips colours (export_colors=False)
+
+
+# --------------------------------------------------------------------------- rig + animation
+
+def build_rig(name, body, mesh_obj):
+    arm_data = bpy.data.armatures.new(name + "_rig")
+    arm = bpy.data.objects.new(name + "_rig", arm_data)
+    bpy.context.scene.collection.objects.link(arm)
+    bpy.ops.object.select_all(action="DESELECT")
+    bpy.context.view_layer.objects.active = arm
+    arm.select_set(True)
+    bpy.ops.object.mode_set(mode="EDIT")
+    for bname, head, tail, parent, deform in body.bones:
+        eb = arm_data.edit_bones.new(bname)
+        eb.head = head
+        eb.tail = tail
+        eb.use_deform = deform
+        if parent:
+            eb.parent = arm_data.edit_bones[parent]
+    bpy.ops.object.mode_set(mode="OBJECT")
+    bpy.ops.object.select_all(action="DESELECT")
+    mesh_obj.select_set(True)
+    arm.select_set(True)
+    bpy.context.view_layer.objects.active = arm
+    bpy.ops.object.parent_set(type="ARMATURE_AUTO")
+    # Automatic weights can miss thin parts (antler tines, tusks): give every unweighted
+    # vertex fully to its nearest deforming bone so the skin exports cleanly.
+    deform = [(bn, h, t) for bn, h, t, _, d in body.bones if d]
+    groups = {g.name: g for g in mesh_obj.vertex_groups}
+    for v in mesh_obj.data.vertices:
+        if any(g.weight > 0.001 for g in v.groups):
+            continue
+        best, best_d = None, 1e9
+        for bn, h, t in deform:
+            ab = t - h
+            k = max(0.0, min(1.0, (v.co - h).dot(ab) / max(ab.length_squared, 1e-9)))
+            d = (v.co - (h + ab * k)).length
+            if d < best_d:
+                best, best_d = bn, d
+        g = groups.get(best) or mesh_obj.vertex_groups.new(name=best)
+        groups[best] = g
+        g.add([v.index], 1.0, "REPLACE")
+    for pb in arm.pose.bones:
+        pb.rotation_mode = "QUATERNION"
+    return arm
+
+
+def local_axis(arm, bname, world_axis):
+    return (arm.data.bones[bname].matrix_local.to_3x3().inverted() @ world_axis).normalized()
+
+
+class Anim:
+    """Keyframes one looping action into its own NLA track."""
+
+    def __init__(self, arm, name):
+        self.arm, self.name = arm, name
+        arm.animation_data_create()
+        self.action = bpy.data.actions.new(name)
+        arm.animation_data.action = self.action
+
+    def key(self, frame, poses, root_z=0.0):
+        """poses: {bone: [(world_axis, angle), ...]}; root_z lifts the whole body."""
+        for pb in self.arm.pose.bones:
+            q = Quaternion()
+            for axis, ang in poses.get(pb.name, []):
+                q = q @ Quaternion(local_axis(self.arm, pb.name, axis), ang)
+            pb.rotation_quaternion = q
+            pb.keyframe_insert("rotation_quaternion", frame=frame)
+            if pb.name == "root":
+                pb.location = (0, root_z, 0)   # the root bone points up: its local Y is world Z
+                pb.keyframe_insert("location", frame=frame)
+
+    def done(self):
+        track = self.arm.animation_data.nla_tracks.new()
+        track.name = self.name
+        track.strips.new(self.name, 1, self.action)
+        self.arm.animation_data.action = None
+
+
+def animate_quadruped(arm, sp):
+    legs = [("L", "h", 0.0), ("L", "f", 0.25), ("R", "h", 0.5), ("R", "f", 0.75)]
+
+    # Walk: four-beat lateral sequence, with body bob, nodding and a swinging tail.
+    C = sp["walk_frames"]
+    a = Anim(arm, "walk")
+    for f in range(0, C + 1, 2):
+        ph = f / C
+        poses = {}
+        for side, end, off in legs:
+            w = 2 * math.pi * (ph + off)
+            swing = math.sin(w)
+            lift = max(0.0, math.cos(w))
+            upper = sp["stride_angle"] * swing
+            if end == "f":
+                poses[f"scap.{side}"] = [(Y, -upper * 0.65)]
+                poses[f"forearm.{side}"] = [(Y, -upper * 0.35)]
+                poses[f"cannon_f.{side}"] = [(Y, 0.9 * lift)]
+                poses[f"pastern_f.{side}"] = [(Y, 0.3 * lift)]
+            else:
+                poses[f"thigh.{side}"] = [(Y, -upper * 0.8)]
+                poses[f"gaskin.{side}"] = [(Y, 0.35 * lift)]
+                poses[f"cannon_h.{side}"] = [(Y, -0.3 * lift)]
+                poses[f"pastern_h.{side}"] = [(Y, 0.3 * lift)]
+        nod = math.sin(2 * math.pi * ph * 2)
+        poses["neck1"] = [(Y, 0.05 * nod)]
+        poses["head"] = [(Y, -0.03 * nod)]
+        poses["tail1"] = [(Z, 0.12 * math.sin(2 * math.pi * ph))]
+        poses["spine2"] = [(Z, 0.02 * math.sin(2 * math.pi * ph))]
+        a.key(f + 1, poses, root_z=sp["height"] * 0.012 * math.sin(4 * math.pi * ph))
+    a.done()
+
+    # Graze: head down to the grass, chewing, tail swishing, ears turning.
+    C = 96
+    a = Anim(arm, "graze")
+    g = sp["graze"]
+    for f in range(0, C + 1, 3):
+        ph = f / C
+        chew = math.sin(2 * math.pi * ph * 6)
+        poses = {"neck1": [(Y, g * 0.5)], "neck2": [(Y, g * 0.18), (Z, 0.08 * math.sin(2 * math.pi * ph))],
+                 "head": [(Y, g * 0.12 + 0.04 * chew)],
+                 "tail1": [(Z, 0.3 * math.sin(2 * math.pi * ph * 2))],
+                 "tail2": [(Z, 0.3 * math.sin(2 * math.pi * ph * 2 - 0.6))],
+                 "ear.L": [(Z, 0.25 * math.sin(2 * math.pi * ph))],
+                 "ear.R": [(Z, -0.25 * math.sin(2 * math.pi * ph + 1.0))]}
+        a.key(f + 1, poses)
+    a.done()
+
+    # Idle: head up, looking around, ears flicking, slow tail.
+    C = 144
+    a = Anim(arm, "idle")
+    for f in range(0, C + 1, 3):
+        ph = f / C
+        look = math.sin(2 * math.pi * ph)
+        poses = {"neck1": [(Y, -0.05 + 0.05 * math.sin(2 * math.pi * ph * 2))],
+                 "neck2": [(Z, 0.35 * look)], "head": [(Z, 0.2 * look), (Y, 0.05 * math.sin(2 * math.pi * ph * 3))],
+                 "tail1": [(Z, 0.15 * math.sin(2 * math.pi * ph * 2))],
+                 "ear.L": [(Y, -0.6 * math.exp(-((ph - 0.6) * 25) ** 2))],
+                 "ear.R": [(Y, -0.4 * math.exp(-((ph - 0.2) * 25) ** 2))]}
+        a.key(f + 1, poses, root_z=sp["height"] * 0.004 * math.sin(2 * math.pi * ph * 4))
+    a.done()
+
+
+# --------------------------------------------------------------------------- quadrupeds
+
+def quadruped(sp):
+    """Anatomy from measurements (metres, Blender X forward, Z up)."""
+    b = Body()
+    H, Hc, L, D, W = sp["height"], sp["croup"], sp["length"], sp["chest"], sp["width"]
+    xs, xb = L / 2, -L / 2
+    withers = Vector((xs - 0.12 * L, 0, H))
+    mid = Vector((0.0, 0, H - 0.04 * H))
+    croup = Vector((xb + 0.2 * L, 0, Hc))
+    tailhead = Vector((xb + 0.04 * L, 0, Hc - 0.04 * H))
+    b.bone("root", (0, 0, 0), (0, 0, 0.15 * H), deform=False)
+    b.bone("spine1", croup, mid, "root")
+    b.bone("spine2", mid, withers, "spine1")
+    na = math.radians(sp["neck_angle"])
+    nbase = Vector((xs - 0.02 * L, 0, H - D * 0.35))
+    ndir = Vector((math.cos(na), 0, math.sin(na)))
+    nmid = nbase + ndir * sp["neck"] * 0.5
+    poll = nbase + ndir * sp["neck"]
+    ha = math.radians(-sp["head_angle"])
+    hdir = Vector((math.cos(ha), 0, math.sin(ha)))
+    muzzle = poll + hdir * sp["head"]
+    b.bone("neck1", nbase, nmid, "spine2")
+    b.bone("neck2", nmid, poll, "neck1")
+    b.bone("head", poll, muzzle, "neck2")
+    tl = sp["tail"]
+    td = math.radians(sp["tail_droop"])
+    tdir = Vector((-math.cos(td), 0, -math.sin(td)))
+    t1, t2, t3 = tailhead + tdir * tl * 0.33, tailhead + tdir * tl * 0.66, tailhead + tdir * tl
+    b.bone("tail1", tailhead, t1, "spine1")
+    b.bone("tail2", t1, t2, "tail1")
+    b.bone("tail3", t2, t3, "tail2")
+
+    lr = sp["legs"]   # (upper, middle, lower) radii
+    for side, sy in (("L", 1), ("R", -1)):
+        y = sy * W * 0.72
+        scap = Vector((xs - 0.17 * L, sy * W * 0.55, H - 0.06 * H))
+        shoulder = Vector((xs - 0.01 * L, y, H - D * 0.62))
+        elbow = Vector((xs - 0.1 * L, y, H - D * 1.02))
+        knee = Vector((xs - 0.08 * L, y * 0.95, H * 0.3))
+        fet_f = Vector((xs - 0.07 * L, y * 0.92, H * 0.09))
+        hoof_f = Vector((xs - 0.03 * L, y * 0.92, sp["hoof"] * 0.6))
+        b.bone(f"scap.{side}", scap, elbow, "spine2")
+        b.bone(f"forearm.{side}", elbow, knee, f"scap.{side}")
+        b.bone(f"cannon_f.{side}", knee, fet_f, f"forearm.{side}")
+        b.bone(f"pastern_f.{side}", fet_f, hoof_f, f"cannon_f.{side}")
+        hip = Vector((xb + 0.24 * L, sy * W * 0.62, Hc - 0.1 * H))
+        stifle = Vector((xb + 0.34 * L, y, Hc - D * 0.95))
+        hock = Vector((xb + 0.06 * L, y * 0.95, H * 0.33))
+        fet_h = Vector((xb + 0.1 * L, y * 0.92, H * 0.09))
+        hoof_h = Vector((xb + 0.13 * L, y * 0.92, sp["hoof"] * 0.6))
+        b.bone(f"thigh.{side}", hip, stifle, "spine1")
+        b.bone(f"gaskin.{side}", stifle, hock, f"thigh.{side}")
+        b.bone(f"cannon_h.{side}", hock, fet_h, f"gaskin.{side}")
+        b.bone(f"pastern_h.{side}", fet_h, hoof_h, f"cannon_h.{side}")
+        b.limb(shoulder, elbow, lr[0] * 1.15, lr[0], "leg_upper")
+        b.limb(elbow, knee, lr[0] * 0.95, lr[1], "leg_upper")
+        b.limb(knee, fet_f, lr[1] * 0.85, lr[2], "leg_lower")
+        b.limb(fet_f, hoof_f, lr[2] * 1.1, sp["hoof"], "hoof")
+        b.limb(stifle, hock, lr[0] * 1.05, lr[1] * 0.95, "leg_upper")
+        b.limb(hock, fet_h, lr[1] * 0.85, lr[2], "leg_lower")
+        b.limb(fet_h, hoof_h, lr[2] * 1.1, sp["hoof"], "hoof")
+        b.mass(shoulder.lerp(scap, 0.45) + Vector((0, -sy * W * 0.1, 0)), (L * 0.13, W * 0.42, D * 0.42), "body")
+        b.mass(hip.lerp(stifle, 0.45) + Vector((0, -sy * W * 0.12, 0)), (L * 0.15, W * 0.45, D * 0.5), "body")
+        b.mass(elbow.lerp(knee, 0.2), (lr[0] * 1.2, lr[0] * 1.0, (elbow - knee).length * 0.32), "leg_upper")
+
+    # Trunk: ribcage, belly, hindquarters, withers, chest.
+    b.mass((xs - 0.22 * L, 0, H - D * 0.52), (L * 0.3, W * 0.98, D * 0.5), "body")
+    b.mass((-0.02 * L, 0, H - D * 0.55), (L * 0.28, W * 1.0, D * 0.47), "body")
+    b.mass((xb + 0.2 * L, 0, Hc - D * 0.45), (L * 0.22, W * 0.95, D * 0.47), "body")
+    b.mass((xs - 0.14 * L, 0, H - D * 0.18), (L * 0.14, W * 0.45, D * 0.2), "body")
+    b.mass((xs + 0.02 * L, 0, H - D * 0.62), (L * 0.08, W * 0.62, D * 0.3), "body")
+    b.limb(croup, tailhead, W * 0.6, W * 0.35, "body")
+    nr0, nr1 = sp["neck_r"]
+    b.limb(nbase - ndir * 0.05 * L, nmid, nr0, (nr0 + nr1) / 2, "neck")
+    b.limb(nmid, poll, (nr0 + nr1) / 2, nr1, "neck")
+    if sp.get("mane"):
+        b.limb(nbase + Vector((0, 0, nr0 * 0.75)), poll + Vector((-0.03, 0, nr1 * 0.95)), nr0 * 0.42, nr1 * 0.4, "mane")
+    cr, mr = sp["cranium"], sp["muzzle"]
+    b.mass(poll + hdir * cr * 0.7, (cr * 1.25, cr * 0.95, cr * 1.0), "head", Quaternion(Y, -ha))
+    b.limb(poll + hdir * cr * 1.2, muzzle, cr * 0.85, mr, "muzzle")
+    # Jaw and cheek: the lower half of the head is deep in grazers.
+    side = Vector((-math.sin(ha), 0, math.cos(ha)))   # "up" across the head
+    b.mass(poll + hdir * sp["head"] * 0.38 - side * cr * 0.55, (sp["head"] * 0.32, cr * 0.75, cr * 0.6), "head", Quaternion(Y, -ha))
+    b.mass(muzzle - hdir * mr * 0.6, (mr * 1.3, mr * 1.15, mr * 1.1), "muzzle", Quaternion(Y, -ha))
+    for side, sy in (("L", 1), ("R", -1)):
+        eb = poll + Vector((-cr * 0.25, sy * cr * 0.55, cr * 0.75))
+        et = eb + Vector((-sp["ear"] * 0.3, sy * sp["ear"] * sp.get("ear_spread", 0.45), sp["ear"] * 0.85))
+        b.bone(f"ear.{side}", eb, et, "head")
+        b.limb(eb, et, sp["ear_r"], sp["ear_r"] * 0.3, "ear")
+    tr = sp["tail_r"]
+    tm = sp.get("tail_mid", 0.9)
+    b.limb(tailhead, t1, tr, tr * tm, "tail")
+    b.limb(t1, t2, tr * tm, tr * tm, "tail")
+    b.limb(t2, t3, tr * tm, tr * sp.get("tail_tip", 0.5), "tail")
+    if sp.get("antler"):
+        an = sp["antler"]
+        for sy in (1, -1):
+            base = poll + Vector((cr * 0.1, sy * cr * 0.4, cr * 0.85))
+            prev = base
+            for k in range(an["segments"]):
+                f = (k + 1) / an["segments"]
+                pt = base + Vector((-an["back"] * f, sy * an["spread"] * math.sin(f * 1.7), an["height"] * f))
+                r0 = an["r"] * (1.0 - 0.55 * (k / an["segments"]))
+                b.limb(prev, pt, r0, r0 * 0.85, "antler")
+                if k < an["segments"] - 1:
+                    tine = pt + Vector((an["tine"] * 0.75, sy * an["tine"] * 0.2, an["tine"] * 0.65))
+                    b.limb(pt, tine, r0 * 0.6, r0 * 0.25, "antler")
+                prev = pt
+            if an.get("brow"):
+                b.limb(base, base + Vector((an["brow"], sy * 0.04, an["brow"] * 0.35)), an["r"] * 0.7, an["r"] * 0.3, "antler")
+    if sp.get("tusk"):
+        for sy in (1, -1):
+            tb = muzzle + Vector((-mr * 1.2, sy * mr * 0.9, -mr * 0.2))
+            b.limb(tb, tb + Vector((sp["tusk"] * 0.15, sy * sp["tusk"] * 0.35, sp["tusk"])), 0.016, 0.006, "tusk")
+    eye_c = poll + hdir * cr * 0.65
+    eyes = [((eye_c + Vector((0, sy * cr * 0.82, cr * 0.32))), cr * 0.13) for sy in (1, -1)]
+    return b, eyes
+
+
+def make_quadruped(name, sp, paint, fur_scale=300.0, fur_bump=0.25, displace=None):
+    body, eyes = quadruped(sp)
+    obj = build_flesh(name, body, sp["height"] * 0.012, sp.get("faces", 9000))
+    if displace:
+        for v in obj.data.vertices:
+            label, t, _ = body.label_at(v.co)
+            v.co += v.normal * displace(v.co, label)
+    eye_ids = add_eyes(obj, eyes)
+    paint_and_bake(obj, body, lambda co, n, label, t: paint(co, n, label, t, sp), eye_ids, fur_scale, fur_bump, name)
+    arm = build_rig(name, body, obj)
+    animate_quadruped(arm, sp)
+    META[name] = {"kind": "land", "walk_speed": round(sp["stride"] / (sp["walk_frames"] / FPS), 3),
+                  "height": sp["height"], "length": sp["length"]}
+    return obj, arm
 
 
 def mix(a, b, t):
@@ -181,360 +536,298 @@ def mix(a, b, t):
     return tuple(a[i] + (b[i] - a[i]) * t for i in range(3))
 
 
-def mottle(co, amount=0.08, freq=6.0):
-    return 1.0 + noise.noise(co * freq) * amount
+def shade(c, k):
+    return tuple(min(1.0, x * k) for x in c)
 
 
-# --------------------------------------------------------------------------- quadrupeds
+# --------------------------------------------------------------------------- species
 
-def quadruped(name, p, coat, seed=0):
-    """p: proportions in metres. coat: colour rules. Returns the finished object and meta."""
-    rng = random.Random(seed)
-    sk = Skeleton()
-    L, H = p["length"], p["height"]
-    br = p["body_r"]
-    zb = H - br * 0.95
-    sx, hx = L / 2, -L / 2
-    # Spine: rump -> belly -> chest (the chest node carries the neck and front legs).
-    spine = sk.chain([((hx - p.get("rump", 0.1), 0, zb + br * 0.05), p["hip_r"]),
-                      ((hx * 0.3, 0, zb), br),
-                      ((sx * 0.4, 0, zb + br * 0.05), br * 1.02),
-                      ((sx, 0, zb + br * 0.12), p["chest_r"])], "body")
-    hip, chest = spine[0], spine[-1]
-    # Body masses: a deep brisket under the chest, withers over the shoulders, haunches.
-    sk.chain([((sx * 0.5, 0, zb - br * 0.28), br * 0.62)], "body", start=chest)
-    sk.chain([((sx * 0.7, 0, zb + br * 0.42), br * 0.55)], "body", start=chest)
-    for s_ in (-1, 1):
-        sk.chain([((hx + p["hip_r"] * 0.1, s_ * br * 0.3, zb - br * 0.05), p["hip_r"] * 0.7)], "body", start=hip)
-    # Neck and head.
-    na = math.radians(p["neck_angle"])
-    nb = Vector((sx + p["chest_r"] * 0.35, 0, zb + br * 0.35))
-    ne = nb + Vector((math.cos(na), 0, math.sin(na))) * p["neck_len"]
-    nm = nb.lerp(ne, 0.5) + Vector((0, 0, p["neck_len"] * 0.04))
-    sk.edges.append((chest, sk.node(nb, p["neck_r0"]), "neck", 0.0, 0.15))
-    neck = sk.chain([(nm, (p["neck_r0"] + p["neck_r1"]) / 2), (ne, p["neck_r1"])], "neck", 0.15, 1.0, start=len(sk.co) - 1)
-    ha = math.radians(-p["head_angle"])
-    hb = ne + Vector((p["head_r"] * 0.3, 0, p["head_r"] * 0.2))
-    hm = hb + Vector((math.cos(ha), 0, math.sin(ha))) * p["head_len"] * 0.55
-    he = hb + Vector((math.cos(ha), 0, math.sin(ha))) * p["head_len"]
-    head = sk.chain([(hb, p["head_r"]), (hm, p["head_r"] * 0.8), (he, p["muzzle_r"])], "head", start=neck[-1])
-    # Ears.
-    for s in (-1, 1):
-        base = hb + Vector((-p["head_r"] * 0.3, s * p["head_r"] * 0.55, p["head_r"] * 0.6))
-        tip = base + Vector((-p["ear_len"] * 0.3, s * p["ear_len"] * p.get("ear_spread", 0.5), p["ear_len"] * 0.8))
-        sk.chain([(base, p["ear_r"]), (tip, p["ear_r"] * 0.35)], "ear", start=head[0])
-    # Antlers: a beam that sweeps back and up, with tines.
-    if p.get("antler"):
-        a = p["antler"]
-        for s in (-1, 1):
-            base = hb + Vector((-p["head_r"] * 0.1, s * p["head_r"] * 0.4, p["head_r"] * 0.85))
-            prev = base
-            ids = [head[0]]
-            for k in range(a["segments"]):
-                f = (k + 1) / a["segments"]
-                pt = base + Vector((-a["back"] * f, s * a["spread"] * math.sin(f * 1.6), a["height"] * f))
-                ids = sk.chain([(pt, a["r"] * (1.0 - 0.6 * f))], "antler", start=ids[-1])
-                if k < a["segments"] - 1 and k % a.get("tine_every", 1) == 0:
-                    tine = pt + Vector((a["tine"] * 0.8, s * a["tine"] * 0.25, a["tine"] * 0.6))
-                    sk.chain([(tine, a["r"] * 0.35)], "antler", start=ids[-1])
-                prev = pt
-            if a.get("brow"):
-                brow = base + Vector((a["brow"], s * 0.05, a["brow"] * 0.3))
-                sk.chain([(brow, a["r"] * 0.45)], "antler", start=head[0])
-    # Tusks.
-    if p.get("tusk"):
-        for s in (-1, 1):
-            tb = he + Vector((-p["muzzle_r"] * 0.6, s * p["muzzle_r"] * 0.8, -p["muzzle_r"] * 0.2))
-            tt = tb + Vector((p["tusk"] * 0.2, s * p["tusk"] * 0.35, p["tusk"]))
-            sk.chain([(tb, 0.02), (tt, 0.008)], "tusk", start=head[-1])
-    # Legs: front from the chest, back from the hip, with knees and hocks.
-    lat = br * 0.55
-    for s in (-1, 1):
-        for front in (True, False):
-            x = sx - p["chest_r"] * 0.25 if front else hx + p["hip_r"] * 0.2
-            top = Vector((x, s * lat, zb - br * 0.35))
-            knee = Vector((x + (0.0 if front else -H * 0.07), s * lat * 0.95, H * 0.4))
-            ankle = Vector((x + (0.0 if front else -H * 0.02), s * lat * 0.95, H * 0.13))
-            hoof = Vector((x + H * 0.02, s * lat * 0.95, p["hoof_r"]))
-            r0 = p["leg_r"] * (1.9 if not front else 1.5)
-            sk.chain([(top, r0), (knee, p["leg_r"] * 0.75), (ankle, p["leg_r"] * 0.6), (hoof, p["hoof_r"])],
-                     "leg", start=hip if not front else chest)
-    # Tail.
-    tb = Vector((hx - p.get("rump", 0.1) - p["hip_r"] * 0.7, 0, zb + br * 0.35))
-    td = math.radians(p["tail_droop"])
-    tt = tb + Vector((-math.cos(td), 0, -math.sin(td))) * p["tail_len"]
-    tm = tb.lerp(tt, 0.5)
-    sk.chain([(tb, p["tail_r"]), (tm, p["tail_r"] * p.get("tail_mid", 0.9)), (tt, p["tail_r"] * p.get("tail_tip", 0.4))], "tail", start=hip)
+def horse():
+    sp = dict(height=1.42, croup=1.40, length=1.45, chest=0.66, width=0.27, neck=0.78, neck_angle=46,
+              neck_r=(0.24, 0.15), head=0.55, cranium=0.13, muzzle=0.09, head_angle=58, ear=0.14, ear_r=0.032,
+              ear_spread=0.2, legs=(0.12, 0.07, 0.042), hoof=0.06, tail=0.75, tail_r=0.07, tail_droop=72,
+              tail_mid=1.15, tail_tip=0.8, mane=True, walk_frames=26, stride=1.55, stride_angle=0.42, graze=1.3)
+    coat = (0.62, 0.48, 0.3)   # Fjord dun; the game tints it to other colours
+    dark = (0.1, 0.08, 0.07)
 
-    obj = meta_object(name, sk, min(H * 0.016, 0.02), p.get("faces", 6000))
-    # Eyes sit on the side of the head, a little forward of the head's widest point.
-    eye_r = p["head_r"] * 0.16
-    eyes = []
-    hdir = Vector((math.cos(ha), 0, math.sin(ha)))
-    for s in (-1, 1):
-        ec = hb + hdir * p["head_len"] * 0.22 + Vector((0, s * p["head_r"] * 0.86, p["head_r"] * 0.35))
-        eyes.append((ec, eye_r, "eye"))
-    ids, labs = add_spheres(obj, eyes)
-
-    def paint(co, n, label, t):
-        if label == "eye":
-            return (0.03, 0.025, 0.02)
-        if label == "head" and t > 0.93:
-            return (0.06, 0.05, 0.045)  # nose
-        return coat(co, n, label, t, zb, br)
-
-    def anim(co, label, t):
-        hw = 0.0
-        if label == "neck":
-            hw = t * t * (3 - 2 * t)
-        elif label in ("head", "ear", "antler", "tusk", "eye", "nose"):
-            hw = 1.0
-        tw = t if label == "tail" else 0.0
-        return (hw, tw)
-
-    finish(obj, sk, paint, anim, ids, labs, p.get("displace"), 1.0)
-    meta = {"neck_pivot": to_godot(nb), "tail_pivot": to_godot(tb), "head_down": p["graze"],
-            "tail_swish": p.get("swish", 0.35), "mode": 0, "length": L}
-    return obj, meta
-
-
-def leg_shade(z, H, base, dark, hoof, low=0.35):
-    if z < 0.06:
-        return hoof
-    return mix(dark, base, (z / H - 0.08) / low)
+    def paint(co, n, label, t, sp):
+        if label in ("mane", "tail"):
+            return dark
+        if label == "hoof":
+            return (0.08, 0.07, 0.06)
+        if label == "leg_lower":
+            return mix(dark, coat, 0.15)
+        if label == "muzzle":
+            return mix(coat, (0.22, 0.17, 0.14), t)
+        if label == "ear":
+            return mix(coat, dark, t)
+        belly = max(0.0, -n.z) * 0.3
+        dorsal = max(0.0, 1.0 - abs(co.y) / 0.03) if label == "body" and n.z > 0.8 else 0.0
+        return mix(mix(coat, (0.78, 0.68, 0.52), belly), dark, dorsal * 0.8)   # dun dorsal stripe
+    return make_quadruped("horse", sp, paint, fur_scale=420.0, fur_bump=0.18)
 
 
 def sheep():
-    H = 0.72
-    p = dict(length=0.85, height=H, body_r=0.27, hip_r=0.25, chest_r=0.25, rump=0.08,
-             neck_len=0.26, neck_angle=40, neck_r0=0.12, neck_r1=0.09, head_len=0.26, head_r=0.085,
-             muzzle_r=0.055, head_angle=40, ear_len=0.1, ear_r=0.025, ear_spread=0.9,
-             leg_r=0.05, hoof_r=0.03, tail_len=0.16, tail_r=0.06, tail_droop=70, graze=1.1, swish=0.25)
-    wool = (0.88, 0.85, 0.78)
-    face = (0.16, 0.13, 0.11)
+    sp = dict(height=0.72, croup=0.72, length=0.88, chest=0.4, width=0.22, neck=0.3, neck_angle=35,
+              neck_r=(0.12, 0.085), head=0.26, cranium=0.08, muzzle=0.05, head_angle=52, ear=0.1, ear_r=0.024,
+              ear_spread=0.9, legs=(0.06, 0.038, 0.024), hoof=0.025, tail=0.22, tail_r=0.045, tail_droop=82,
+              walk_frames=22, stride=0.62, stride_angle=0.38, graze=1.15)
+    wool = (0.86, 0.83, 0.76)
+    face = (0.17, 0.14, 0.12)
 
-    def coat(co, n, label, t, zb, br):
-        if label in ("head", "ear"):
-            return mix(face, wool, 0.0)
-        if label == "leg":
-            return leg_shade(co.z, H, (0.3, 0.27, 0.24), face, (0.08, 0.07, 0.06), 0.6)
-        m = mottle(co, 0.06, 14.0)
-        return tuple(c * m for c in wool)
+    def paint(co, n, label, t, sp):
+        if label in ("head", "muzzle", "ear"):
+            return face
+        if label == "hoof":
+            return (0.08, 0.07, 0.06)
+        if label == "leg_lower" or (label == "leg_upper" and co.z < 0.3):
+            return face
+        return wool
 
-    def displace(co, label, t):
-        if label in ("body", "neck", "tail"):
-            return 0.02 + 0.025 * noise.noise(co * 18.0)
+    def displace(co, label):
+        if label in ("body", "neck", "tail") or (label == "leg_upper" and co.z > 0.3):
+            return 0.025 + 0.02 * noise.noise(co * 22.0)   # fleece
         return 0.0
-    p["displace"] = displace
-    return quadruped("sheep", p, coat, 1)
+    return make_quadruped("sheep", sp, paint, fur_scale=70.0, fur_bump=0.6, displace=displace)
 
 
-def horse():
-    H = 1.38
-    p = dict(length=1.15, height=H, body_r=0.3, hip_r=0.3, chest_r=0.31, rump=0.14,
-             neck_len=0.8, neck_angle=50, neck_r0=0.21, neck_r1=0.13, head_len=0.6, head_r=0.13,
-             muzzle_r=0.085, head_angle=55, ear_len=0.13, ear_r=0.03, ear_spread=0.2,
-             leg_r=0.085, hoof_r=0.065, tail_len=0.62, tail_r=0.09, tail_droop=72, tail_mid=1.1, tail_tip=0.7,
-             graze=1.25, swish=0.45)
-    body = (0.42, 0.28, 0.16)
-    dark = (0.08, 0.06, 0.05)
-
-    def coat(co, n, label, t, zb, br):
-        m = mottle(co, 0.05, 8.0)
-        if label == "tail":
-            return dark
-        if label == "neck" and n.z > 0.35 and co.y * co.y < 0.004:
-            return dark  # mane along the top of the neck
-        if label == "head":
-            muzzle = max(0.0, t - 0.75) * 4.0
-            return mix(tuple(c * m for c in body), (0.2, 0.15, 0.12), muzzle)
-        if label == "leg":
-            return leg_shade(co.z, H, body, dark, (0.06, 0.05, 0.05), 0.35)
-        belly = max(0.0, -n.z) * 0.25
-        return mix(tuple(c * m for c in body), (0.55, 0.42, 0.3), belly)
-    return quadruped("horse", p, coat, 2)
-
-
-def deer(name="deer", reindeer=False):
-    H = 1.2 if not reindeer else 1.1
-    p = dict(length=0.95 if not reindeer else 1.0, height=H, body_r=0.27 if not reindeer else 0.3,
-             hip_r=0.26, chest_r=0.27, rump=0.1, neck_len=0.5 if not reindeer else 0.42, neck_angle=55 if not reindeer else 45,
-             neck_r0=0.15 if not reindeer else 0.17, neck_r1=0.09, head_len=0.38, head_r=0.1, muzzle_r=0.06,
-             head_angle=50, ear_len=0.16, ear_r=0.035, ear_spread=0.7, leg_r=0.06, hoof_r=0.04,
-             tail_len=0.14, tail_r=0.045, tail_droop=60, graze=1.25, swish=0.5)
-    p["faces"] = 9000
+def deer(name, reindeer):
     if reindeer:
-        p["antler"] = dict(segments=5, back=0.45, spread=0.32, height=0.75, r=0.035, tine=0.16, tine_every=1, brow=0.2)
+        sp = dict(height=1.1, croup=1.08, length=1.28, chest=0.55, width=0.25, neck=0.52, neck_angle=40,
+                  neck_r=(0.17, 0.1), head=0.42, cranium=0.1, muzzle=0.07, head_angle=45, ear=0.12, ear_r=0.03,
+                  ear_spread=0.6, legs=(0.1, 0.055, 0.035), hoof=0.06, tail=0.12, tail_r=0.04, tail_droop=60,
+                  walk_frames=26, stride=1.25, stride_angle=0.4, graze=1.2, faces=12000,
+                  antler=dict(segments=5, back=0.5, spread=0.35, height=0.75, r=0.03, tine=0.16, brow=0.22))
+        coat, pale = (0.42, 0.37, 0.31), (0.86, 0.84, 0.78)
     else:
-        p["antler"] = dict(segments=4, back=0.35, spread=0.35, height=0.8, r=0.032, tine=0.18, tine_every=1, brow=0.18)
-    coat_col = (0.48, 0.3, 0.17) if not reindeer else (0.42, 0.38, 0.33)
-    pale = (0.78, 0.68, 0.52) if not reindeer else (0.88, 0.86, 0.8)
-    antler = (0.58, 0.5, 0.4)
+        sp = dict(height=1.22, croup=1.26, length=1.38, chest=0.52, width=0.21, neck=0.6, neck_angle=55,
+                  neck_r=(0.17, 0.1), head=0.42, cranium=0.1, muzzle=0.06, head_angle=55, ear=0.17, ear_r=0.032,
+                  ear_spread=0.7, legs=(0.085, 0.048, 0.028), hoof=0.035, tail=0.14, tail_r=0.04, tail_droop=70,
+                  walk_frames=26, stride=1.4, stride_angle=0.42, graze=1.25, faces=12000,
+                  antler=dict(segments=4, back=0.4, spread=0.38, height=0.85, r=0.028, tine=0.2, brow=0.2))
+        coat, pale = (0.5, 0.31, 0.17), (0.8, 0.7, 0.53)
+    antler = (0.55, 0.47, 0.37)
 
-    def coat(co, n, label, t, zb, br):
+    def paint(co, n, label, t, sp):
         if label == "antler":
-            return mix(antler, (0.9, 0.86, 0.78), t)
-        m = mottle(co, 0.05, 9.0)
-        base = tuple(c * m for c in coat_col)
-        if label == "leg":
-            return leg_shade(co.z, H, base, (0.18, 0.14, 0.1), (0.06, 0.05, 0.04), 0.3)
-        if label == "tail" or (label == "body" and co.x < -0.45 and n.x < -0.3):
-            return pale  # pale rump patch
+            return antler
+        if label == "hoof":
+            return (0.06, 0.05, 0.04)
+        if label == "leg_lower":
+            return shade(coat, 0.7)
+        if label == "tail" or (label == "body" and co.x < -sp["length"] * 0.42 and n.x < -0.3):
+            return pale
         if reindeer and label == "neck":
-            return mix(base, pale, 0.7)  # white neck mane
-        if label == "head" and t > 0.8:
-            return (0.12, 0.1, 0.08)
-        belly = max(0.0, -n.z) * 0.6
-        return mix(base, pale, belly)
-    return quadruped(name, p, coat, 3 if not reindeer else 4)
+            return mix(coat, pale, 0.75)
+        if label == "muzzle":
+            return mix(coat, shade(coat, 0.45), t)
+        return mix(coat, pale, max(0.0, -n.z) * 0.6)
+    return make_quadruped(name, sp, paint, fur_scale=380.0, fur_bump=0.2)
 
 
 def boar():
-    H = 0.82
-    p = dict(length=0.85, height=H, body_r=0.3, hip_r=0.27, chest_r=0.33, rump=0.05,
-             neck_len=0.2, neck_angle=10, neck_r0=0.25, neck_r1=0.2, head_len=0.42, head_r=0.16,
-             muzzle_r=0.07, head_angle=28, ear_len=0.11, ear_r=0.035, ear_spread=0.4,
-             leg_r=0.055, hoof_r=0.035, tail_len=0.22, tail_r=0.03, tail_droop=75, tusk=0.08, graze=0.7, swish=0.6)
-    hair = (0.22, 0.17, 0.12)
+    sp = dict(height=0.85, croup=0.8, length=1.05, chest=0.56, width=0.24, neck=0.2, neck_angle=12,
+              neck_r=(0.24, 0.2), head=0.46, cranium=0.15, muzzle=0.075, head_angle=30, ear=0.12, ear_r=0.035,
+              ear_spread=0.4, legs=(0.085, 0.048, 0.032), hoof=0.034, tail=0.25, tail_r=0.025, tail_droop=82,
+              tusk=0.08, walk_frames=20, stride=0.7, stride_angle=0.38, graze=0.75)
+    hair = (0.24, 0.18, 0.13)
 
-    def coat(co, n, label, t, zb, br):
+    def paint(co, n, label, t, sp):
         if label == "tusk":
             return (0.92, 0.88, 0.78)
-        m = mottle(co, 0.12, 20.0)
-        base = tuple(c * m for c in hair)
-        if label == "head" and t > 0.85:
-            return (0.3, 0.22, 0.2)  # snout disc
-        if label == "leg":
-            return leg_shade(co.z, H, base, (0.1, 0.08, 0.06), (0.05, 0.04, 0.04), 0.4)
+        if label == "hoof":
+            return (0.05, 0.04, 0.04)
+        if label == "muzzle":
+            return (0.32, 0.24, 0.21) if t > 0.85 else shade(hair, 0.9)
+        if label in ("leg_lower", "leg_upper"):
+            return shade(hair, 0.6)
         if n.z > 0.6 and label in ("body", "neck"):
-            return tuple(c * 0.7 for c in base)  # bristly dark ridge
-        return base
-
-    def displace(co, label, t):
-        return 0.008 * noise.noise(co * 40.0) if label in ("body", "neck") else 0.0
-    p["displace"] = displace
-    return quadruped("boar", p, coat, 5)
+            return shade(hair, 0.65)
+        return hair
+    return make_quadruped("boar", sp, paint, fur_scale=160.0, fur_bump=0.5)
 
 
 def fox():
-    H = 0.4
-    p = dict(length=0.5, height=H, body_r=0.11, hip_r=0.1, chest_r=0.11, rump=0.04,
-             neck_len=0.15, neck_angle=40, neck_r0=0.065, neck_r1=0.05, head_len=0.17, head_r=0.06,
-             muzzle_r=0.022, head_angle=12, ear_len=0.09, ear_r=0.025, ear_spread=0.25,
-             leg_r=0.025, hoof_r=0.018, tail_len=0.42, tail_r=0.06, tail_droop=20, tail_mid=1.2, tail_tip=0.6,
-             graze=0.9, swish=0.5)
-    red = (0.72, 0.36, 0.12)
-    white = (0.92, 0.9, 0.85)
-    black = (0.08, 0.06, 0.05)
+    sp = dict(height=0.4, croup=0.4, length=0.6, chest=0.2, width=0.08, neck=0.16, neck_angle=38,
+              neck_r=(0.058, 0.042), head=0.19, cranium=0.05, muzzle=0.02, head_angle=14, ear=0.085, ear_r=0.022,
+              ear_spread=0.3, legs=(0.03, 0.018, 0.012), hoof=0.016, tail=0.42, tail_r=0.055, tail_droop=22,
+              tail_mid=1.25, tail_tip=0.6, walk_frames=16, stride=0.48, stride_angle=0.45, graze=0.9)
+    red, white, black = (0.74, 0.36, 0.12), (0.93, 0.9, 0.85), (0.08, 0.06, 0.05)
 
-    def coat(co, n, label, t, zb, br):
+    def paint(co, n, label, t, sp):
         if label == "tail":
-            return white if t > 0.82 else red
-        if label == "leg":
-            return black if co.z < H * 0.45 else red
+            return white if t > 0.82 and co.x < -0.6 else red
+        if label in ("leg_lower", "hoof"):
+            return black
         if label == "ear":
-            return black if t > 0.6 else red
-        if label in ("head", "neck", "body") and n.z < -0.2:
-            return white  # white throat and chest
-        m = mottle(co, 0.06, 30.0)
-        return tuple(c * m for c in red)
-    return quadruped("fox", p, coat, 6)
+            return black if t > 0.55 else red
+        if label == "muzzle" and n.z < 0.0:
+            return white
+        if label in ("neck", "body") and n.z < -0.25:
+            return white
+        return red
+    return make_quadruped("fox", sp, paint, fur_scale=260.0, fur_bump=0.35)
 
 
 # --------------------------------------------------------------------------- marine
 
-def seal(name="seal", walrus=False):
-    sk = Skeleton()
-    s = 1.0 if not walrus else 1.9
-    r = 0.24 * s if not walrus else 0.28 * s
-    body = sk.chain([((-0.75 * s, 0, 0.1 * s), 0.09 * s), ((-0.35 * s, 0, 0.17 * s), r * 0.9),
-                     ((0.1 * s, 0, 0.2 * s), r), ((0.45 * s, 0, 0.22 * s), r * 0.85)], "body")
-    neck = sk.chain([((0.7 * s, 0, 0.3 * s), r * 0.6)], "neck", start=body[-1])
-    head = sk.chain([((0.88 * s, 0, 0.38 * s), r * 0.55), ((1.02 * s, 0, 0.36 * s), r * 0.38)], "head", start=neck[-1])
-    for sd in (-1, 1):
-        sk.chain([((0.35 * s, sd * r * 0.9, 0.06 * s), 0.05 * s), ((0.45 * s, sd * r * 1.5, 0.02 * s), 0.035 * s)], "leg", start=body[2])
-        sk.chain([((-0.9 * s, sd * 0.12 * s, 0.06 * s), 0.04 * s), ((-1.05 * s, sd * 0.2 * s, 0.05 * s), 0.025 * s)], "tail", start=body[0])
+def seal(name, walrus):
+    s = 1.0 if not walrus else 1.85
+    b = Body()
+    r = 0.22 * s if not walrus else 0.27 * s
+    pts = [Vector((-0.85 * s, 0, 0.1 * s)), Vector((-0.45 * s, 0, 0.16 * s)), Vector((0.0, 0, 0.2 * s)),
+           Vector((0.4 * s, 0, 0.22 * s)), Vector((0.7 * s, 0, 0.3 * s)), Vector((0.95 * s, 0, 0.38 * s))]
+    b.bone("root", (0, 0, 0), (0, 0, 0.1), deform=False)
+    names = ["body1", "body2", "body3", "neck", "head"]
+    for k in range(5):
+        b.bone(names[k], pts[k], pts[k + 1], "root" if k == 0 else names[k - 1])
+    radii = [0.08 * s, r * 0.85, r, r * 0.88, r * 0.6, r * 0.42]
+    labels = ["body", "body", "body", "neck", "head"]
+    for k in range(5):
+        b.limb(pts[k], pts[k + 1], radii[k], radii[k + 1], labels[k])
+    b.mass(pts[2], (0.55 * s, r * 1.05, r * 0.95), "body")
+    b.limb(pts[5], pts[5] + Vector((0.14 * s, 0, -0.03 * s)), r * 0.42, r * 0.28, "muzzle")
+    for side, sy in (("L", 1), ("R", -1)):
+        fa = pts[3] + Vector((0, sy * r * 0.8, -0.1 * s))
+        ft = fa + Vector((0.12 * s, sy * 0.25 * s, -0.08 * s))
+        b.bone(f"flipper.{side}", fa, ft, "body3")
+        b.limb(fa, ft, 0.05 * s, 0.03 * s, "flipper")
+        ha = pts[0] + Vector((-0.05 * s, sy * 0.06 * s, 0))
+        ht = ha + Vector((-0.25 * s, sy * 0.12 * s, 0))
+        b.bone(f"hind.{side}", ha, ht, "body1")
+        b.limb(ha, ht, 0.04 * s, 0.03 * s, "flipper")
+        if walrus:
+            tb = pts[5] + Vector((0.1 * s, sy * 0.05 * s, -0.06 * s))
+            b.limb(tb, tb + Vector((0.03 * s, sy * 0.02 * s, -0.32 * s)), 0.022 * s, 0.008 * s, "tusk")
+    obj = build_flesh(name, b, 0.02 * s, 7000)
     if walrus:
-        for sd in (-1, 1):
-            sk.chain([((1.0 * s, sd * 0.06 * s, 0.26 * s), 0.025 * s), ((1.0 * s, sd * 0.09 * s, -0.05 * s), 0.01 * s)], "tusk", start=head[-1])
-    obj = meta_object(name, sk, 0.02 * s, 4000)
-    he = sk.co[head[0]]
-    ids, labs = add_spheres(obj, [(he + Vector((0.06 * s, sd * r * 0.62, 0.08 * s)), 0.024 * s, "eye") for sd in (-1, 1)])
-    base = (0.4, 0.4, 0.38) if not walrus else (0.45, 0.32, 0.25)
+        for v in obj.data.vertices:
+            label, t, _ = b.label_at(v.co)
+            if label in ("body", "neck"):
+                v.co += v.normal * 0.02 * s * noise.noise(v.co * 7.0)
+    eye_ids = add_eyes(obj, [(pts[5] + Vector((0.05 * s, sy * r * 0.36, 0.06 * s)), 0.022 * s) for sy in (1, -1)])
+    base = (0.42, 0.42, 0.4) if not walrus else (0.5, 0.36, 0.28)
 
     def paint(co, n, label, t):
-        if label == "eye":
-            return (0.02, 0.02, 0.02)
         if label == "tusk":
             return (0.93, 0.9, 0.8)
+        if label == "flipper":
+            return shade(base, 0.6)
         if not walrus:
-            spots = 0.75 if noise.noise(co * 14.0) > 0.35 else 1.0  # harbour-seal spots
-            belly = max(0.0, -n.z) * 0.5
-            return mix(tuple(c * spots for c in base), (0.62, 0.6, 0.55), belly)
-        m = mottle(co, 0.1, 12.0)
-        return tuple(c * m for c in base)
-
-    def anim(co, label, t):
-        hw = 0.0
-        if label == "neck":
-            hw = 0.5
-        elif label in ("head", "eye", "tusk"):
-            hw = 1.0
-        return (hw, t if label == "tail" else 0.0)
-
-    def displace(co, label, t):
-        return 0.015 * s * noise.noise(co * 8.0) if walrus and label == "body" else 0.0
-    finish(obj, sk, paint, anim, ids, labs, displace, 1.0)
-    meta = {"neck_pivot": to_godot(sk.co[body[-1]]), "tail_pivot": to_godot(sk.co[body[0]]),
-            "head_down": -0.5, "tail_swish": 0.3, "mode": 0, "length": 2.0 * s}
-    return obj, meta
+            spot = 0.72 if noise.noise(co * 13.0) > 0.35 else 1.0
+            return mix(shade(base, spot), (0.66, 0.64, 0.6), max(0.0, -n.z) * 0.6)
+        return base
+    paint_and_bake(obj, b, paint, eye_ids, 120.0 if walrus else 300.0, 0.3, name)
+    arm = build_rig(name, b, obj)
+    a = Anim(arm, "idle")
+    for f in range(0, 145, 4):
+        ph = f / 144
+        a.key(f + 1, {"neck": [(Y, -0.25), (Z, 0.3 * math.sin(2 * math.pi * ph))], "head": [(Z, 0.15 * math.sin(2 * math.pi * ph))],
+                      "hind.L": [(Z, 0.2 * math.sin(2 * math.pi * ph * 2))], "hind.R": [(Z, -0.2 * math.sin(2 * math.pi * ph * 2))]})
+    a.done()
+    a = Anim(arm, "graze")
+    for f in range(0, 145, 4):
+        ph = f / 144
+        a.key(f + 1, {"neck": [(Y, 0.25)], "head": [(Y, 0.15 + 0.03 * math.sin(2 * math.pi * ph * 2))],
+                      "hind.L": [(Z, 0.1 * math.sin(2 * math.pi * ph))]})
+    a.done()
+    a = Anim(arm, "walk")
+    for f in range(0, 31, 2):
+        w = 2 * math.pi * f / 30
+        a.key(f + 1, {"body1": [(Y, 0.15 * math.sin(w))], "body2": [(Y, 0.18 * math.sin(w - 0.8))],
+                      "body3": [(Y, 0.15 * math.sin(w - 1.6))], "neck": [(Y, -0.15 * math.sin(w - 2.2))],
+                      "flipper.L": [(Y, 0.5 * math.sin(w))], "flipper.R": [(Y, 0.5 * math.sin(w))]},
+              root_z=0.04 * s * max(0.0, math.sin(w)))
+    a.done()
+    META[name] = {"kind": "shore", "walk_speed": round(0.5 * s, 3), "height": 0.5 * s, "length": 2.0 * s}
+    return obj, arm
 
 
 def whale():
-    sk = Skeleton()
-    # Humpback, ~12 m; origin at the waterline with the back just breaking the surface.
-    body = sk.chain([((5.5, 0, -0.9), 0.55), ((3.5, 0, -0.6), 1.25), ((1.0, 0, -0.55), 1.45),
-                     ((-2.0, 0, -0.65), 1.2), ((-4.5, 0, -0.75), 0.6), ((-6.0, 0, -0.8), 0.28)], "body")
-    for s in (-1, 1):
-        sk.chain([((2.6, s * 1.4, -1.3), 0.22), ((1.8, s * 3.2, -2.0), 0.16), ((1.0, s * 4.4, -2.5), 0.08)], "fin", start=body[2])
-        sk.chain([((-6.5, s * 1.0, -0.8), 0.14), ((-6.9, s * 1.9, -0.75), 0.06)], "fluke", start=body[-1])
-    sk.chain([((-2.5, 0, 0.55), 0.12)], "dorsal", start=body[3])
-    obj = meta_object("whale", sk, 0.1, 5000)
-    ids, labs = add_spheres(obj, [((4.4, s * 1.45, -1.0), 0.1, "eye") for s in (-1, 1)])
+    b = Body()
+    pts = [Vector((5.6, 0, -0.9)), Vector((3.5, 0, -0.6)), Vector((1.0, 0, -0.55)), Vector((-2.0, 0, -0.65)),
+           Vector((-4.5, 0, -0.75)), Vector((-6.2, 0, -0.8))]
+    radii = [0.55, 1.25, 1.45, 1.2, 0.6, 0.28]
+    b.bone("root", (0, 0, 0), (0, 0, 0.5), deform=False)
+    b.bone("chest", pts[2], pts[1], "root")
+    b.bone("head", pts[1], pts[0], "chest")
+    b.bone("belly", pts[2], pts[3], "root")
+    b.bone("tail1", pts[3], pts[4], "belly")
+    b.bone("tail2", pts[4], pts[5], "tail1")
+    for k in range(5):
+        b.limb(pts[k], pts[k + 1], radii[k], radii[k + 1], "body")
+    b.mass(pts[2], (3.2, 1.45, 1.25), "body")
+    for side, sy in (("L", 1), ("R", -1)):
+        fa = Vector((2.6, sy * 1.3, -1.3))
+        ft = Vector((1.0, sy * 4.4, -2.5))
+        b.bone(f"fin.{side}", fa, ft, "chest")
+        b.limb(fa, fa.lerp(ft, 0.5), 0.22, 0.15, "fin")
+        b.limb(fa.lerp(ft, 0.5), ft, 0.15, 0.06, "fin")
+        fl = Vector((-6.6, sy * 1.1, -0.8))
+        b.limb(pts[5], fl, 0.2, 0.12, "fluke")
+        b.limb(fl, Vector((-7.0, sy * 2.0, -0.75)), 0.12, 0.05, "fluke")
+    b.limb(Vector((-2.4, 0, 0.3)), Vector((-2.7, 0, 0.62)), 0.18, 0.06, "dorsal")
+    obj = build_flesh("whale", b, 0.1, 7000)
+    eye_ids = add_eyes(obj, [((4.3, sy * 1.42, -1.0), 0.1) for sy in (1, -1)])
 
     def paint(co, n, label, t):
-        if label == "eye":
-            return (0.02, 0.02, 0.02)
         dark = (0.1, 0.11, 0.13)
         if label == "fin" and n.z < 0:
-            return (0.8, 0.8, 0.78)
+            return (0.82, 0.82, 0.8)
         belly = max(0.0, -n.z)
-        # Throat grooves: pale stripes underneath the head.
         if belly > 0.5 and co.x > 1.5 and math.sin(co.y * 22.0) > 0.4:
             return (0.6, 0.6, 0.58)
         return mix(dark, (0.72, 0.72, 0.7), belly * 0.9)
+    paint_and_bake(obj, b, paint, eye_ids, 12.0, 0.15, "whale")
+    arm = build_rig("whale", b, obj)
+    a = Anim(arm, "swim")
+    for f in range(0, 97, 3):
+        w = 2 * math.pi * f / 96
+        a.key(f + 1, {"tail1": [(Y, 0.08 * math.sin(w))], "tail2": [(Y, 0.18 * math.sin(w - 0.9))],
+                      "head": [(Y, -0.03 * math.sin(w + 0.6))], "fin.L": [(Z, 0.1 * math.sin(w))], "fin.R": [(Z, -0.1 * math.sin(w))]},
+              root_z=0.25 * math.sin(w + 1.2))
+    a.done()
+    META["whale"] = {"kind": "sea", "walk_speed": 1.6, "height": 2.0, "length": 12.5}
+    return obj, arm
 
-    def anim(co, label, t):
-        along = max(0.0, min(1.0, (5.5 - co.x) / 12.5))
-        return (0.0, along)
-    finish(obj, sk, paint, anim, ids, labs, None, 1.0)
-    return obj, {"neck_pivot": [0, 0, 0], "tail_pivot": [0, 0, 0], "head_down": 0.0, "tail_swish": 0.0, "mode": 1, "length": 12.5}
+
+def export(name, obj, arm):
+    bpy.ops.object.select_all(action="DESELECT")
+    obj.select_set(True)
+    arm.select_set(True)
+    bpy.context.view_layer.objects.active = arm
+    path = os.path.join(OUT, name + ".glb")
+    bpy.ops.export_scene.gltf(filepath=path, export_format="GLB", use_selection=True, export_apply=False,
+                              export_yup=True, export_skins=True, export_animations=True,
+                              export_animation_mode="NLA_TRACKS", export_texcoords=True, export_normals=True,
+                              export_tangents=True, export_colors=False, export_image_format="AUTO")
+    print("exported", path, len(obj.data.polygons), "faces")
 
 
-MODELS = [
-    ("sheep", sheep), ("horse", horse), ("deer", lambda: deer("deer")), ("reindeer", lambda: deer("reindeer", True)),
-    ("boar", boar), ("fox", fox), ("seal", lambda: seal("seal")), ("walrus", lambda: seal("walrus", True)), ("whale", whale),
+BUILDERS = [
+    ("horse", horse), ("sheep", sheep), ("deer", lambda: deer("deer", False)),
+    ("reindeer", lambda: deer("reindeer", True)), ("boar", boar), ("fox", fox),
+    ("seal", lambda: seal("seal", False)), ("walrus", lambda: seal("walrus", True)), ("whale", whale),
 ]
 
 
 def main():
     os.makedirs(OUT, exist_ok=True)
-    for name, build in MODELS:
+    only = os.environ.get("ANIMALS")
+    for name, build in BUILDERS:
+        if only and name not in only.split(","):
+            continue
         bpy.ops.wm.read_factory_settings(use_empty=True)
-        obj, meta = build()
-        export(obj, name, meta)
-    with open(os.path.join(OUT, "animals.json"), "w") as f:
-        json.dump(META, f, indent=1)
+        addon_utils.enable("cycles")
+        obj, arm = build()
+        export(name, obj, arm)
+    path = os.path.join(OUT, "animals.json")
+    data = {}
+    if only and os.path.exists(path):
+        data = json.load(open(path))
+    data.update(META)
+    with open(path, "w") as f:
+        json.dump(data, f, indent=1)
     print("wrote animals.json")
 
 
