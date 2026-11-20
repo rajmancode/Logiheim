@@ -63,3 +63,7 @@ wetness={
 "type": "float",
 "value": 0.0
 }
+flood={
+"type": "float",
+"value": 0.0
+}

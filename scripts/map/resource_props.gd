@@ -26,18 +26,27 @@ const PROPS := {
 	K.SILVER: ["outcrop_silver", 1, 2, "any", false],
 	K.GEMS: ["crystals", 1, 1, "any", false],
 	K.FISH: ["@shoal", 2, 3, "water", false],
-	K.WHALES: ["whale", 1, 2, "deep", false],
-	K.SEALS: ["seal", 3, 5, "coast", true],
+	K.WHALES: ["a:whale", 1, 2, "deep", false],
+	K.SEALS: ["a:seal|a:seal|a:walrus", 3, 5, "coast", true],
 	K.FARMLAND: ["@field", 2, 4, "any", false],
-	K.WOOL: ["sheep", 6, 10, "clearing", true],
-	K.HORSES: ["horse", 4, 7, "clearing", true],
-	K.GAME: ["deer", 4, 6, "clearing", true],
-	K.FURS: ["reindeer", 4, 7, "clearing", true],
+	K.WOOL: ["a:sheep", 6, 10, "clearing", true],
+	K.HORSES: ["a:horse", 4, 7, "clearing", true],
+	K.GAME: ["a:deer|a:deer|a:boar", 4, 6, "clearing", true],
+	K.FURS: ["a:reindeer|a:reindeer|a:fox", 4, 7, "clearing", true],
 	K.CLAY: ["clay_pit", 1, 1, "bank", false],
 	K.SALT: ["salt_pans", 1, 1, "coast", false],
 	K.PEAT: ["peat_stack", 1, 2, "any", false],
 	K.AMBER: ["amber", 1, 2, "coast", false],
+	K.REEDS: ["reeds", 3, 6, "bank", false],
+	K.LAKE_ORE: ["bog", 1, 2, "bank", false],
 }
+## Coat colour variations per animal (multiplied with the painted coat).
+const COATS := {
+	"sheep": [Color(1, 1, 1), Color(1, 1, 1), Color(0.95, 0.88, 0.74), Color(0.55, 0.42, 0.3), Color(0.28, 0.24, 0.21)],
+	"horse": [Color(1, 1, 1), Color(1, 1, 1), Color(1.12, 0.85, 0.62), Color(1.3, 1.15, 0.85), Color(1.5, 1.52, 1.55), Color(0.45, 0.4, 0.38)],
+}
+const ANIMAL_DIR := "res://assets/models/animals"
+
 const CROPS := [Color(0.36, 0.5, 0.17), Color(0.55, 0.6, 0.22), Color(0.8, 0.66, 0.3), Color(0.72, 0.6, 0.28), Color(0.42, 0.55, 0.45)]
 
 static var _meshes: Dictionary = {}
@@ -56,6 +65,12 @@ static func build(level: HexLevel, surface: TerrainSurface, hydro: Hydrology, pa
 			continue
 		var def: Array = PROPS[kind]
 		var model: String = def[0]
+		var amount_here := level.resource_amount[i]
+		# Big deposits only show props where they are richer, and herds gather at the centre.
+		if NaturalResources.INFO[kind][7] >= 6 and amount_here < 2:
+			continue
+		if def[4] and amount_here < 3:
+			continue
 		rng.seed = hash(Vector3i(level.coords[i].x, level.coords[i].y, 4111 + level.level_index))
 		var c := level.cell_center(i)
 		var amount := level.resource_amount[i]
@@ -63,12 +78,16 @@ static func build(level: HexLevel, surface: TerrainSurface, hydro: Hydrology, pa
 		if def[4]:
 			count += amount * 2
 		var herd_spot := _spot(def[3], c, s, surface, hydro, rng)
+		var base_model := model
 		for k in count:
 			var p: Vector2 = herd_spot if def[4] else _spot(def[3], c, s, surface, hydro, rng)
 			if p.x == INF:
 				continue
 			if def[4]:
 				p += Vector2(rng.randf_range(-1.0, 1.0), rng.randf_range(-1.0, 1.0)) * s * 0.18 * sqrt(scale)
+			if base_model.contains("|"):
+				var options := base_model.split("|")
+				model = options[rng.randi() % options.size()]
 			match model:
 				"@field":
 					_add_field(fields, p, s, surface, rng)
@@ -79,6 +98,13 @@ static func build(level: HexLevel, surface: TerrainSurface, hydro: Hydrology, pa
 				_:
 					var y := _water_level(p, surface, hydro) if def[3] == "deep" else surface.sample(p)
 					var size := scale * rng.randf_range(0.85, 1.2)
+					var custom := Color.WHITE
+					if model.begins_with("a:"):
+						var coats: Array = COATS.get(model.trim_prefix("a:"), [])
+						if not coats.is_empty():
+							custom = coats[rng.randi() % coats.size()]
+						custom = custom * rng.randf_range(0.9, 1.1)
+						custom.a = 1.0
 					var yaw := rng.randf() * TAU
 					if def[4]:
 						yaw = hash(level.coords[i]) % 628 / 100.0 + rng.randf_range(-0.6, 0.6)
@@ -90,7 +116,7 @@ static func build(level: HexLevel, surface: TerrainSurface, hydro: Hydrology, pa
 						_add(items, model, Transform3D(basis, Vector3(p.x, y, p.y)), Color(0.8, 0.92, 0.6))
 					else:
 						basis = basis.scaled(Vector3.ONE * size)
-						_add(items, model, Transform3D(basis, Vector3(p.x, y - 0.05 * size, p.y)), Color.WHITE)
+						_add(items, model, Transform3D(basis, Vector3(p.x, y - 0.05 * size, p.y)), custom)
 
 	for model: String in items:
 		var m := _mesh(model)
@@ -106,7 +132,7 @@ static func build(level: HexLevel, surface: TerrainSurface, hydro: Hydrology, pa
 			mm.set_instance_transform(j, data[0][j])
 			mm.set_instance_custom_data(j, data[1][j])
 		var mmi := MultiMeshInstance3D.new()
-		mmi.name = "Res_" + model.trim_prefix("@")
+		mmi.name = "Res_" + model.trim_prefix("@").trim_prefix("a:")
 		mmi.multimesh = mm
 		parent.add_child(mmi)
 	if not fields.verts.is_empty():
@@ -216,6 +242,8 @@ static func _add(items: Dictionary, model: String, xform: Transform3D, custom: C
 static func _mesh(model: String) -> Mesh:
 	if model.begins_with("@"):
 		return Vegetation.mesh(model.trim_prefix("@"))
+	if model.begins_with("a:"):
+		return _animal_mesh(model.trim_prefix("a:"))
 	if _meshes.has(model):
 		return _meshes[model]
 	var result: ArrayMesh = null
@@ -235,9 +263,59 @@ static func _mesh(model: String) -> Mesh:
 	for s in result.get_surface_count():
 		var m := result.surface_get_material(s)
 		var glint := m != null and m.resource_name == "Glint"
-		result.surface_set_material(s, _material(("whale_" if model == "whale" else "") + ("glint" if glint else "body")))
+		result.surface_set_material(s, _material("glint" if glint else "body"))
 	_meshes[model] = result
 	return result
+
+
+## An animal mesh with its own animated material (pivots from animals.json).
+static func _animal_mesh(animal: String) -> Mesh:
+	var key := "a:" + animal
+	if _meshes.has(key):
+		return _meshes[key]
+	var path := "%s/%s.glb" % [ANIMAL_DIR, animal]
+	var result: ArrayMesh = null
+	if ResourceLoader.exists(path):
+		var scene := load(path) as PackedScene
+		if scene != null:
+			var inst := scene.instantiate()
+			var found := Vegetation._find_mesh(inst)
+			if found != null:
+				result = found.duplicate() as ArrayMesh
+			inst.free()
+	if result == null:
+		push_warning("ResourceProps: missing animal %s" % path)
+		_meshes[key] = null
+		return null
+	var meta: Dictionary = _animal_meta().get(animal, {})
+	var mat := ShaderMaterial.new()
+	mat.shader = load("res://shaders/animal.gdshader")
+	if not meta.is_empty():
+		var np: Array = meta.neck_pivot
+		var tp: Array = meta.tail_pivot
+		mat.set_shader_parameter("neck_pivot", Vector3(np[0], np[1], np[2]))
+		mat.set_shader_parameter("tail_pivot", Vector3(tp[0], tp[1], tp[2]))
+		mat.set_shader_parameter("head_down", meta.head_down)
+		mat.set_shader_parameter("tail_swish", meta.tail_swish)
+		mat.set_shader_parameter("mode", int(meta.mode))
+		mat.set_shader_parameter("body_length", meta.length)
+	for s in result.get_surface_count():
+		result.surface_set_material(s, mat)
+	_meshes[key] = result
+	return result
+
+
+static var _meta: Dictionary = {}
+
+
+static func _animal_meta() -> Dictionary:
+	if _meta.is_empty():
+		var path := ANIMAL_DIR + "/animals.json"
+		if FileAccess.file_exists(path):
+			var parsed = JSON.parse_string(FileAccess.get_file_as_string(path))
+			if parsed is Dictionary:
+				_meta = parsed
+	return _meta
 
 
 static func _material(kind: String) -> Material:
@@ -252,6 +330,5 @@ static func _material(kind: String) -> Material:
 		_:
 			mat.shader = load("res://shaders/resource_prop.gdshader")
 			mat.set_shader_parameter("glint", kind.ends_with("glint"))
-			mat.set_shader_parameter("bob", kind.begins_with("whale"))
 	_materials[kind] = mat
 	return mat

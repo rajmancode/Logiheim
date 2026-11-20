@@ -1,61 +1,68 @@
 class_name NaturalResources
 extends RefCounted
-## Natural resources for a Norse world: what each hex holds and how much.
+## Natural resources for a Norse world, as deposits that span one or more hexes.
 ##
 ## Placed on the finest level from the land itself: terrain type, height, slope, rivers,
-## lakes, coast and open sea. Rules follow where these things are really found (bog iron in
-## wet lowlands, gold in river gravels below mountains, amber on beaches...). Rare resources
-## are placed first and keep their distance from each other; common ones cluster.
-## A Gaea mask named "res_<key>" (e.g. res_iron.png) forces a resource where it is painted.
+## lakes, floodplains, coast and open sea. Rules follow where these things are really found
+## (bog iron in wet lowlands, gold in river gravels below mountains, amber on beaches...).
+## Each deposit starts at a seed hex and grows over neighbouring hexes that suit the same
+## resource, up to a size that matches how abundant it is: forests and farmland cover many
+## hexes, ore veins a few, gems one. Deposits are richest at their centre.
+## Rare resources are placed first and keep their distance; every lake is one fishery.
+## A Gaea mask named "res_<key>" (for example res_iron.png) forces a resource where painted.
 ## Coarser levels show the rarest resource found among their finest hexes.
 
 enum Kind {
 	NONE, TIMBER, OAK, TAR, STONE, SOAPSTONE, IRON, BOG_IRON, COAL, GOLD, SILVER, GEMS,
 	FISH, WHALES, SEALS, FARMLAND, WOOL, HORSES, GAME, FURS, CLAY, SALT, PEAT, AMBER,
+	REEDS, LAKE_ORE,
 }
 
 enum Group { CORE, PRECIOUS, INDUSTRY, WILDLIFE, NORSE }
 
-## key, display name, group, chance on a suitable 20 m hex, minimum distance in metres between
-## two of the same kind (0 = may cluster), description. Indexed by Kind.
+## key, display name, group, seed chance on a suitable 20 m hex, minimum metres between two
+## deposits of the same kind (0 = may cluster), description, deposit size range in 20 m hexes.
+## Indexed by Kind.
 const INFO := [
-	["none", "None", Group.CORE, 0.0, 0, ""],
-	["timber", "Timber", Group.CORE, 0.08, 0, "Pine and spruce for building"],
-	["oak", "Ship oak", Group.NORSE, 0.08, 80, "Straight oak for keels and planks"],
-	["tar", "Pine tar", Group.NORSE, 0.06, 100, "Tar kilns; seals hulls and rigging"],
-	["stone", "Stone", Group.CORE, 0.045, 60, "Quarry stone for building"],
-	["soapstone", "Soapstone", Group.NORSE, 0.05, 160, "Carvable stone for pots, moulds and weights"],
-	["iron", "Iron ore", Group.CORE, 0.06, 150, "Rock iron from mountain veins"],
-	["bog_iron", "Bog iron", Group.NORSE, 0.12, 80, "Iron gathered from wet lowland bogs"],
-	["coal", "Coal", Group.INDUSTRY, 0.04, 220, "Seams of coal in the hills"],
-	["gold", "Gold", Group.PRECIOUS, 0.08, 260, "Gold washed into river gravels"],
-	["silver", "Silver", Group.PRECIOUS, 0.03, 300, "Silver veins in high rock"],
-	["gems", "Gems", Group.PRECIOUS, 0.04, 400, "Crystals in the high mountains"],
-	["fish", "Fish", Group.CORE, 0.1, 0, "Herring, cod and salmon"],
-	["whales", "Whales", Group.NORSE, 0.03, 500, "Whales out in deep water"],
-	["seals", "Seals & walrus", Group.NORSE, 0.1, 180, "Seal skins, oil and walrus ivory"],
-	["farmland", "Farmland", Group.CORE, 0.35, 0, "Fertile soil for barley, rye and flax"],
-	["wool", "Wool", Group.NORSE, 0.06, 0, "Sheep pasture; wool for sails and clothing"],
-	["horses", "Horses", Group.WILDLIFE, 0.06, 180, "Wild horses on open grassland"],
-	["game", "Game", Group.WILDLIFE, 0.05, 0, "Deer and boar"],
-	["furs", "Furs", Group.WILDLIFE, 0.08, 100, "Fox, marten and reindeer in the cold north"],
-	["clay", "Clay", Group.INDUSTRY, 0.12, 100, "Clay banks for pottery and daub"],
-	["salt", "Salt", Group.INDUSTRY, 0.1, 160, "Sea salt boiled on the shore"],
-	["peat", "Peat", Group.NORSE, 0.1, 0, "Peat cut from bogs for fuel"],
-	["amber", "Amber", Group.PRECIOUS, 0.08, 250, "Amber washed up on sandy beaches"],
+	["none", "None", Group.CORE, 0.0, 0, "", 0, 0],
+	["timber", "Timber", Group.CORE, 0.012, 0, "Pine and spruce for building", 8, 24],
+	["oak", "Ship oak", Group.NORSE, 0.02, 120, "Straight oak for keels and planks", 3, 7],
+	["tar", "Pine tar", Group.NORSE, 0.02, 150, "Tar kilns; seals hulls and rigging", 2, 4],
+	["stone", "Stone", Group.CORE, 0.012, 120, "Quarry stone for building", 2, 6],
+	["soapstone", "Soapstone", Group.NORSE, 0.03, 200, "Carvable stone for pots, moulds and weights", 1, 3],
+	["iron", "Iron ore", Group.CORE, 0.03, 200, "Rock iron from mountain veins", 2, 5],
+	["bog_iron", "Bog iron", Group.NORSE, 0.05, 120, "Iron gathered from wet lowland bogs", 2, 5],
+	["coal", "Coal", Group.INDUSTRY, 0.02, 260, "Seams of coal in the hills", 3, 7],
+	["gold", "Gold", Group.PRECIOUS, 0.06, 300, "Gold washed into river gravels", 2, 4],
+	["silver", "Silver", Group.PRECIOUS, 0.025, 350, "Silver veins in high rock", 1, 3],
+	["gems", "Gems", Group.PRECIOUS, 0.03, 450, "Crystals in the high mountains", 1, 2],
+	["fish", "Fish", Group.CORE, 0.03, 0, "Herring and cod on the fishing banks; salmon and trout in lakes", 4, 12],
+	["whales", "Whales", Group.NORSE, 0.02, 600, "Whales out in deep water", 4, 10],
+	["seals", "Seals & walrus", Group.NORSE, 0.05, 220, "Seal skins, oil and walrus ivory", 2, 5],
+	["farmland", "Farmland", Group.CORE, 0.06, 0, "Fertile soil for barley, rye and flax", 4, 14],
+	["wool", "Wool", Group.NORSE, 0.025, 0, "Sheep pasture; wool for sails and clothing", 4, 10],
+	["horses", "Horses", Group.WILDLIFE, 0.025, 220, "Wild horses on open grassland", 4, 9],
+	["game", "Game", Group.WILDLIFE, 0.012, 0, "Deer and boar", 5, 14],
+	["furs", "Furs", Group.WILDLIFE, 0.03, 150, "Fox, marten and reindeer in the cold north", 3, 8],
+	["clay", "Clay", Group.INDUSTRY, 0.05, 140, "Clay banks for pottery and daub", 1, 4],
+	["salt", "Salt", Group.INDUSTRY, 0.05, 200, "Sea salt boiled on the shore", 1, 3],
+	["peat", "Peat", Group.NORSE, 0.04, 0, "Peat cut from bogs for fuel", 3, 8],
+	["amber", "Amber", Group.PRECIOUS, 0.05, 300, "Amber washed up on sandy beaches", 2, 5],
+	["reeds", "Reeds", Group.NORSE, 0.06, 0, "Reed beds for thatch, baskets and arrows", 2, 6],
+	["lake_ore", "Lake ore", Group.NORSE, 0.08, 200, "Iron ore raked from lake beds", 1, 3],
 ]
 
 ## Rarest first, so rare finds are never crowded out by common ones.
 const PLACEMENT_ORDER := [
 	Kind.WHALES, Kind.GEMS, Kind.SILVER, Kind.GOLD, Kind.AMBER, Kind.COAL, Kind.SOAPSTONE,
-	Kind.IRON, Kind.SEALS, Kind.HORSES, Kind.TAR, Kind.OAK, Kind.FURS, Kind.SALT, Kind.CLAY,
-	Kind.BOG_IRON, Kind.WOOL, Kind.PEAT, Kind.STONE, Kind.GAME, Kind.TIMBER, Kind.FISH,
-	Kind.FARMLAND,
+	Kind.IRON, Kind.LAKE_ORE, Kind.SEALS, Kind.HORSES, Kind.TAR, Kind.OAK, Kind.FURS, Kind.SALT,
+	Kind.CLAY, Kind.BOG_IRON, Kind.FARMLAND, Kind.REEDS, Kind.WOOL, Kind.PEAT, Kind.STONE,
+	Kind.GAME, Kind.TIMBER, Kind.FISH,
 ]
 
 const GROUP_NAMES := ["Core", "Precious", "Industry", "Wildlife", "Norse"]
-## Common resources: on zoomed-out levels their icons only show where they are rich.
-const COMMON := [Kind.STONE, Kind.GAME, Kind.TIMBER, Kind.FISH, Kind.FARMLAND, Kind.WOOL, Kind.PEAT]
+## Common resources: zoomed out, only their big deposits get an icon.
+const COMMON := [Kind.STONE, Kind.GAME, Kind.TIMBER, Kind.FISH, Kind.FARMLAND, Kind.WOOL, Kind.PEAT, Kind.REEDS]
 const T := HexMapGenerator.Terrain
 
 
@@ -75,7 +82,8 @@ static func description(kind: int) -> String:
 	return INFO[kind][5]
 
 
-## Places resources on the finest level, then fills the coarser levels from it.
+## Places deposits on the finest level, then fills the coarser levels from it.
+## Each level's `deposits` lists {kind, center (cell index), size (finest hexes)}.
 static func place(levels: Array[HexLevel], source: TerrainSource, sea_y: float, abundance: float, mask_threshold: float) -> void:
 	if levels.is_empty():
 		return
@@ -83,24 +91,39 @@ static func place(levels: Array[HexLevel], source: TerrainSource, sea_y: float, 
 	var n := lv.cell_count()
 	lv.resource.fill(0)
 	lv.resource_amount.fill(0)
+	lv.deposit.fill(-1)
+	lv.deposits.clear()
 	var f := _features(lv, sea_y)
 	var rng := RandomNumberGenerator.new()
+	var area_scale := maxf(1.0, lv.hex_size * lv.hex_size / 400.0)
 
-	# Painted masks win.
+	# Painted masks win: each connected painted patch is one deposit.
 	for kind in range(1, INFO.size()):
 		var mask_name := "res_" + key(kind)
 		if not source.masks.has(mask_name):
 			continue
 		for i in n:
-			if lv.resource[i] == 0 and source.sample_mask(mask_name, lv.cell_center(i)) > mask_threshold:
-				lv.resource[i] = kind
-				lv.resource_amount[i] = 2 + (i % 2)
+			if lv.resource[i] != 0 or source.sample_mask(mask_name, lv.cell_center(i)) <= mask_threshold:
+				continue
+			var cells := PackedInt32Array([i])
+			lv.resource[i] = kind
+			var head := 0
+			while head < cells.size():
+				var c := cells[head]
+				head += 1
+				for k in 6:
+					var j := lv.index_of(HexCoords.neighbor(lv.coords[c], k))
+					if j >= 0 and lv.resource[j] == 0 and source.sample_mask(mask_name, lv.cell_center(j)) > mask_threshold:
+						lv.resource[j] = kind
+						cells.append(j)
+			_commit(lv, kind, cells)
 
 	for kind: int in PLACEMENT_ORDER:
-		# Chances are per 20 m hex; bigger hexes cover more ground.
-		var chance: float = minf(INFO[kind][3] * abundance * maxf(1.0, lv.hex_size * lv.hex_size / 400.0), 0.9)
+		var chance: float = minf(INFO[kind][3] * abundance * area_scale, 0.9)
 		var gap: float = INFO[kind][4]
-		var placed: Array[Vector2] = []
+		var size_min: int = INFO[kind][6]
+		var size_max: int = INFO[kind][7]
+		var seeds: Array[Vector2] = []
 		for i in n:
 			if lv.resource[i] != 0:
 				continue
@@ -108,33 +131,58 @@ static func place(levels: Array[HexLevel], source: TerrainSource, sea_y: float, 
 			if suit <= 0.0:
 				continue
 			rng.seed = hash(Vector3i(lv.coords[i].x, lv.coords[i].y, kind * 7919))
-			# Clustering: common resources come in patches.
-			var patch := 0.5 + BorderNoise.value_noise(lv.cell_center(i) * 0.004 + Vector2(kind * 13.1, kind * 7.7))
-			if rng.randf() > chance * suit * (patch if gap == 0.0 else 1.0):
+			if rng.randf() > chance * suit:
 				continue
+			var here := lv.cell_center(i)
 			if gap > 0.0:
-				var here := lv.cell_center(i)
 				var close := false
-				for q in placed:
+				for q in seeds:
 					if q.distance_to(here) < gap:
 						close = true
 						break
 				if close:
 					continue
-				placed.append(here)
-			lv.resource[i] = kind
-			var r := rng.randf()
-			lv.resource_amount[i] = 3 if r > 0.87 else (2 if r > 0.55 else 1)
+			# Grow the deposit over neighbouring hexes that suit the same resource.
+			var target := maxi(1, roundi(rng.randf_range(size_min, size_max) * sqrt(maxf(abundance, 0.1)) / area_scale))
+			var cells := _grow(lv, f, kind, i, target, rng)
+			seeds.append(here)
+			_commit(lv, kind, cells)
 
-	# Coarser levels: the rarest resource among each hex's finest descendants.
+	# Every lake is one freshwater fishery (salmon, trout, char, eel).
+	var seen := PackedByteArray()
+	seen.resize(n)
+	for i in n:
+		if lv.lake[i] == 0 or seen[i] == 1:
+			continue
+		var cells := PackedInt32Array()
+		var queue := PackedInt32Array([i])
+		seen[i] = 1
+		var head := 0
+		while head < queue.size():
+			var c := queue[head]
+			head += 1
+			if lv.resource[c] == 0:
+				cells.append(c)
+			for k in 6:
+				var j := lv.index_of(HexCoords.neighbor(lv.coords[c], k))
+				if j >= 0 and lv.lake[j] == 1 and seen[j] == 0:
+					seen[j] = 1
+					queue.append(j)
+		if not cells.is_empty():
+			_commit(lv, Kind.FISH, cells)
+
+	# Coarser levels: the rarest resource among each hex's finest descendants, and the
+	# deposits mapped onto them.
 	var rank := {}
 	for k in PLACEMENT_ORDER.size():
 		rank[PLACEMENT_ORDER[k]] = k
 	for li in range(1, levels.size()):
 		var coarse := levels[li]
+		var finer := levels[li - 1]
 		coarse.resource.fill(0)
 		coarse.resource_amount.fill(0)
-		var finer := levels[li - 1]
+		coarse.deposit.fill(-1)
+		coarse.deposits.clear()
 		for i in finer.cell_count():
 			var kind := finer.resource[i]
 			var ci := finer.parent[i]
@@ -146,6 +194,49 @@ static func place(levels: Array[HexLevel], source: TerrainSource, sea_y: float, 
 				coarse.resource_amount[ci] = finer.resource_amount[i]
 			elif cur == kind:
 				coarse.resource_amount[ci] = mini(3, coarse.resource_amount[ci] + 1)
+		for d: Dictionary in finer.deposits:
+			var ci := finer.parent[d.center]
+			if ci >= 0:
+				coarse.deposits.append({"kind": d.kind, "center": ci, "size": d.size})
+
+
+## Breadth-first growth from a seed over free, suitable neighbours (with some randomness so
+## deposits get ragged, natural outlines).
+static func _grow(lv: HexLevel, f: Dictionary, kind: int, seed_cell: int, target: int, rng: RandomNumberGenerator) -> PackedInt32Array:
+	var cells := PackedInt32Array([seed_cell])
+	lv.resource[seed_cell] = kind
+	var head := 0
+	while head < cells.size() and cells.size() < target:
+		var c := cells[head]
+		head += 1
+		var order := [0, 1, 2, 3, 4, 5]
+		order.shuffle()
+		for k: int in order:
+			if cells.size() >= target:
+				break
+			var j := lv.index_of(HexCoords.neighbor(lv.coords[c], k))
+			if j < 0 or lv.resource[j] != 0:
+				continue
+			if _suitability(kind, j, lv, f) <= 0.0 or rng.randf() > 0.8:
+				continue
+			lv.resource[j] = kind
+			cells.append(j)
+	return cells
+
+
+## Records a deposit: richness falls off from the centre (first cell) outwards.
+static func _commit(lv: HexLevel, kind: int, cells: PackedInt32Array) -> void:
+	var id := lv.deposits.size()
+	var center := lv.cell_center(cells[0])
+	var far := 1.0
+	for c in cells:
+		far = maxf(far, lv.cell_center(c).distance_to(center))
+	for c in cells:
+		var t := lv.cell_center(c).distance_to(center) / far
+		lv.resource[c] = kind
+		lv.resource_amount[c] = 3 if t < 0.34 else (2 if t < 0.7 else 1)
+		lv.deposit[c] = id
+	lv.deposits.append({"kind": kind, "center": cells[0], "size": cells.size()})
 
 
 ## Per-hex facts the rules use.
@@ -155,10 +246,12 @@ static func _features(lv: HexLevel, sea_y: float) -> Dictionary:
 	var rel := PackedFloat32Array()
 	var sea_nb := PackedInt32Array()     # neighbouring sea hexes
 	var river_nb := PackedInt32Array()   # river or lake hexes within one step
+	var lake_nb := PackedInt32Array()    # lake hexes within one step
 	var land_dist := PackedInt32Array()  # for water hexes: steps to the nearest land
 	rel.resize(n)
 	sea_nb.resize(n)
 	river_nb.resize(n)
+	lake_nb.resize(n)
 	land_dist.resize(n)
 	land_dist.fill(-1)
 	var queue := PackedInt32Array()
@@ -176,6 +269,8 @@ static func _features(lv: HexLevel, sea_y: float) -> Dictionary:
 				sea_nb[i] += 1
 			if lv.river[j] == 1 or lv.lake[j] == 1:
 				river_nb[i] += 1
+			if lv.lake[j] == 1:
+				lake_nb[i] += 1
 	var head := 0
 	while head < queue.size():
 		var i := queue[head]
@@ -185,7 +280,7 @@ static func _features(lv: HexLevel, sea_y: float) -> Dictionary:
 			if j >= 0 and land_dist[j] < 0:
 				land_dist[j] = land_dist[i] + 1
 				queue.append(j)
-	return {"rel": rel, "sea_nb": sea_nb, "river_nb": river_nb, "land_dist": land_dist}
+	return {"rel": rel, "sea_nb": sea_nb, "river_nb": river_nb, "lake_nb": lake_nb, "land_dist": land_dist}
 
 
 static func _is_sea(lv: HexLevel, i: int) -> bool:
@@ -203,12 +298,13 @@ static func _suitability(kind: int, i: int, lv: HexLevel, f: Dictionary) -> floa
 	var wet: bool = river or lake or f.river_nb[i] > 0
 	var coast: bool = f.sea_nb[i] > 0 and not sea
 	var land := not sea and not lake
+	var flood := lv.floodplain[i] == 1
+	if flood:
+		wet = true
 	match kind:
 		Kind.WHALES:
 			return 1.0 if sea and f.land_dist[i] >= 4 else 0.0
 		Kind.FISH:
-			if lake:
-				return 1.5
 			if sea and f.land_dist[i] <= 2:
 				# River mouths are the richest fishing.
 				return 3.0 if f.river_nb[i] > 0 else 0.7
@@ -243,7 +339,14 @@ static func _suitability(kind: int, i: int, lv: HexLevel, f: Dictionary) -> floa
 		Kind.FARMLAND:
 			if not land or not (t == T.GRASS or t == T.DIRT or t == T.SAND) or slope > 0.6 or rel > 0.55:
 				return 0.0
+			# Floodplain silt is the most fertile soil there is.
+			if flood:
+				return 3.0
 			return 1.0 if wet else 0.35
+		Kind.REEDS:
+			return 1.0 if land and slope < 0.5 and (f.lake_nb[i] > 0 or flood) and t != T.ROCK and t != T.SNOW else 0.0
+		Kind.LAKE_ORE:
+			return 1.0 if lake else 0.0
 		Kind.WOOL:
 			return 1.0 if land and t == T.GRASS and rel > 0.15 and rel < 0.75 and slope > 0.15 else 0.0
 		Kind.HORSES:

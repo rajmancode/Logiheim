@@ -242,7 +242,8 @@ static func place(all: Array, level: HexLevel, surface: TerrainSurface, hydro: H
 			if k > 0:
 				along += pts[k].distance_to(pts[k - 1])
 			# Rivers stop where they reach the sea or enter a lake; the open water takes over.
-			if all[i].to_sea and k > 0 and surface.sample(pts[k]) < surface.sea_y - 0.4:
+			# (Any river: a meander can swing a little past the shoreline too.)
+			if k > 0 and surface.sample(pts[k]) < surface.sea_y - 0.4:
 				if path != null and path.points.size() >= 2:
 					path.points.append(Vector3(pts[k].x, surface.sea_y + 0.03, pts[k].y))
 					path.widths.append(ws[k])

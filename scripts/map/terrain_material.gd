@@ -42,7 +42,28 @@ static func create() -> ShaderMaterial:
 	mat.set_shader_parameter("normal_array", _normal_array)
 	mat.set_shader_parameter("layer_tint", tints)
 	mat.set_shader_parameter("layer_size", PackedFloat32Array(LAYER_METRES))
+	mat.set_shader_parameter("flood_ripples", _ripples())
 	return mat
+
+
+static var _ripple_tex: NoiseTexture2D
+
+
+static func _ripples() -> NoiseTexture2D:
+	if _ripple_tex == null:
+		var noise := FastNoiseLite.new()
+		noise.noise_type = FastNoiseLite.TYPE_SIMPLEX_SMOOTH
+		noise.frequency = 0.02
+		noise.fractal_octaves = 4
+		_ripple_tex = NoiseTexture2D.new()
+		_ripple_tex.width = 256
+		_ripple_tex.height = 256
+		_ripple_tex.seamless = true
+		_ripple_tex.as_normal_map = true
+		_ripple_tex.bump_strength = 6.0
+		_ripple_tex.generate_mipmaps = true
+		_ripple_tex.noise = noise
+	return _ripple_tex
 
 
 ## A material for one level: hex grid parameters and sea level. Built fresh rather than

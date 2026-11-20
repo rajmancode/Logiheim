@@ -1,0 +1,146 @@
+{
+ "sheep": {
+  "neck_pivot": [
+   0.5125,
+   0.558,
+   -0.0
+  ],
+  "tail_pivot": [
+   -0.68,
+   0.558,
+   -0.0
+  ],
+  "head_down": 1.1,
+  "tail_swish": 0.25,
+  "mode": 0,
+  "length": 0.85
+ },
+ "horse": {
+  "neck_pivot": [
+   0.6835,
+   1.2,
+   -0.0
+  ],
+  "tail_pivot": [
+   -0.925,
+   1.2,
+   -0.0
+  ],
+  "head_down": 1.25,
+  "tail_swish": 0.45,
+  "mode": 0,
+  "length": 1.15
+ },
+ "deer": {
+  "neck_pivot": [
+   0.5695,
+   1.038,
+   -0.0
+  ],
+  "tail_pivot": [
+   -0.757,
+   1.038,
+   -0.0
+  ],
+  "head_down": 1.25,
+  "tail_swish": 0.5,
+  "mode": 0,
+  "length": 0.95
+ },
+ "reindeer": {
+  "neck_pivot": [
+   0.5945,
+   0.92,
+   -0.0
+  ],
+  "tail_pivot": [
+   -0.782,
+   0.92,
+   -0.0
+  ],
+  "head_down": 1.25,
+  "tail_swish": 0.5,
+  "mode": 0,
+  "length": 1.0
+ },
+ "boar": {
+  "neck_pivot": [
+   0.5405,
+   0.64,
+   -0.0
+  ],
+  "tail_pivot": [
+   -0.664,
+   0.64,
+   -0.0
+  ],
+  "head_down": 0.7,
+  "tail_swish": 0.6,
+  "mode": 0,
+  "length": 0.85
+ },
+ "fox": {
+  "neck_pivot": [
+   0.2885,
+   0.334,
+   -0.0
+  ],
+  "tail_pivot": [
+   -0.36,
+   0.334,
+   -0.0
+  ],
+  "head_down": 0.9,
+  "tail_swish": 0.5,
+  "mode": 0,
+  "length": 0.5
+ },
+ "seal": {
+  "neck_pivot": [
+   0.45,
+   0.22,
+   -0.0
+  ],
+  "tail_pivot": [
+   -0.75,
+   0.1,
+   -0.0
+  ],
+  "head_down": -0.5,
+  "tail_swish": 0.3,
+  "mode": 0,
+  "length": 2.0
+ },
+ "walrus": {
+  "neck_pivot": [
+   0.855,
+   0.418,
+   -0.0
+  ],
+  "tail_pivot": [
+   -1.425,
+   0.19,
+   -0.0
+  ],
+  "head_down": -0.5,
+  "tail_swish": 0.3,
+  "mode": 0,
+  "length": 3.8
+ },
+ "whale": {
+  "neck_pivot": [
+   0,
+   0,
+   0
+  ],
+  "tail_pivot": [
+   0,
+   0,
+   0
+  ],
+  "head_down": 0.0,
+  "tail_swish": 0.0,
+  "mode": 1,
+  "length": 12.5
+ }
+}

@@ -3,13 +3,13 @@
 importer="scene"
 importer_version=1
 type="PackedScene"
-uid="uid://cjl4x8kpxita6"
-path="res://.godot/imported/seal.glb-7cd5cd283bf320cac32dd349a784e981.scn"
+uid="uid://bxsg6xihhvkm4"
+path="res://.godot/imported/whale.glb-7b44fc73be9c78bb9bedecd40b5050c7.scn"
 
 [deps]
 
-source_file="res://assets/models/resources/seal.glb"
-dest_files=["res://.godot/imported/seal.glb-7cd5cd283bf320cac32dd349a784e981.scn"]
+source_file="res://assets/models/animals/whale.glb"
+dest_files=["res://.godot/imported/whale.glb-7b44fc73be9c78bb9bedecd40b5050c7.scn"]
 
 [params]
 

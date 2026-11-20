@@ -1,4 +1,5 @@
-"""Builds the natural-resource props (ore outcrops, quarry, kiln, animals...) and exports .glb.
+"""Builds the natural-resource props (ore outcrops, quarry, kiln, reeds...) and exports .glb.
+Animals are made separately by tools/blender/make_animals.py.
 
 Run headless (Blender 4.x):
     blender -b --python tools/blender/make_resources.py -- assets/models/resources
@@ -310,53 +311,21 @@ def salt_pans(seed=15):
     return b.finish("salt_pans", 0.6, smooth=False)
 
 
-def whale(seed=16):
-    b = Builder()
-    dark = (0.16, 0.18, 0.2)
-    # Origin is the waterline: the back breaks the surface, the rest is under water.
-    b.merge(noisy(ico(1.0, 3), 0.03, 2, seed), dark, BODY, at((0, 0, -0.6), 0, (7.0, 2.0, 1.6)))
-    b.merge(noisy(ico(0.5, 2), 0.02, 2, seed), dark, BODY, at((6.6, 0, 0.1), 0, (1.0, 1.0, 0.25)))
-    fluke = cube(0.8, 3.0, 0.12)
-    b.merge(fluke, dark, BODY, at((8.2, 0, 1.0), 0, (1, 1, 1), (Vector((0, 1, 0)), -0.5)))
-    return b.finish("whale", 2.0)
-
-
-def seal(name, seed, walrus=False):
+def reeds(seed=17):
+    """A reed bed: dense clumps of tall stems, some with brown cattail heads."""
     rng = random.Random(seed)
     b = Builder()
-    col = (0.32, 0.27, 0.22) if walrus else (0.42, 0.42, 0.4)
-    length = 3.0 if walrus else 1.7
-    b.merge(noisy(ico(1.0, 2), 0.04, 2, seed), col, BODY, at((0, 0, length * 0.18), 0, (length * 0.5, length * 0.22, length * 0.18)))
-    b.merge(ico(length * 0.11, 2), col, BODY, at((length * 0.5, 0, length * 0.3)))
-    if walrus:
-        for s in (-1, 1):
-            b.merge(cyl(0.04, 0.01, 0.6, 6), (0.95, 0.92, 0.82), BODY, at((length * 0.6, s * 0.1, 0.6), 0, (1, 1, 1), (Vector((0, 1, 0)), 0.3)))
-    return b.finish(name, length * 0.4)
-
-
-def quadruped(name, body_col, leg_len, body_len, body_h, neck=0.5, head=0.25, wool=False, antlers=0.0, dark_head=False, seed=0):
-    rng = random.Random(seed)
-    b = Builder()
-    torso_z = leg_len + body_h * 0.5
-    torso = noisy(ico(1.0, 3 if wool else 2), 0.12 if wool else 0.02, 4.0, seed)
-    b.merge(torso, body_col, BODY, at((0, 0, torso_z), 0, (body_len * 0.5, body_h * 0.42, body_h * 0.5)))
-    for sx in (-1, 1):
-        for sy in (-1, 1):
-            b.merge(cyl(0.05 * body_h * 3, 0.035 * body_h * 3, leg_len, 6), (0.12, 0.1, 0.08) if wool else body_col, BODY,
-                    at((sx * body_len * 0.32, sy * body_h * 0.22, leg_len / 2)))
-    head_col = (0.1, 0.09, 0.08) if dark_head else body_col
-    nx = body_len * 0.5
-    b.merge(cyl(0.09 * body_h * 2, 0.07 * body_h * 2, neck, 6), body_col, BODY,
-            at((nx + neck * 0.25, 0, torso_z + neck * 0.4), 0, (1, 1, 1), (Vector((0, 1, 0)), 0.6)))
-    hx, hz = nx + neck * 0.55, torso_z + neck * 0.8
-    b.merge(ico(1.0, 2), head_col, BODY, at((hx, 0, hz), 0, (head * 1.4, head * 0.6, head * 0.6)))
-    if antlers > 0:
-        for s in (-1, 1):
-            for k in range(3):
-                b.merge(cyl(0.025, 0.01, antlers * (0.6 + 0.2 * k), 5), (0.55, 0.47, 0.36), BODY,
-                        at((hx - 0.05 + k * 0.08, s * (0.1 + k * 0.06), hz + head * 0.4 + antlers * 0.3), 0, (1, 1, 1),
-                           (Vector((1, 0, 0)), s * (0.4 + 0.25 * k))))
-    return b.finish(name, torso_z + body_h)
+    for clump in range(7):
+        cx, cy = rng.uniform(-2.5, 2.5), rng.uniform(-2.0, 2.0)
+        for k in range(rng.randint(10, 16)):
+            h = rng.uniform(1.2, 2.2)
+            x, y = cx + rng.gauss(0, 0.25), cy + rng.gauss(0, 0.25)
+            lean = (Vector((rng.uniform(-1, 1), rng.uniform(-1, 1), 0)).normalized(), rng.uniform(0.0, 0.25))
+            b.merge(cyl(0.018, 0.004, h, 4), rng.choice([(0.42, 0.48, 0.22), (0.55, 0.52, 0.28), (0.35, 0.42, 0.18)]), BODY,
+                    at((x, y, h / 2), 0, (1, 1, 1), lean))
+            if rng.random() < 0.3:
+                b.merge(cyl(0.035, 0.035, 0.22, 6), (0.32, 0.2, 0.1), BODY, at((x, y, h * 0.82), 0, (1, 1, 1), lean))
+    return b.finish("reeds", 2.0)
 
 
 MODELS = [
@@ -374,13 +343,7 @@ MODELS = [
     ("peat_stack", peat_stack),
     ("clay_pit", clay_pit),
     ("salt_pans", salt_pans),
-    ("whale", whale),
-    ("seal", lambda: seal("seal", 30)),
-    ("walrus", lambda: seal("walrus", 31, True)),
-    ("sheep", lambda: quadruped("sheep", (0.9, 0.88, 0.82), 0.4, 1.1, 0.75, 0.25, 0.18, wool=True, dark_head=True, seed=40)),
-    ("horse", lambda: quadruped("horse", (0.45, 0.3, 0.18), 0.85, 1.9, 0.75, 0.75, 0.3, seed=41)),
-    ("deer", lambda: quadruped("deer", (0.55, 0.38, 0.22), 0.8, 1.5, 0.55, 0.6, 0.22, antlers=0.4, seed=42)),
-    ("reindeer", lambda: quadruped("reindeer", (0.55, 0.52, 0.48), 0.75, 1.6, 0.65, 0.55, 0.24, antlers=0.7, seed=43)),
+    ("reeds", reeds),
 ]
 
 

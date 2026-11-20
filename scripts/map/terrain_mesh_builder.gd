@@ -3,7 +3,8 @@ extends RefCounted
 ## Turns a TerrainSurface into chunked, indexed meshes for frustum culling.
 ##
 ## Vertex data used by shaders/hex_terrain.gdshader: the 8 terrain blend weights are packed
-## into COLOR (layers 0-3), UV (4-5) and UV2 (6-7).
+## into COLOR (layers 0-3), UV (4-5) and UV2 (6-7); CUSTOM0 = (floodplain strength, river
+## level the floodplain floods from, 0, 0).
 
 ## Quads per chunk edge.
 const CHUNK := 64
@@ -32,6 +33,8 @@ static func _chunk(s: TerrainSurface, x0: int, z0: int, x1: int, z1: int) -> Arr
 	var colors := PackedColorArray()
 	var uv := PackedVector2Array()
 	var uv2 := PackedVector2Array()
+	var custom := PackedFloat32Array()
+	custom.resize(n * 4)
 	verts.resize(n)
 	normals.resize(n)
 	colors.resize(n)
@@ -54,6 +57,8 @@ static func _chunk(s: TerrainSurface, x0: int, z0: int, x1: int, z1: int) -> Arr
 			colors[k] = Color(s.weights[b], s.weights[b + 1], s.weights[b + 2], s.weights[b + 3])
 			uv[k] = Vector2(s.weights[b + 4], s.weights[b + 5])
 			uv2[k] = Vector2(s.weights[b + 6], s.weights[b + 7])
+			custom[k * 4] = s.flood_mask[i]
+			custom[k * 4 + 1] = s.flood_y[i]
 			k += 1
 
 	var indices := PackedInt32Array()
@@ -82,6 +87,8 @@ static func _chunk(s: TerrainSurface, x0: int, z0: int, x1: int, z1: int) -> Arr
 	arrays[Mesh.ARRAY_TEX_UV] = uv
 	arrays[Mesh.ARRAY_TEX_UV2] = uv2
 	arrays[Mesh.ARRAY_INDEX] = indices
+	arrays[Mesh.ARRAY_CUSTOM0] = custom
 	var mesh := ArrayMesh.new()
-	mesh.add_surface_from_arrays(Mesh.PRIMITIVE_TRIANGLES, arrays)
+	var fmt := Mesh.ARRAY_CUSTOM_RGBA_FLOAT << Mesh.ARRAY_FORMAT_CUSTOM0_SHIFT
+	mesh.add_surface_from_arrays(Mesh.PRIMITIVE_TRIANGLES, arrays, [], {}, fmt)
 	return mesh

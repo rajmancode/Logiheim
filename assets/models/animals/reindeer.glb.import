@@ -3,13 +3,13 @@
 importer="scene"
 importer_version=1
 type="PackedScene"
-uid="uid://vly1d22potvi"
-path="res://.godot/imported/whale.glb-924e020cccf046a01138e9e39ccf8dc7.scn"
+uid="uid://baewfgnhu4xo5"
+path="res://.godot/imported/reindeer.glb-d39ef3227be1968ea65fd8880748bbe0.scn"
 
 [deps]
 
-source_file="res://assets/models/resources/whale.glb"
-dest_files=["res://.godot/imported/whale.glb-924e020cccf046a01138e9e39ccf8dc7.scn"]
+source_file="res://assets/models/animals/reindeer.glb"
+dest_files=["res://.godot/imported/reindeer.glb-d39ef3227be1968ea65fd8880748bbe0.scn"]
 
 [params]
 

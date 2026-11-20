@@ -3,13 +3,13 @@
 importer="scene"
 importer_version=1
 type="PackedScene"
-uid="uid://buyto2hruxyg0"
-path="res://.godot/imported/reindeer.glb-9d2a262e4acd9a588f886710af2e2635.scn"
+uid="uid://cdogx3ihyko3x"
+path="res://.godot/imported/reeds.glb-f9b9aea3f2750312ecb557c8aeb056a3.scn"
 
 [deps]
 
-source_file="res://assets/models/resources/reindeer.glb"
-dest_files=["res://.godot/imported/reindeer.glb-9d2a262e4acd9a588f886710af2e2635.scn"]
+source_file="res://assets/models/resources/reeds.glb"
+dest_files=["res://.godot/imported/reeds.glb-f9b9aea3f2750312ecb557c8aeb056a3.scn"]
 
 [params]
 

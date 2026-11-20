@@ -3,13 +3,13 @@
 importer="scene"
 importer_version=1
 type="PackedScene"
-uid="uid://c2d6isei8tdu2"
-path="res://.godot/imported/walrus.glb-d6240898639d512505b467e70845a990.scn"
+uid="uid://crugnwlc6wcnx"
+path="res://.godot/imported/sheep.glb-26a33ab276e67b410591e05dd30c1507.scn"
 
 [deps]
 
-source_file="res://assets/models/resources/walrus.glb"
-dest_files=["res://.godot/imported/walrus.glb-d6240898639d512505b467e70845a990.scn"]
+source_file="res://assets/models/animals/sheep.glb"
+dest_files=["res://.godot/imported/sheep.glb-26a33ab276e67b410591e05dd30c1507.scn"]
 
 [params]
 

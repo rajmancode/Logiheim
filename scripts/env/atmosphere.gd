@@ -33,6 +33,8 @@ var wind := 0.3
 var fog := 0.00008
 var light := 1.0
 var wetness := 0.0
+## 0 dry .. 1 rivers in full flood: rises over a couple of minutes of rain, drains slowly.
+var flood := 0.0
 var wind_angle := 0.6
 var wind_now := 0.3
 var wind_time := 0.0
@@ -97,8 +99,11 @@ func describe() -> String:
 	var from := -Vector2(cos(wind_angle), sin(wind_angle))
 	var bearing := fposmod(rad_to_deg(atan2(from.x, -from.y)), 360.0)
 	var compass: String = COMPASS[int(round(bearing / 45.0)) % 8]
-	return "%02d:%02d %s   %s   wind %d km/h from %s" % [
-		hh, mm, "" if cycle_running else "(paused)", WEATHER_NAMES[weather], roundi(5.0 + wind_now * 60.0), compass]
+	var flooding := ""
+	if flood > 0.05:
+		flooding = "   rivers flooding %d%%" % roundi(flood * 100.0)
+	return "%02d:%02d %s   %s   wind %d km/h from %s%s" % [
+		hh, mm, "" if cycle_running else "(paused)", WEATHER_NAMES[weather], roundi(5.0 + wind_now * 60.0), compass, flooding]
 
 
 func _process(delta: float) -> void:
@@ -118,6 +123,8 @@ func _update(delta: float) -> void:
 	fog = lerpf(fog, target.fog, k)
 	light = lerpf(light, target.light, k)
 	wetness = move_toward(wetness, rain, delta * (0.12 if rain > wetness else 0.015))
+	var flood_target := smoothstep(0.4, 1.0, rain)
+	flood = move_toward(flood, flood_target, delta * (0.008 if flood_target > flood else 0.004))
 
 	# Wind direction wanders slowly; gusts come and go.
 	wind_angle += _noise.get_noise_1d(_t * 0.3) * delta * 0.2
@@ -141,6 +148,7 @@ func _update(delta: float) -> void:
 	RenderingServer.global_shader_parameter_set("cloud_shadow_strength", 0.5 * (1.0 - 0.6 * smoothstep(0.6, 0.9, coverage)))
 	RenderingServer.global_shader_parameter_set("sun_direction", sun_dir)
 	RenderingServer.global_shader_parameter_set("wetness", wetness)
+	RenderingServer.global_shader_parameter_set("flood", flood)
 
 	_rain.amount_ratio = clampf(rain, 0.0, 1.0)
 	_rain.emitting = rain > 0.03

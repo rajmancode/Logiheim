@@ -11,6 +11,10 @@ render_mode blend_mix, depth_draw_opaque, cull_back, diffuse_burley, specular_sc
 #include "res://shaders/include/environment.gdshaderinc"
 #include "res://shaders/include/hex_grid.gdshaderinc"
 
+global uniform float flood;              // 0 dry .. 1 rivers in full flood (Atmosphere)
+uniform float flood_rise = 4.4;          // metres the water climbs above river level in full flood
+uniform sampler2D flood_ripples : hint_normal, filter_linear_mipmap, repeat_enable;
+
 const int LAYERS = 8;
 
 uniform sampler2DArray albedo_array : source_color, filter_linear_mipmap_anisotropic, repeat_enable;
@@ -28,12 +32,14 @@ varying vec3 v_world_pos;
 varying vec3 v_world_normal;
 varying vec4 v_w0;
 varying vec4 v_w1;
+varying vec2 v_flood;
 
 void vertex() {
 	v_world_pos = (MODEL_MATRIX * vec4(VERTEX, 1.0)).xyz;
 	v_world_normal = normalize((MODEL_MATRIX * vec4(NORMAL, 0.0)).xyz);
 	v_w0 = COLOR;
 	v_w1 = vec4(UV, UV2);
+	v_flood = CUSTOM0.xy;
 }
 
 // Samples one layer: planar from above on flat ground, triplanar on slopes.
@@ -115,6 +121,27 @@ void fragment() {
 	// Rain wetness.
 	albedo *= 1.0 - 0.35 * wetness;
 	rough = mix(rough, rough * 0.45, wetness);
+	// Floodwater on floodplains: muddy, glossy and flat wherever the ground lies below the
+	// rising water.
+	float flooded = 0.0;
+	vec2 ripple = vec2(0.0);
+	if (flood > 0.001 && v_flood.x > 0.01) {
+		float level = v_flood.y - 0.6 + flood * flood_rise;
+		float d = level - p.y;
+		flooded = smoothstep(0.0, 0.3, d) * smoothstep(0.02, 0.25, v_flood.x);
+		if (flooded > 0.0) {
+			vec2 fuv = p.xz * 0.02 - wind_direction * wind_time * 0.03;
+			vec3 r1 = texture(flood_ripples, fuv).xyz * 2.0 - 1.0;
+			vec3 r2 = texture(flood_ripples, fuv * 2.1 + vec2(0.3, 0.7)).xyz * 2.0 - 1.0;
+			ripple = (r1.xy + r2.xy) * 0.15;
+			// Silty brown floodwater; the ground shows through where it is still shallow.
+			vec3 water = mix(vec3(0.46, 0.4, 0.27), vec3(0.3, 0.27, 0.18), smoothstep(0.0, 3.0, d));
+			water = mix(albedo * 0.7, water, smoothstep(0.0, 0.5, d));
+			albedo = mix(albedo, water, flooded);
+			rough = mix(rough, 0.06, flooded);
+			ao = mix(ao, 1.0, flooded);
+		}
+	}
 	albedo *= cloud_shadow(p);
 
 	// Grid on land only (the water surface draws its own), fading with distance.
@@ -128,6 +155,7 @@ void fragment() {
 	vec3 t = normalize(cross(n, vec3(0.0, 0.0, 1.0)) + vec3(1e-5));
 	vec3 bt = cross(t, n);
 	vec3 wn = normalize(n + (t * nrm_xy.x - bt * nrm_xy.y) * normal_strength);
+	wn = normalize(mix(wn, normalize(vec3(ripple.x, 1.0, ripple.y)), flooded));
 
 	ALBEDO = albedo;
 	ROUGHNESS = clamp(rough, 0.05, 1.0);

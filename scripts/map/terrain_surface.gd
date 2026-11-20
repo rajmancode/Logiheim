@@ -25,6 +25,9 @@ var weights := PackedFloat32Array()
 var river_mask := PackedFloat32Array()
 ## 1 where trees would hang over a river or lake (a few metres wider than the water).
 var clear_mask := PackedByteArray()
+## 0..1 how much each vertex belongs to a floodplain, and the river level it floods from.
+var flood_mask := PackedFloat32Array()
+var flood_y := PackedFloat32Array()
 ## Plateau height of each hex.
 var plateau := PackedFloat32Array()
 
@@ -141,6 +144,17 @@ func _compute_plateaus() -> void:
 			plateau[i] = sea_y - depth
 		else:
 			plateau[i] = level.top_y(i)
+			# Land hexes almost surrounded by sea become low sand bars and skerries rather
+			# than thin, steep ridges sticking out of the water.
+			var wet := 0
+			for k in 6:
+				var j := _neighbors[i * 6 + k]
+				if j >= 0 and HexMapGenerator.is_water(level.terrain[j]):
+					wet += 1
+			if wet >= 4:
+				plateau[i] = minf(plateau[i], sea_y + 1.0)
+			elif wet == 3:
+				plateau[i] = minf(plateau[i], sea_y + 2.5)
 
 
 func _compute_heights() -> void:
@@ -151,6 +165,10 @@ func _compute_heights() -> void:
 	river_mask.fill(0.0)
 	clear_mask.resize(nx * nz)
 	clear_mask.fill(0)
+	flood_mask.resize(nx * nz)
+	flood_mask.fill(0.0)
+	flood_y.resize(nx * nz)
+	flood_y.fill(0.0)
 	var radius := _settings.step_softness * level.hex_size
 	var inv_r2 := 1.0 / (radius * radius)
 	var detail := _settings.terrain_detail * _meters
@@ -324,6 +342,11 @@ func finish_weights() -> void:
 			if bank > 0.0 and under < 0.5:
 				# Muddy banks, and a muddy (not rocky) bed under the water.
 				_pull(base, T.DIRT, bank * 0.4 + smoothstep(0.75, 1.0, bank) * 0.5)
+			# Floodplains: lush meadow on silt.
+			var fm := flood_mask[vi]
+			if fm > 0.0 and under < 0.5:
+				_pull(base, T.GRASS, fm * 0.6)
+				_pull(base, T.DIRT, fm * 0.12)
 
 			var total := 0.0
 			for k in LAYERS:

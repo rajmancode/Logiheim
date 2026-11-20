@@ -66,6 +66,11 @@ GLYPHS = {
     "salt": ("industry", f'<polygon {W} points="22,92 64,38 106,92"/>'
                          '<polygon fill="#566170" points="56,70 64,58 72,70 64,82"/>'),
     "peat": ("norse", f'<path {W} d="M64 26 C76 44 90 56 88 74 C86 92 74 100 64 100 C54 100 42 92 40 76 C38 62 48 54 52 44 C56 54 60 58 64 60 C66 48 64 38 64 26 Z"/>'),
+    "reeds": ("norse", f'<path {WS} d="M44 100 C44 74 40 56 34 40"/><path {WS} d="M64 100 V34"/><path {WS} d="M84 100 C84 74 88 58 96 44"/>'
+                       f'<rect {W} x="58" y="30" width="12" height="26" rx="6"/><rect {W} x="28" y="38" width="10" height="22" rx="5" transform="rotate(-15 33 49)"/>'
+                       f'<path {WS} d="M24 104 H104"/>'),
+    "lake_ore": ("norse", f'<polygon {W} points="40,58 48,34 80,34 88,58"/><path {WS} d="M24 74 q10 -8 20 0 t20 0 t20 0 t20 0"/>'
+                          f'<path {WS} d="M32 92 q10 -8 20 0 t20 0 t20 0"/>'),
     "amber": ("precious", '<path fill="#f39c12" stroke="#ffffff" stroke-width="5" d="M64 26 C78 50 90 64 90 78 A26 22 0 0 1 38 78 C38 64 50 50 64 26 Z"/>'
                           '<ellipse fill="#ffd27a" cx="54" cy="74" rx="5" ry="9"/>'),
 }

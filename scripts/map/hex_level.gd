@@ -27,8 +27,12 @@ var flow := PackedFloat32Array()        ## land area draining through this cell,
 var river := PackedByteArray()          ## 1 if a river runs through this cell
 var river_width := PackedFloat32Array() ## metres
 var lake := PackedByteArray()           ## 1 if the hex centre is under a lake
+var floodplain := PackedByteArray()     ## 1 if the hex is on a river floodplain (floods in rain)
 var resource := PackedByteArray()       ## NaturalResources.Kind (0 = none)
 var resource_amount := PackedByteArray() ## 1 small .. 3 rich
+var deposit := PackedInt32Array()       ## index into `deposits`, -1 if none
+## Resource deposits on this level: {kind, center (cell index), size (finest hexes)}.
+var deposits: Array = []
 
 var min_elevation := 0
 var max_elevation := 0
@@ -49,8 +53,11 @@ func allocate() -> void:
 	river.resize(n)
 	river_width.resize(n)
 	lake.resize(n)
+	floodplain.resize(n)
 	resource.resize(n)
 	resource_amount.resize(n)
+	deposit.resize(n)
+	deposit.fill(-1)
 	for i in n:
 		children[i] = []
 

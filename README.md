@@ -22,13 +22,16 @@ Gaea exports a heightmap and terrain masks. Logiheim samples them onto a hex gri
   - Flow speed follows the slope (flow-mapped, so fast and slow water never smear). Rapids appear where the real landscape is steep, and small cascades at each terrace step. Trees keep clear of the banks.
   - A Gaea `river` mask adds rivers wherever it is painted.
   - Besides natural hollows, `lake_count` extra lakes are made by damming flat river valleys behind a natural moraine, plus a highland tarn. A Gaea `lake` mask paints lakes exactly.
-- **Natural resources (23, Norse-themed):** placed per hex from the land itself, with rare finds kept apart and common ones in patches (`resource_abundance`).
+- **Floodplains:** flat, low land along big rivers is levelled into lush meadow on silt, with oxbow ponds. When it rains, the rivers flood: water spreads out from the river over the floodplain and drains away after (`flood` in the HUD). Floodplain hexes are flagged for gameplay and make the best farmland.
+- **Natural resources (25, Norse-themed), as deposits:** each resource is a deposit that spans several hexes depending on how abundant it is. Forests and farmland cover many hexes, ore veins a few, gems one. Deposits are richest at their centre, rare finds keep apart, and every lake is one freshwater fishery (`resource_abundance`).
   - **Core:** timber, stone, iron ore, fish, farmland.
   - **Precious:** gold in river gravels below mountains, silver, gems, amber on beaches.
   - **Industry:** coal, clay on riverbanks, sea salt.
   - **Wildlife:** game, horses, furs in the cold uplands.
   - **Norse:** bog iron, ship oak, pine tar, soapstone, wool, seals & walrus ivory, whales, peat.
-  - Each shows in the world as a prop made in Blender (ore outcrops, quarry, tar kiln, bog pools, salt pans, herds, whales, fish shoals, farm fields...), plus a toggleable icon overlay. Coarse levels show the rarest find in each hex.
+  - **Lakes and wetlands:** lake ore raked from lake beds, reed beds for thatch, freshwater fish.
+  - Each shows in the world as a prop made in Blender (ore outcrops, quarry, tar kiln, bog pools, reed beds, salt pans, fish shoals, farm fields...), plus a toggleable icon overlay. Each deposit gets one icon at its centre showing its size in hexes, with faint mini badges on its other hexes.
+- **Animals (made in Blender):** Norse sheep, horses, red deer, reindeer, wild boar, red fox, harbour seals, walrus and humpback whales. Each is sculpted from an anatomical skeleton filled with blending metaballs, with painted coats and coat variations. They graze, chew, look around and swish their tails, and whales swim, each on its own timing (`tools/blender/make_animals.py`, `shaders/animal.gdshader`).
 - **Vegetation and rocks (made in Blender):** three conifer variants, two broadleaf trees, two bushes and four chiselled boulders (`tools/blender/make_vegetation.py`). Forests mix conifers and broadleaf, with more conifers higher up. Trees and grass sway in the wind, leaves let light through, and rocks get moss on top. Dense grass (`grass_density`) is drawn near the camera only.
 - **Hex grid:** drawn by the shaders with irregular, noise-wobbled borders (`border_noise`). The CPU uses the same noise for picking, so what you click is exactly what's outlined. Hover and selection highlights work the same way.
 - **Atmosphere:** day/night cycle with sun and moon, drifting clouds that cast moving shadows, wind that drives trees, waves and clouds together, and weather (clear, cloudy, rain) with wet ground, fog and the odd lightning flash.
@@ -79,7 +82,8 @@ scripts/map/river_network.gd       hex-level drainage for gameplay (downstream, 
 scripts/map/river_mesh_builder.gd  river courses (meanders, junctions), placement per level, river and lake meshes
 scripts/map/river_path.gd          one placed river stretch
 scripts/map/lake_maker.gd          extra lakes: dammed valleys, tarns, Gaea lake mask
-scripts/map/natural_resources.gd   resource types and placement rules
+scripts/map/natural_resources.gd   resource types, placement rules, multi-hex deposits
+scripts/map/floodplain.gd          floodplains: detection, levelling, oxbow ponds
 scripts/map/resource_props.gd      resource props, farm fields and fish shoals in the world
 scripts/map/terrain_material.gd    PBR texture arrays and per-level material setup
 scripts/map/vegetation.gd          trees, bushes and rocks (MultiMesh, chunked)
@@ -97,6 +101,7 @@ shaders/grass.gdshader             grass blades
 shaders/resource_prop.gdshader     resource props (glints on gold, silver, gems, amber)
 shaders/farm_field.gdshader        farm fields
 shaders/fish_shoal.gdshader        fish shoals
+shaders/animal.gdshader            animated animals (graze, look, tail, whale swim)
 shaders/clouds.gdshader            cloud layer
 shaders/include/environment.gdshaderinc  shared wind, cloud and wetness state (global shader parameters)
 shaders/include/hex_grid.gdshaderinc     hex grid lines and highlights
@@ -104,5 +109,6 @@ tools/make_placeholder_terrain.py  placeholder Gaea exports (numpy, pillow)
 tools/pack_ambientcg.py            packs ambientCG texture sets
 tools/blender/make_vegetation.py   Blender script for trees, bushes and rocks
 tools/blender/make_resources.py    Blender script for resource props
+tools/blender/make_animals.py      Blender script for the animals (+ animals.json pivots)
 tools/make_resource_icons.py       resource icon SVGs
 ```

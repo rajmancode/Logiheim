@@ -172,8 +172,13 @@ func _describe(label: String, level: HexLevel, i: int) -> String:
 		text += ", river %.0f m wide" % level.river_width[i]
 	if level.lake[i] == 1:
 		text += ", lake"
+	if level.floodplain[i] == 1:
+		text += ", floodplain" + (" (flooded)" if atmosphere.flood > 0.5 else "")
 	if level.resource[i] != 0:
 		text += ", %s (%s)" % [NaturalResources.display_name(level.resource[i]), ["", "small", "good", "rich"][level.resource_amount[i]]]
+		var dep := level.deposit[i]
+		if dep >= 0 and dep < level.deposits.size():
+			text += " in a %d-hex deposit" % level.deposits[dep].size
 	var up := level.parent[i]
 	if up >= 0:
 		var pa := hex_map.levels[level.level_index + 1].coords[up]

@@ -79,6 +79,17 @@ extends Resource
 ## Rough size of each generated lake, m^2 (tarns are half this).
 @export var lake_target_area := 40000.0
 
+@export_group("Floodplains")
+@export var floodplains_enabled := true
+## Only rivers at least this wide (m) have floodplains.
+@export var floodplain_min_width := 6.0
+## How far a floodplain reaches from the river, in river widths.
+@export var floodplain_reach := 9.0
+## Land up to this many metres above the river can flood.
+@export var floodplain_depth := 3.5
+## One oxbow pond per this many m^2 of floodplain.
+@export var floodplain_pond_every := 40000.0
+
 @export_group("Resources")
 @export var resources_enabled := true
 ## Multiplies how often every resource appears (2 = twice as many).

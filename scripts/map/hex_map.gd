@@ -89,8 +89,10 @@ func rebuild() -> void:
 			paths = RiverMeshBuilder.place(courses, level, surface, hydro, noise, settings, source)
 			surface.mark_lakes(hydro)
 			surface.carve(paths)
+		var fp := Floodplain.build(level, surface, paths, settings)
 		surface.finish_weights()
 		var mat := TerrainMaterial.for_level(_base_material, level, noise, sea_y)
+		mat.set_shader_parameter("flood_rise", settings.floodplain_depth + 0.9)
 		mat.set_shader_parameter("show_grid", _show_grid)
 		TerrainMeshBuilder.build(surface, mat, root)
 		RiverMeshBuilder.build(paths, root)
@@ -100,6 +102,7 @@ func rebuild() -> void:
 		_lake_materials.append(lake_mat)
 		if hydro != null:
 			RiverMeshBuilder.build_lakes(hydro, surface, lake_mat, root)
+		fp.build_meshes(lake_mat, root)
 		Vegetation.build(level, surface, settings, root)
 		if level.level_index == 0 and settings.grass_enabled:
 			GrassField.build(surface, settings, root)
@@ -238,12 +241,19 @@ func _build_resource_icons() -> void:
 		root.visible = _show_icons
 		_level_roots[li].add_child(root)
 		_icon_roots.append(root)
+		var centers := {}
+		for d: Dictionary in level.deposits:
+			centers[d.center] = d
 		for i in level.cell_count():
 			var kind := level.resource[i]
 			if kind == 0:
 				continue
-			# Zoomed out, show what's worth fighting over: common finds only where rich.
-			if li > 0 and kind in NaturalResources.COMMON and level.resource_amount[i] < 3:
+			var d: Dictionary = centers.get(i, {})
+			var is_center: bool = not d.is_empty() and int(d.kind) == kind
+			# Zoomed out, show what's worth fighting over: common finds only in big deposits.
+			if li > 0 and kind in NaturalResources.COMMON and (not is_center or d.size < 8):
+				continue
+			if not is_center and li > 1:
 				continue
 			if not textures.has(kind):
 				var path := "res://assets/icons/resources/%s.svg" % NaturalResources.key(kind)
@@ -257,19 +267,23 @@ func _build_resource_icons() -> void:
 			sprite.texture = tex
 			sprite.billboard = BaseMaterial3D.BILLBOARD_ENABLED
 			sprite.fixed_size = true
-			sprite.pixel_size = 0.00028
+			# The deposit's centre gets the full badge; its other hexes a small, faint one so
+			# you can see how far it spreads.
+			sprite.pixel_size = 0.00028 if is_center else 0.00013
+			sprite.modulate = Color(1, 1, 1, 1.0 if is_center else 0.6)
 			sprite.no_depth_test = true
 			sprite.shaded = false
-			sprite.render_priority = 10
+			sprite.render_priority = 10 if is_center else 9
 			sprite.position = pos
 			# Fade out far away so the horizon doesn't fill with icons.
-			sprite.visibility_range_end = level.hex_size * 40.0
-			sprite.visibility_range_end_margin = level.hex_size * 8.0
+			var reach := level.hex_size * (40.0 if is_center else 18.0)
+			sprite.visibility_range_end = reach
+			sprite.visibility_range_end_margin = reach * 0.2
 			sprite.visibility_range_fade_mode = GeometryInstance3D.VISIBILITY_RANGE_FADE_SELF
 			root.add_child(sprite)
-			if level.resource_amount[i] > 1:
+			if is_center and d.size > 1:
 				var label := Label3D.new()
-				label.text = "x%d" % level.resource_amount[i]
+				label.text = "%d" % d.size
 				label.billboard = BaseMaterial3D.BILLBOARD_ENABLED
 				label.fixed_size = true
 				label.pixel_size = 0.00028
@@ -279,8 +293,8 @@ func _build_resource_icons() -> void:
 				label.render_priority = 11
 				label.offset = Vector2(52, -46)
 				label.position = pos
-				label.visibility_range_end = level.hex_size * 40.0
-				label.visibility_range_end_margin = level.hex_size * 8.0
+				label.visibility_range_end = reach
+				label.visibility_range_end_margin = reach * 0.2
 				label.visibility_range_fade_mode = GeometryInstance3D.VISIBILITY_RANGE_FADE_SELF
 				root.add_child(label)
 
