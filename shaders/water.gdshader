@@ -20,6 +20,8 @@ uniform float wave_scale = 0.012;
 uniform float grid_fade_start = 2500.0;
 
 varying vec3 v_world_pos;
+varying float v_edge;
+uniform bool edge_alpha = false;   // lakes: COLOR.a fades the water out at open mesh edges
 
 float waves(vec2 p, float t) {
 	vec2 d1 = wind_direction;
@@ -32,6 +34,7 @@ void vertex() {
 	float amp = wave_height * (0.4 + 1.2 * wind_strength);
 	VERTEX.y += waves(wp.xz, wind_time) * amp;
 	v_world_pos = (MODEL_MATRIX * vec4(VERTEX, 1.0)).xyz;
+	v_edge = edge_alpha ? COLOR.a : 1.0;
 }
 
 void fragment() {
@@ -78,5 +81,5 @@ void fragment() {
 	NORMAL = normalize((VIEW_MATRIX * vec4(wn, 0.0)).xyz);
 	EMISSION = emission;
 	// Soft edge where the water meets the shore.
-	ALPHA = clamp(depth / 0.35, 0.0, 1.0);
+	ALPHA = clamp(depth / 0.35, 0.0, 1.0) * v_edge;
 }

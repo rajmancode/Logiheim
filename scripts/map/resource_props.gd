@@ -50,6 +50,9 @@ const ANIMAL_DIR := "res://assets/models/animals"
 ## Static props (ore, quarries, kilns...) are drawn this much bigger again than animals, so a
 ## deposit reads from the strategy camera.
 const PROP_BOOST := 2.0
+## Per-model correction on top of PROP_BOOST for props that are big to begin with, so they
+## stay in proportion to trees (log piles and quarries would otherwise tower over a forest).
+const PROP_SIZE := {"log_pile": 0.5, "quarry": 0.55, "tar_kiln": 0.75, "salt_pans": 0.8, "clay_pit": 0.8, "peat_stack": 0.8}
 
 ## Ground tint per resource: deposits colour the land they cover (rusty soil over iron, golden
 ## stubble on farmland, pale salt crust...), so a deposit reads as one region across its hexes.
@@ -126,7 +129,7 @@ static func build(level: HexLevel, surface: TerrainSurface, hydro: Hydrology, pa
 						yaw = hash(level.coords[i]) % 628 / 100.0 + rng.randf_range(-0.6, 0.6)
 					var basis := Basis(Vector3.UP, yaw)
 					if model == "@broadleaf_b":
-						var h := rng.randf_range(20.0, 26.0) * scale * 0.7
+						var h := rng.randf_range(12.0, 15.0) * (1.0 + 0.3 * level.level_index)
 						basis = basis.scaled(Vector3(h * 1.15, h, h * 1.15))
 						y -= 0.3
 						_add(items, model, Transform3D(basis, Vector3(p.x, y, p.y)), Color(0.8, 0.92, 0.6))
@@ -137,7 +140,7 @@ static func build(level: HexLevel, surface: TerrainSurface, hydro: Hydrology, pa
 							surface, home, s * (0.6 if def[3] == "deep" else 0.9) * sqrt(scale), rng.randi())
 					else:
 						if not model.begins_with("a:"):
-							size *= PROP_BOOST
+							size *= PROP_BOOST * float(PROP_SIZE.get(model, 1.0))
 						basis = basis.scaled(Vector3.ONE * size)
 						_add(items, model, Transform3D(basis, Vector3(p.x, y - 0.05 * size, p.y)), custom)
 
@@ -532,5 +535,7 @@ static func _material(kind: String) -> Material:
 		_:
 			mat.shader = load("res://shaders/resource_prop.gdshader")
 			mat.set_shader_parameter("glint", kind.ends_with("glint"))
+			mat.set_shader_parameter("albedo_array", TerrainMaterial.albedo_array())
+			mat.set_shader_parameter("normal_array", TerrainMaterial.normal_array())
 	_materials[kind] = mat
 	return mat

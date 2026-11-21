@@ -143,7 +143,7 @@ static func _place_bush(items: Dictionary, surface: TerrainSurface, c: Vector2, 
 	var p := _random_point(c, s, rng)
 	if not _ok_ground(surface, p) or surface.weight_at(p, T.ROCK) > 0.5:
 		return
-	var size := rng.randf_range(1.8, 3.5) * mult
+	var size := rng.randf_range(1.2, 2.4) * mult
 	var basis := Basis(Vector3.UP, rng.randf() * TAU).scaled(Vector3(size, size * rng.randf_range(0.7, 1.1), size))
 	var tint := Color(0.85, 0.95, 0.65) * rng.randf_range(0.8, 1.1)
 	_add(items, BUSHES[rng.randi() % BUSHES.size()], Transform3D(basis, Vector3(p.x, surface.sample(p) - 0.15, p.y)), tint)

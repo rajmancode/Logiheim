@@ -47,6 +47,7 @@ static func lake_material(wave_normal: Texture2D) -> ShaderMaterial:
 	mat.set_shader_parameter("colour_depth", 8.0)
 	mat.set_shader_parameter("foam_width", 0.6)
 	mat.set_shader_parameter("wave_height", 0.04)
+	mat.set_shader_parameter("edge_alpha", true)
 	return mat
 
 
@@ -486,44 +487,120 @@ static func _ribbon(path: RiverPath, verts: PackedVector3Array, normals: PackedV
 			indices.append_array([l0, r0, r1, l0, r1, l1])
 
 
-## Flat water at each lake's level over the lake cells (grown by two cells so the shoreline
-## comes from where the terrain rises through the surface).
+## Flat water at each lake's level, built on the terrain's own (finer) grid: every vertex under
+## the lake level that connects to the lake, plus two rings into the rising shore so the edge of
+## the water mesh always ends inside the ground and the shoreline is where the terrain meets
+## the water (smooth, not the 10 m flow grid). Never spreads over lower ground (dams).
 static func build_lakes(hydro: Hydrology, surface: TerrainSurface, material: Material, parent: Node3D) -> void:
 	if hydro.lake_level.is_empty():
 		return
-	var n := hydro.nx * hydro.nz
-	var cover := hydro.lake_id.duplicate()
+	var nx := surface.nx
+	var nz := surface.nz
+	var sp := surface.spacing
+	var cover := PackedInt32Array()
+	cover.resize(nx * nz)
+	cover.fill(-1)
+	# Water may only spread a little beyond the flow grid's lake cells, and never into a river
+	# channel outside the lake, so it can't run off down the carved outlet.
+	var reach := hydro.lake_id.duplicate()
 	for grow in 2:
-		var nxt := cover.duplicate()
-		for c in n:
-			if cover[c] >= 0:
+		var nr := reach.duplicate()
+		for c in hydro.nx * hydro.nz:
+			if reach[c] >= 0:
 				continue
-			var x := c % hydro.nx
-			var z := c / hydro.nx
-			for m in [c - 1 if x > 0 else -1, c + 1 if x < hydro.nx - 1 else -1, c - hydro.nx if z > 0 else -1, c + hydro.nx if z < hydro.nz - 1 else -1]:
-				# Only grow under ground that rises above the water (the shore hides the
-				# edge); never out over lower ground such as the far side of a dam.
-				if m >= 0 and cover[m] >= 0 and surface.sample(hydro.cell_pos(c)) > hydro.lake_level[cover[m]] - 0.2:
-					nxt[c] = cover[m]
+			var cx := c % hydro.nx
+			var cz := c / hydro.nx
+			for m in [c - 1 if cx > 0 else -1, c + 1 if cx < hydro.nx - 1 else -1, c - hydro.nx if cz > 0 else -1, c + hydro.nx if cz < hydro.nz - 1 else -1]:
+				if m >= 0 and reach[m] >= 0:
+					nr[c] = reach[m]
+					break
+		reach = nr
+	var queue := PackedInt32Array()
+	for z in nz:
+		for x in nx:
+			var i := z * nx + x
+			var id := hydro.lake_at(Vector2(x * sp, z * sp))
+			# (Outlet channels carved into the lake edge belong to the river ribbon.)
+			if id >= 0 and surface.heights[i] < hydro.lake_level[id] and surface.river_mask[i] < 0.7:
+				cover[i] = id
+				queue.append(i)
+	# Fill everything below the water level that connects to the lake.
+	var head := 0
+	while head < queue.size():
+		var i := queue[head]
+		head += 1
+		var id := cover[i]
+		var x := i % nx
+		var z := i / nx
+		for m in [i - 1 if x > 0 else -1, i + 1 if x < nx - 1 else -1, i - nx if z > 0 else -1, i + nx if z < nz - 1 else -1]:
+			if m < 0 or cover[m] >= 0 or surface.heights[m] >= hydro.lake_level[id]:
+				continue
+			var mp := Vector2(m % nx * sp, m / nx * sp)
+			if reach[_hcell(hydro, mp.x, mp.y)] == id and surface.river_mask[m] < (0.7 if hydro.lake_at(mp) == id else 0.6):
+				cover[m] = id
+				queue.append(m)
+	# Two rings into the shore, only where the ground rises out of the water.
+	for ring in 2:
+		var nxt := cover.duplicate()
+		for i in nx * nz:
+			if cover[i] >= 0:
+				continue
+			var x := i % nx
+			var z := i / nx
+			for m in [i - 1 if x > 0 else -1, i + 1 if x < nx - 1 else -1, i - nx if z > 0 else -1, i + nx if z < nz - 1 else -1]:
+				if m >= 0 and cover[m] >= 0 and surface.heights[i] >= hydro.lake_level[cover[m]] - 0.05:
+					nxt[i] = cover[m]
 					break
 		cover = nxt
-	var data := MeshData.new()
-	var hs := hydro.spacing * 0.5
-	for c in n:
-		var id := cover[c]
+	# Where the water mesh ends over ground lower than the water (e.g. at an outlet), the
+	# edge would show as a hard line: fade those edge vertices out instead.
+	var edge := PackedFloat32Array()
+	edge.resize(nx * nz)
+	for i in nx * nz:
+		var id := cover[i]
 		if id < 0:
 			continue
-		var y := hydro.lake_level[id] - 0.05
-		var p := hydro.cell_pos(c)
-		var a := Vector3(p.x - hs, y, p.y - hs)
-		var b := Vector3(p.x + hs, y, p.y - hs)
-		var d := Vector3(p.x - hs, y, p.y + hs)
-		var e := Vector3(p.x + hs, y, p.y + hs)
-		data.tri(a, b, e, Vector2.ZERO, Vector2.ZERO, Vector2.ZERO, Vector3.UP, Vector2.ZERO)
-		data.tri(a, e, d, Vector2.ZERO, Vector2.ZERO, Vector2.ZERO, Vector3.UP, Vector2.ZERO)
+		edge[i] = 1.0
+		if surface.heights[i] >= hydro.lake_level[id] - 0.05:
+			continue
+		var x := i % nx
+		var z := i / nx
+		for m in [i - 1 if x > 0 else -1, i + 1 if x < nx - 1 else -1, i - nx if z > 0 else -1, i + nx if z < nz - 1 else -1]:
+			if m < 0 or cover[m] != id:
+				edge[i] = 0.0
+				break
+	var verts := PackedVector3Array()
+	var colors := PackedColorArray()
+	for z in nz - 1:
+		for x in nx - 1:
+			var i := z * nx + x
+			var id := cover[i]
+			if id < 0 or cover[i + 1] != id or cover[i + nx] != id or cover[i + nx + 1] != id:
+				continue
+			var y := hydro.lake_level[id] - 0.05
+			# Clockwise from above: a, b, e and a, e, d.
+			for q in [[x, z], [x + 1, z], [x + 1, z + 1], [x, z], [x + 1, z + 1], [x, z + 1]]:
+				verts.append(Vector3(q[0] * sp, y, q[1] * sp))
+				colors.append(Color(1, 1, 1, edge[q[1] * nx + q[0]]))
+	if verts.is_empty():
+		return
+	var normals := PackedVector3Array()
+	normals.resize(verts.size())
+	normals.fill(Vector3.UP)
+	var arrays := []
+	arrays.resize(Mesh.ARRAY_MAX)
+	arrays[Mesh.ARRAY_VERTEX] = verts
+	arrays[Mesh.ARRAY_NORMAL] = normals
+	arrays[Mesh.ARRAY_COLOR] = colors
+	var mesh := ArrayMesh.new()
+	mesh.add_surface_from_arrays(Mesh.PRIMITIVE_TRIANGLES, arrays)
 	var mi := MeshInstance3D.new()
 	mi.name = "Lakes"
-	mi.mesh = data.to_mesh()
+	mi.mesh = mesh
 	mi.material_override = material
 	mi.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
 	parent.add_child(mi)
+
+
+static func _hcell(hydro: Hydrology, x: float, z: float) -> int:
+	return clampi(roundi(z / hydro.spacing), 0, hydro.nz - 1) * hydro.nx + clampi(roundi(x / hydro.spacing), 0, hydro.nx - 1)

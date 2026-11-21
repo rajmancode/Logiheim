@@ -49,40 +49,118 @@ static func plan(hydro: Hydrology, source: TerrainSource, settings: HexMapSettin
 func apply(surface: TerrainSurface) -> void:
 	if lake_count == 0:
 		return
+	# The plan grid is coarse (10 m), so its cells would show as a stepped, square shoreline.
+	# Each vertex instead samples the plan at a noise-warped point, averaged over a small ring,
+	# which rounds the corners off and gives the shore natural bays and points.
+	var r := spacing * 1.4
+	var ring := [Vector2.ZERO, Vector2(r, 0), Vector2(-r, 0), Vector2(0, r), Vector2(0, -r),
+		Vector2(r, r) * 0.7, Vector2(-r, r) * 0.7, Vector2(r, -r) * 0.7, Vector2(-r, -r) * 0.7]
+	# Dams become moraines: the crest falls away on both sides at a natural slope instead of
+	# ending in a wall (a cone field spread out from every dam cell, two chamfer sweeps).
+	var top := _dam_cones(0.55)
+	# Only vertices near a planned lake or dam need the full sampling.
+	var near := PackedByteArray()
+	near.resize(nx * nz)
+	for c in nx * nz:
+		if water[c] > NONE or dam[c] > NONE:
+			var cx := c % nx
+			var cz := c / nx
+			for dz in range(-7, 8):
+				for dx in range(-7, 8):
+					var xx := cx + dx
+					var zz := cz + dz
+					if xx >= 0 and zz >= 0 and xx < nx and zz < nz:
+						near[zz * nx + xx] = 1
 	for z in surface.nz:
 		for x in surface.nx:
 			var p := Vector2(x * surface.spacing, z * surface.spacing)
 			var i := z * surface.nx + x
+			if near[clampi(roundi(p.y / spacing), 0, nz - 1) * nx + clampi(roundi(p.x / spacing), 0, nx - 1)] == 0:
+				continue
 			var h := surface.heights[i]
-			# Bilinear weights of the 4 surrounding plan cells.
-			var fx := clampf(p.x / spacing, 0.0, nx - 1.001)
-			var fz := clampf(p.y / spacing, 0.0, nz - 1.001)
-			var x0 := int(fx)
-			var z0 := int(fz)
-			var tx := fx - x0
-			var tz := fz - z0
+			var warp := Vector2(BorderNoise.value_noise(p * 0.018 + Vector2(4.2, 1.1)) - 0.5,
+				BorderNoise.value_noise(p * 0.018 + Vector2(9.7, 6.3)) - 0.5) * spacing * 2.4
 			var lake_w := 0.0
 			var level := NONE
 			var dist := 0.0
-			var dam_w := 0.0
-			var dam_h := NONE
-			for k in 4:
-				var c := (z0 + (k / 2)) * nx + x0 + (k % 2)
-				var w := (tx if k % 2 == 1 else 1.0 - tx) * (tz if k / 2 == 1 else 1.0 - tz)
-				if water[c] > NONE:
-					lake_w += w
-					level = maxf(level, water[c])
-					dist += shore_dist[c] * w
-				if dam[c] > NONE:
-					dam_w += w
-					dam_h = maxf(dam_h, dam[c])
-			if lake_w > 0.0:
-				dist /= lake_w
+			for o: Vector2 in ring:
+				var s := _sample(p + warp + o)
+				lake_w += s.x
+				dist += s.z * s.x
+				level = maxf(level, s.y)
+			lake_w /= ring.size()
+			if lake_w > 0.0 and level > NONE:
+				dist /= maxf(lake_w * ring.size(), 1e-4)
 				var bed := level - minf(1.0 + dist * 0.09, 30.0)
-				h = minf(h, lerpf(h, bed, smoothstep(0.25, 0.75, lake_w)))
-			if dam_w > 0.0 and lake_w < 0.5:
-				h = maxf(h, lerpf(h, dam_h, smoothstep(0.15, 0.6, dam_w)))
+				h = minf(h, lerpf(h, bed, smoothstep(0.3, 0.7, lake_w)))
+			# The dam slope fades out across the shore band (no step where the lake begins).
+			h = maxf(h, _bilinear(top, p + warp * 0.3) - smoothstep(0.15, 0.6, lake_w) * 25.0)
 			surface.heights[i] = h
+
+
+## Bilinear plan sample at p: (lake weight, highest water level, shore distance, dam weight).
+func _sample(p: Vector2) -> Vector4:
+	var fx := clampf(p.x / spacing, 0.0, nx - 1.001)
+	var fz := clampf(p.y / spacing, 0.0, nz - 1.001)
+	var x0 := int(fx)
+	var z0 := int(fz)
+	var tx := fx - x0
+	var tz := fz - z0
+	var lake_w := 0.0
+	var level := NONE
+	var dist := 0.0
+	var dam_w := 0.0
+	for k in 4:
+		var c := (z0 + (k / 2)) * nx + x0 + (k % 2)
+		var w := (tx if k % 2 == 1 else 1.0 - tx) * (tz if k / 2 == 1 else 1.0 - tz)
+		if water[c] > NONE:
+			lake_w += w
+			level = maxf(level, water[c])
+			dist += shore_dist[c] * w
+		if dam[c] > NONE:
+			dam_w += w
+	if lake_w > 0.0:
+		dist /= lake_w
+	return Vector4(lake_w, level, dist, dam_w)
+
+
+## Height every plan cell would be raised to by the nearest dam: the dam's crest minus
+## `slope` per metre of distance from it (NONE far from any dam).
+func _dam_cones(slope: float) -> PackedFloat32Array:
+	var top := dam.duplicate()
+	var d1 := spacing * slope
+	var d2 := spacing * 1.4142 * slope
+	for it in 2:
+		var fwd := it == 0
+		var zr := range(nz) if fwd else range(nz - 1, -1, -1)
+		var xr := range(nx) if fwd else range(nx - 1, -1, -1)
+		var s := -1 if fwd else 1
+		for z: int in zr:
+			for x: int in xr:
+				var c := z * nx + x
+				var best := top[c]
+				# Neighbours already visited in this sweep.
+				if x + s >= 0 and x + s < nx:
+					best = maxf(best, top[c + s] - d1)
+				if z + s >= 0 and z + s < nz:
+					best = maxf(best, top[c + s * nx] - d1)
+					if x + s >= 0 and x + s < nx:
+						best = maxf(best, top[c + s * nx + s] - d2)
+					if x - s >= 0 and x - s < nx:
+						best = maxf(best, top[c + s * nx - s] - d2)
+				top[c] = best
+	return top
+
+
+func _bilinear(arr: PackedFloat32Array, p: Vector2) -> float:
+	var fx := clampf(p.x / spacing, 0.0, nx - 1.001)
+	var fz := clampf(p.y / spacing, 0.0, nz - 1.001)
+	var x0 := int(fx)
+	var z0 := int(fz)
+	var tx := fx - x0
+	var tz := fz - z0
+	var i := z0 * nx + x0
+	return lerpf(lerpf(arr[i], arr[i + 1], tx), lerpf(arr[i + nx], arr[i + nx + 1], tx), tz)
 
 
 # --------------------------------------------------------------------------- mask lakes
@@ -209,6 +287,7 @@ func _dam_region(hydro: Hydrology, site: int, target: float, children: PackedInt
 	var origin := hydro.cell_pos(site)
 	var best: PackedInt32Array = PackedInt32Array()
 	var best_level := 0.0
+	# Tall dams come out as broad moraine hills (see apply()), not walls.
 	for dam_h in [2.5, 4.0, 6.0, 8.0, 11.0, 15.0, 20.0, 26.0, 32.0]:
 		var level: float = hydro.filled[site] + dam_h
 		var cells := PackedInt32Array([site])

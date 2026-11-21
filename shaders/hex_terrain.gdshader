@@ -33,6 +33,7 @@ varying vec3 v_world_normal;
 varying vec4 v_w0;
 varying vec4 v_w1;
 varying vec2 v_flood;
+varying float v_arable;
 
 void vertex() {
 	v_world_pos = (MODEL_MATRIX * vec4(VERTEX, 1.0)).xyz;
@@ -40,6 +41,7 @@ void vertex() {
 	v_w0 = COLOR;
 	v_w1 = vec4(UV, UV2);
 	v_flood = CUSTOM0.xy;
+	v_arable = CUSTOM0.z;
 }
 
 // Samples one layer: planar from above on flat ground, triplanar on slopes.
@@ -109,6 +111,37 @@ void fragment() {
 	nrm_xy /= total;
 	ao /= total;
 	rough /= total;
+
+	// Arable land: a patchwork of fields (ploughed furrows, young green crops, ripening
+	// grain, fallow meadow) on rich dark soil, each field with its own furrow direction.
+	if (v_arable > 0.02 && !tri) {
+		vec2 fc = p.xz / 46.0;
+		vec2 cell = floor(fc + vec2(env_noise(p.xz * 0.03), env_noise(p.zx * 0.03 + 5.0)) * 0.6);
+		float r = env_hash(cell);
+		float r2 = env_hash(cell + vec2(17.0, 3.0));
+		float ang = r * 3.14159;
+		vec2 dir = vec2(cos(ang), sin(ang));
+		float furrow = 0.5 + 0.5 * sin(dot(p.xz, dir) * 6.2832 / 1.6);
+		vec4 dn;
+		vec3 soil = sample_layer(7, p, tw, false, dn).rgb * layer_tint[7].rgb * vec3(0.78, 0.7, 0.62);
+		vec3 field;
+		// Crops tint the real grass texture, so fields keep its detail instead of flat paint.
+		if (r2 < 0.3) {
+			field = soil * (0.7 + 0.45 * furrow);                                   // ploughed
+		} else if (r2 < 0.55) {
+			field = mix(soil, albedo * vec3(0.78, 1.05, 0.6), 0.35 + 0.45 * furrow); // young crop
+		} else if (r2 < 0.75) {
+			field = mix(soil, albedo * vec3(1.3, 1.08, 0.55), 0.4 + 0.4 * furrow);   // ripening grain
+		} else {
+			field = albedo * vec3(0.92, 1.08, 0.82);                               // fallow meadow
+		}
+		// Field margins stay grassy.
+		vec2 fe = abs(fract(fc + vec2(env_noise(p.xz * 0.03), env_noise(p.zx * 0.03 + 5.0)) * 0.6) - 0.5);
+		float margin = smoothstep(0.42, 0.48, max(fe.x, fe.y));
+		float a = smoothstep(0.1, 0.6, v_arable) * (1.0 - margin) * 0.85;
+		albedo = mix(albedo, field, a);
+		rough = mix(rough, 0.95, a);
+	}
 
 	// Large-scale variation so tiling doesn't show from far away.
 	float macro = env_fbm(p.xz * macro_scale);

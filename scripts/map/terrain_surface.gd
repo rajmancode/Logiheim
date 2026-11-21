@@ -28,6 +28,8 @@ var clear_mask := PackedByteArray()
 ## 0..1 how much each vertex belongs to a floodplain, and the river level it floods from.
 var flood_mask := PackedFloat32Array()
 var flood_y := PackedFloat32Array()
+## 0..1 how good the ground is for farming (flat, low, fertile); drawn as fields and rich soil.
+var arable := PackedFloat32Array()
 ## Plateau height of each hex.
 var plateau := PackedFloat32Array()
 
@@ -52,6 +54,7 @@ func _init(p_level: HexLevel, source: TerrainSource, settings: HexMapSettings, g
 	_cache_cells()
 	_compute_plateaus()
 	_compute_heights()
+	_smooth_heights(_settings.terrain_smoothing)
 
 
 func index(x: int, z: int) -> int:
@@ -238,6 +241,24 @@ func _compute_heights() -> void:
 		_sink_edge(nx - 1, z)
 
 
+## Rounds off the hex terraces: a few passes of a 3x3 blur over the whole grid. The coastline
+## stays put (land never sinks below the sea, sea floor never rises out of it).
+func _smooth_heights(passes: int) -> void:
+	for it in passes:
+		var src := heights.duplicate()
+		for z in range(1, nz - 1):
+			for x in range(1, nx - 1):
+				var i := z * nx + x
+				var s := src[i] * 4.0 + (src[i - 1] + src[i + 1] + src[i - nx] + src[i + nx]) * 2.0 \
+					+ src[i - nx - 1] + src[i - nx + 1] + src[i + nx - 1] + src[i + nx + 1]
+				var h := s / 16.0
+				if src[i] > sea_y + 0.6:
+					h = maxf(h, sea_y + 0.6)
+				elif src[i] < sea_y - 0.8:
+					h = minf(h, sea_y - 0.8)
+				heights[i] = h
+
+
 ## Heightmap sample with a small blur, so detail finer than the terrain grid doesn't alias
 ## into spikes.
 func _smooth_height(p: Vector2) -> float:
@@ -316,6 +337,9 @@ func carve(paths: Array) -> void:
 ## Final terrain weights: hex terrain blend adjusted for sea floor, beaches, cliffs and banks.
 func finish_weights() -> void:
 	var cliff := _settings.cliff_slope
+	arable.resize(nx * nz)
+	arable.fill(0.0)
+	var relief := maxf(_meters, 1.0)
 	for z in nz:
 		for x in nx:
 			var vi := z * nx + x
@@ -337,16 +361,41 @@ func finish_weights() -> void:
 			else:
 				var beach := 1.0 - smoothstep(sea_y + 0.8, sea_y + 3.5, h)
 				_pull(base, T.SAND, beach * 0.85)
+			var p := Vector2(x * spacing, z * spacing)
+			var n1 := BorderNoise.value_noise(p * 0.021 + Vector2(3.1, 7.7))
+			var n2 := BorderNoise.value_noise(p * 0.067 + Vector2(1.3, 2.9))
+			var flat := 1.0 - smoothstep(0.08, 0.3, slope)
+			if under <= 0.0:
+				# Dunes: sand drifts a little further inland on low, gentle coasts.
+				var dune := (1.0 - smoothstep(sea_y + 2.5, sea_y + 8.0, h)) * flat
+				_pull(base, T.SAND, dune * smoothstep(0.45, 0.7, n1) * 0.8)
+				# Scree and bare earth on the steeper slopes below the cliffs.
+				var scree := smoothstep(cliff * 0.35, cliff * 0.7, slope) * (1.0 - smoothstep(cliff * 0.75, cliff, slope))
+				_pull(base, T.DIRT, scree * (0.35 + 0.4 * n2))
+				# Worn, dry patches in open grassland.
+				var grassy := weights[base + T.GRASS]
+				_pull(base, T.DIRT, grassy * smoothstep(0.72, 0.85, n2) * 0.45)
 			_pull(base, T.ROCK, smoothstep(cliff * 0.75, cliff * 1.35, slope))
 			var bank := river_mask[vi]
+			var low := 1.0 - smoothstep(sea_y + 6.0, sea_y + relief * 0.25, h)
 			if bank > 0.0 and under < 0.5:
-				# Muddy banks, and a muddy (not rocky) bed under the water.
+				# Muddy banks, and a muddy (not rocky) bed under the water; slow lowland rivers
+				# drop sand bars along their edges instead.
 				_pull(base, T.DIRT, bank * 0.4 + smoothstep(0.75, 1.0, bank) * 0.5)
+				var bar := smoothstep(0.35, 0.8, bank) * (1.0 - smoothstep(0.9, 1.0, bank)) * low * flat
+				_pull(base, T.SAND, bar * smoothstep(0.35, 0.6, n2) * 0.7)
 			# Floodplains: lush meadow on silt.
 			var fm := flood_mask[vi]
 			if fm > 0.0 and under < 0.5:
 				_pull(base, T.GRASS, fm * 0.6)
 				_pull(base, T.DIRT, fm * 0.12)
+			# Arable land: flat, low, soft ground (grass or light woodland), best on floodplains.
+			if under <= 0.0:
+				var soil := weights[base + T.GRASS] + weights[base + T.DIRT] * 0.8 + weights[base + T.FOREST] * 0.3
+				var a := flat * smoothstep(sea_y + 1.5, sea_y + 4.0, h) * (1.0 - smoothstep(sea_y + relief * 0.22, sea_y + relief * 0.4, h))
+				a *= clampf(soil, 0.0, 1.0) * (1.0 - smoothstep(0.3, 0.6, river_mask[vi]))
+				a *= smoothstep(0.35, 0.6, n1 * 0.7 + 0.3 + fm * 0.4)
+				arable[vi] = clampf(a + fm * flat * 0.3, 0.0, 1.0)
 
 			var total := 0.0
 			for k in LAYERS:

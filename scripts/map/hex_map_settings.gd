@@ -17,7 +17,9 @@ extends Resource
 @export_range(1.0, 10.0, 0.5) var terrain_resolution := 4.0
 ## How far each hex's flat plateau blends into its neighbours, in hex sizes.
 ## About 1.0 gives hard-ish terraces, 1.6 smooth hills (the hex steps almost vanish).
-@export_range(0.9, 2.0, 0.05) var step_softness := 1.25
+@export_range(0.9, 2.0, 0.05) var step_softness := 1.5
+## Blur passes over the finished terrain: rounds off terrace edges (0 = off).
+@export_range(0, 8) var terrain_smoothing := 3
 ## How much of the real Gaea relief shows inside each hex (0 = flat plateaus).
 @export_range(0.0, 1.5, 0.05) var terrain_detail := 0.5
 ## Sea floor depth in metres right off the coast, and how much it deepens per metre offshore.
@@ -107,10 +109,10 @@ extends Resource
 @export_group("Vegetation")
 @export var trees_enabled := true
 ## Rough spacing between trees on forest hexes, in metres.
-@export var tree_spacing := 6.5
-@export_range(1, 128) var max_trees_per_hex := 40
+@export var tree_spacing := 5.0
+@export_range(1, 128) var max_trees_per_hex := 64
 ## Real tree height range in metres (scaled up a little on coarse levels so they stay readable).
-@export var tree_height := Vector2(11.0, 22.0)
+@export var tree_height := Vector2(7.0, 13.0)
 @export var rocks_enabled := true
 @export var grass_enabled := true
 ## Grass clumps per square metre on grassy ground (finest level only).
