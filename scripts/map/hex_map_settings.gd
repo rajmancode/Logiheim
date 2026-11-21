@@ -64,16 +64,16 @@ extends Resource
 @export_range(0.0005, 0.1, 0.0005) var river_catchment := 0.006
 ## River width in metres where 1 km^2 drains into it. Width grows with the square root of
 ## the catchment, like real rivers (a river draining 4 km^2 is twice as wide).
-@export_range(1.0, 60.0, 0.5) var river_width_scale := 18.0
-@export_range(1.0, 20.0, 0.5) var river_min_width := 2.5
-@export_range(5.0, 200.0, 1.0) var river_max_width := 45.0
+@export_range(1.0, 60.0, 0.5) var river_width_scale := 30.0
+@export_range(1.0, 20.0, 0.5) var river_min_width := 4.0
+@export_range(5.0, 200.0, 1.0) var river_max_width := 80.0
 ## On coarse levels rivers are drawn at least this fraction of the hex size wide, so they
 ## stay readable from far away.
 @export_range(0.0, 0.3, 0.01) var river_min_width_per_hex := 0.06
 ## How much rivers wind on flat ground (1 = natural meanders about 12 widths long).
 @export_range(0.0, 2.0, 0.05) var river_meander := 1.0
 ## Rivers at least this wide (m) that reach the sea over low land split into a delta.
-@export var delta_min_width := 6.0
+@export var delta_min_width := 10.0
 ## Land up to this many metres above the sea counts as delta plain (the first hex terrace
 ## above the sea is one step_height up).
 @export var delta_height := 8.0
@@ -103,6 +103,12 @@ extends Resource
 ## Width at the mouth (narrows towards the head) and depth below the sea, metres.
 @export var fjord_width := 80.0
 @export var fjord_depth := 22.0
+
+@export_group("Volcano")
+## Volcanic cones placed inland, with a crater, lava, smoke and basalt around them.
+@export_range(0, 3) var volcano_count := 1
+@export var volcano_radius := 380.0
+@export var volcano_height := 150.0
 
 @export_group("Floodplains")
 @export var floodplains_enabled := true

@@ -195,45 +195,30 @@ def make_bush(name, seed, blobs):
     return obj
 
 
-def make_rock(name, seed, flat):
-    """Smooth noisy boulder chiselled by random plane cuts, which gives flat fractured faces."""
+def make_rock(name, seed, flat, strata=False):
+    """A real-looking boulder (tools/blender/rock_shapes.py): fractured facets, cracks, grain,
+    optionally bedded strata; AO from crevices baked into the vertex colours."""
+    sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+    from rock_shapes import rock_bmesh, decimate, cavity_ao
     rng = random.Random(seed)
-    bm = bmesh.new()
-    bmesh.ops.create_icosphere(bm, subdivisions=4, radius=0.5)
-    s = Vector((rng.uniform(-80, 80), rng.uniform(-80, 80), rng.uniform(-80, 80)))
-    stretch = Vector((rng.uniform(0.85, 1.25), rng.uniform(0.75, 1.1), flat))
-    for v in bm.verts:
-        d = v.co.normalized()
-        n = noise.noise(d * 1.5 + s) * 0.18 + noise.noise(d * 4.0 + s) * 0.06 + noise.noise(d * 9.0 + s) * 0.02
-        r = 0.5 * (1.0 + n)
-        v.co = Vector((d.x * r * stretch.x, d.y * r * stretch.y, d.z * r * stretch.z))
-    for k in range(rng.randint(7, 11)):
-        normal = Vector((rng.uniform(-1, 1), rng.uniform(-1, 1), rng.uniform(-0.3, 1.0))).normalized()
-        extent = max((v.co.dot(normal) for v in bm.verts))
-        cut = extent * rng.uniform(0.62, 0.85)
-        geom = bm.verts[:] + bm.edges[:] + bm.faces[:]
-        bmesh.ops.bisect_plane(bm, geom=geom, plane_co=normal * cut, plane_no=normal, clear_outer=True)
-        bmesh.ops.holes_fill(bm, edges=bm.edges[:], sides=0)
-    # Flat underside so it sits on the ground.
-    geom = bm.verts[:] + bm.edges[:] + bm.faces[:]
-    bmesh.ops.bisect_plane(bm, geom=geom, plane_co=Vector((0, 0, -0.06)), plane_no=Vector((0, 0, -1)), clear_outer=True)
-    bmesh.ops.holes_fill(bm, edges=bm.edges[:], sides=0)
-    bmesh.ops.triangulate(bm, faces=bm.faces[:])
-    bmesh.ops.recalc_face_normals(bm, faces=bm.faces[:])
+    bm = rock_bmesh(seed, flat, facets=rng.randint(8, 12), strata=strata)
+    decimate(bm, 2800)
+    bm.verts.index_update()
+    ao = {v.index: a for v, a in cavity_ao(bm).items()}
     obj = new_object(name, bm, ["Rock"])
-    dec = obj.modifiers.new("decimate", "DECIMATE")
-    dec.ratio = 0.3
-    bpy.context.view_layer.objects.active = obj
-    bpy.ops.object.modifier_apply(modifier="decimate")
-    obj.data.update()
-    top = max(v.co.z for v in obj.data.vertices)
-
-    def ao(co, n, mi):
-        return 0.4 + 0.6 * min(max((co.z + 0.06) / (top + 0.06), 0.0), 1.0)
-    bake_ao(obj, ao)
-    # Sharp edges between the cut faces, smooth elsewhere.
-    for p in obj.data.polygons:
-        p.use_smooth = False
+    mesh = obj.data
+    attr = mesh.color_attributes.new("Col", "BYTE_COLOR", "CORNER")
+    for poly in mesh.polygons:
+        poly.use_smooth = True
+        for li in poly.loop_indices:
+            a = ao.get(mesh.loops[li].vertex_index, 0.7)
+            attr.data[li].color = (a, a, a, 1.0)
+    mesh.color_attributes.active_color = attr
+    mesh.color_attributes.render_color_index = 0
+    # Smooth across gentle curvature, sharp at the fracture edges.
+    if hasattr(mesh, "use_auto_smooth"):
+        mesh.use_auto_smooth = True
+        mesh.auto_smooth_angle = math.radians(38)
     return obj
 
 
@@ -249,12 +234,16 @@ MODELS = [
     ("rock_b", lambda: make_rock("rock_b", 2, 0.5)),
     ("rock_c", lambda: make_rock("rock_c", 3, 0.9)),
     ("rock_d", lambda: make_rock("rock_d", 4, 0.35)),
+    ("rock_e", lambda: make_rock("rock_e", 5, 0.6, strata=True)),
 ]
 
 
 def main():
     os.makedirs(OUT, exist_ok=True)
+    only = os.environ.get("MODELS", "")
     for name, build in MODELS:
+        if only and name not in only.split(","):
+            continue
         reset_scene()
         obj = build()
         export(obj, name)

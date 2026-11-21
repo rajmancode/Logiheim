@@ -191,7 +191,7 @@ static func build_ground(level: HexLevel, surface: TerrainSurface, parent: Node3
 			continue
 		var c := level.cell_center(i)
 		var tint: Color = PATCH[kind]
-		var strength := 0.22 + 0.11 * level.resource_amount[i]
+		var strength := (0.22 + 0.11 * level.resource_amount[i]) * (1.0 - 0.75 * surface.volcanic_at(c))
 		for k in 6:
 			var ca := HexCoords.corner(k, s * 1.02)
 			var cb := HexCoords.corner((k + 1) % 6, s * 1.02)

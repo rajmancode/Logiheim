@@ -34,6 +34,7 @@ varying vec4 v_w0;
 varying vec4 v_w1;
 varying vec2 v_flood;
 varying float v_arable;
+varying float v_volcanic;
 
 void vertex() {
 	v_world_pos = (MODEL_MATRIX * vec4(VERTEX, 1.0)).xyz;
@@ -42,6 +43,7 @@ void vertex() {
 	v_w1 = vec4(UV, UV2);
 	v_flood = CUSTOM0.xy;
 	v_arable = CUSTOM0.z;
+	v_volcanic = CUSTOM0.w;
 }
 
 // Samples one layer: planar from above on flat ground, triplanar on slopes.
@@ -111,6 +113,30 @@ void fragment() {
 	nrm_xy /= total;
 	ao /= total;
 	rough /= total;
+
+	// Volcanic ground: dark basalt. Steep faces show columnar jointing: tall prisms with dark
+	// joints between them and the odd cross-crack, each column a slightly different shade.
+	if (v_volcanic > 0.02) {
+		float lum = dot(albedo, vec3(0.3, 0.55, 0.15));
+		// (Linear albedo: basalt is genuinely dark, ~0.05.)
+		vec3 basalt = vec3(0.048, 0.046, 0.045) * (0.6 + 1.4 * lum);
+		if (n.y < 0.75) {
+			vec2 tdir = normalize(vec2(-n.z, n.x) + vec2(1e-5));
+			float u = dot(p.xz, tdir) / 1.5;
+			float col = fract(u);
+			float cell = floor(u);
+			float joint = smoothstep(0.0, 0.07, col) * smoothstep(1.0, 0.93, col);
+			float band = fract(p.y / (2.5 + env_hash(vec2(cell, 3.0)) * 3.5) + env_hash(vec2(cell, 7.0)));
+			float crack = smoothstep(0.0, 0.035, band) * smoothstep(1.0, 0.965, band);
+			float shade = 0.8 + 0.4 * env_hash(vec2(cell, 11.0));
+			float steep = smoothstep(0.75, 0.45, n.y);
+			basalt *= mix(1.0, mix(0.3, 1.0, joint * crack) * shade, steep);
+			nrm_xy.x += (col - 0.5) * 0.9 * joint * steep;
+		}
+		float vb = smoothstep(0.0, 0.6, v_volcanic);
+		albedo = mix(albedo, basalt, vb * 0.92);
+		rough = mix(rough, 0.72, vb);
+	}
 
 	// Arable land: a patchwork of fields (ploughed furrows, young green crops, ripening
 	// grain, fallow meadow) on rich dark soil, each field with its own furrow direction.

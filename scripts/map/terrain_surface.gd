@@ -30,6 +30,8 @@ var flood_mask := PackedFloat32Array()
 var flood_y := PackedFloat32Array()
 ## 0..1 how good the ground is for farming (flat, low, fertile); drawn as fields and rich soil.
 var arable := PackedFloat32Array()
+## 0..1 volcanic ground (basalt and ash): the cone of a volcano and its old lava flows.
+var volcanic := PackedFloat32Array()
 ## Plateau height of each hex.
 var plateau := PackedFloat32Array()
 
@@ -95,6 +97,12 @@ func keep_clear(p: Vector2) -> bool:
 	var x := clampi(roundi(p.x / spacing), 0, nx - 1)
 	var z := clampi(roundi(p.y / spacing), 0, nz - 1)
 	return clear_mask[z * nx + x] == 1
+
+
+func volcanic_at(p: Vector2) -> float:
+	var x := clampi(roundi(p.x / spacing), 0, nx - 1)
+	var z := clampi(roundi(p.y / spacing), 0, nz - 1)
+	return volcanic[z * nx + x]
 
 
 func river_at(p: Vector2) -> float:
@@ -172,6 +180,8 @@ func _compute_heights() -> void:
 	flood_mask.fill(0.0)
 	flood_y.resize(nx * nz)
 	flood_y.fill(0.0)
+	volcanic.resize(nx * nz)
+	volcanic.fill(0.0)
 	var radius := _settings.step_softness * level.hex_size
 	var inv_r2 := 1.0 / (radius * radius)
 	var detail := _settings.terrain_detail * _meters
@@ -505,6 +515,11 @@ func finish_weights() -> void:
 				_pull(base, T.ROCK, smoothstep(cliff * 0.35, cliff * 0.7, slope) * (1.0 - smoothstep(sea_y + 4.0, sea_y + 30.0, h)) * 0.85)
 				# Outcrops poking through the grass on moderate slopes.
 				_pull(base, T.ROCK, smoothstep(0.18, 0.4, slope) * smoothstep(0.8, 0.9, n2) * 0.8)
+			# Volcanic ground: bare basalt with ash in the hollows; little grows there.
+			var volc := volcanic[vi]
+			if volc > 0.0 and under <= 0.0:
+				_pull(base, T.ROCK, volc * (0.55 + 0.3 * n2))
+				_pull(base, T.DIRT, volc * 0.3 * (1.0 - n2))
 			var bank := river_mask[vi]
 			var low := 1.0 - smoothstep(sea_y + 6.0, sea_y + relief * 0.25, h)
 			if bank > 0.0 and under < 0.5:

@@ -16,6 +16,7 @@ Gaea exports a heightmap and terrain masks. Logiheim samples them onto a hex gri
 - **Multi-scale / LOD:** several hex scales (default ×1, ×3, ×8). The camera switches to coarser levels as you zoom out. Levels are linked parent ↔ children, so you can use them as regions in gameplay.
 - **Photo-scanned textures:** CC0 PBR sets from ambientCG (colour, height, normal, AO, roughness). Layers mix by **height-based blending**, so grass grows between stones and sand fills cracks. Steep ground turns to rock, with scree and bare earth on the slopes below it. Bare rock also shows on ridges and crests, in broken patches on high ground, on sea cliffs down to the water, and as outcrops poking through grassy slopes. Beaches form at the waterline, dunes drift inland on low coasts, slow lowland rivers drop sand bars, and open grassland has worn dry patches. Textures follow the real landscape (`natural_texturing`) instead of painting each hex one colour, with large-scale variation to hide tiling.
 - **Sea:** depth-coloured water using the depth buffer, refraction of the sea floor, wind-driven waves, foam lapping at the shoreline, whitecaps in strong wind and sky reflections.
+- **Volcano:** an inland volcanic cone (`volcano_count`, `volcano_radius`, `volcano_height`) with radial gullies, a crater holding a glowing, churning lava pool and a smoke plume drifting downwind. It is built before water is routed, so rivers run off its flanks. Around it the ground is basalt: dark bare rock and ash on the cone, old lava flows streaking out over the land, columnar jointing (tall prisms with dark joints) on steep faces, and dark basalt boulders.
 - **Fjords:** rivers that reach the sea through high ground can become fjords: long, narrow, curving sea inlets with a U-shaped trough and steep rock walls, widest at the mouth and narrowing to a rounded head, often with the river falling into it (`fjord_count`, `fjord_min_relief`, `fjord_length`, `fjord_width`, `fjord_depth`).
 - **Arable land:** flat, low, fertile ground (best on floodplains) is farmed: a patchwork of ploughed furrows, young green crops, ripening grain and fallow meadow on rich dark soil, each field with its own furrow direction and grassy margins.
 - **Rivers and lakes:** water is routed over the actual terrain (a priority flood on a 10 m grid), so rivers follow real valleys, join into bigger rivers and collect in lakes where hollows fill up.
@@ -40,7 +41,7 @@ Gaea exports a heightmap and terrain masks. Logiheim samples them onto a hex gri
   - Each has a fur texture and fur normal map baked in Blender, and a rig with looping walk, graze and idle animations (whale: swim; seals: rest and galumph).
   - On the finest level every animal is alive (`scripts/map/animal_agent.gd`): it grazes, looks around and walks to new spots in its pasture across the terrain, avoiding water. Whales swim circles, and seals mostly rest on the shore. Animals far from the camera pause.
   - Coat colour varies per animal: dun, chestnut, bay and black horses, and white, cream, brown and black sheep.
-- **Vegetation and rocks (made in Blender):** three conifer variants, two broadleaf trees, two bushes and four chiselled boulders (`tools/blender/make_vegetation.py`). Forests mix conifers and broadleaf, with more conifers higher up. Trees and grass sway in the wind, leaves let light through, and rocks get moss on top. Dense grass (`grass_density`) is drawn near the camera only. Trees are 7–13 m (`tree_height`), so animals and props stay in proportion to them.
+- **Vegetation and rocks (made in Blender):** three conifer variants, two broadleaf trees, two bushes and five boulders (`tools/blender/make_vegetation.py`). Boulders and ore outcrops come from a shared rock generator (`tools/blender/rock_shapes.py`): fractured flat facets, Voronoi cracks, optional bedded strata and fine grain, with crevice AO baked in; in game they get photo-scanned rock with its normal map, lichen and moss. Forests mix conifers and broadleaf, with more conifers higher up. Trees and grass sway in the wind, leaves let light through, and rocks get moss on top. Dense grass (`grass_density`) is drawn near the camera only. Trees are 7–13 m (`tree_height`), so animals and props stay in proportion to them.
 - **Hex grid:** drawn by the shaders with irregular, noise-wobbled borders (`border_noise`). The CPU uses the same noise for picking, so what you click is exactly what's outlined. Hover and selection highlights work the same way.
 - **Atmosphere:** day/night cycle with sun and moon, drifting clouds that cast moving shadows, wind that drives trees, waves and clouds together, and weather (clear, cloudy, rain) with wet ground, fog and the odd lightning flash.
 
@@ -91,6 +92,7 @@ scripts/map/river_mesh_builder.gd  river courses (meanders, junctions), placemen
 scripts/map/river_path.gd          one placed river stretch
 scripts/map/lake_maker.gd          extra lakes: dammed valleys, tarns, Gaea lake mask
 scripts/map/fjord_maker.gd         fjords: planned along high-coast rivers, cut into every level
+scripts/map/volcano_maker.gd       volcano: cone, crater, basalt ground, lava pool and smoke
 scripts/map/natural_resources.gd   resource types, placement rules, multi-hex deposits
 scripts/map/floodplain.gd          floodplains: detection, levelling, oxbow ponds
 scripts/map/animal_agent.gd        living animals: graze / idle / walk routine, terrain following
@@ -110,6 +112,7 @@ shaders/rock.gdshader              boulders with moss
 shaders/grass.gdshader             grass blades
 shaders/resource_prop.gdshader     resource props (glints on gold, silver, gems, amber)
 shaders/resource_ground.gdshader   ground tint under resource deposits
+shaders/lava.gdshader              molten lava in volcano craters
 shaders/farm_field.gdshader        farm fields
 shaders/fish_shoal.gdshader        fish shoals
 shaders/clouds.gdshader            cloud layer
@@ -118,6 +121,7 @@ shaders/include/hex_grid.gdshaderinc     hex grid lines and highlights
 tools/make_placeholder_terrain.py  placeholder Gaea exports (numpy, pillow)
 tools/pack_ambientcg.py            packs ambientCG texture sets
 tools/blender/make_vegetation.py   Blender script for trees, bushes and rocks
+tools/blender/rock_shapes.py       shared Blender rock generator (boulders, outcrops)
 tools/blender/make_resources.py    Blender script for resource props
 tools/blender/make_animals.py      Blender script for the animals: anatomy, fur bake, rig, animations (+ animals.json)
 tools/make_resource_icons.py       resource icon SVGs

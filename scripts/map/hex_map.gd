@@ -37,6 +37,7 @@ var _show_icons := true
 var _icon_roots: Array[Node3D] = []
 ## Fjords cut into this map (for tools and debugging).
 var fjord_plan: FjordMaker
+var volcano_plan: VolcanoMaker
 
 
 ## Loads map.json from map_dir and builds the map. Returns false if loading failed.
@@ -65,6 +66,7 @@ func rebuild() -> void:
 	var courses: Array = []
 	var lakes: LakeMaker = null
 	var fjords: FjordMaker = null
+	var volcano: VolcanoMaker = null
 	sea_y = gen.sea_y()
 	for level in levels:
 		var t1 := Time.get_ticks_msec()
@@ -74,6 +76,12 @@ func rebuild() -> void:
 		add_child(root)
 		var noise := BorderNoise.new(level.hex_size, settings.border_noise)
 		var surface := TerrainSurface.new(level, source, settings, gen)
+		# Volcanoes first: everything after (rivers, lakes, fjords) works on the land with them.
+		if level.level_index == 0:
+			volcano = VolcanoMaker.plan(surface, settings)
+			volcano_plan = volcano
+		volcano.apply(surface)
+		volcano.mark_level(level, surface)
 		var paths: Array[RiverPath] = []
 		var hydro: Hydrology = null
 		if settings.rivers_enabled:
@@ -108,6 +116,7 @@ func rebuild() -> void:
 		mat.set_shader_parameter("show_grid", _show_grid)
 		TerrainMeshBuilder.build(surface, mat, root)
 		RiverMeshBuilder.build(paths, root)
+		volcano.build_effects(surface, root)
 		if level.level_index <= 1:
 			RiverMeshBuilder.build_falls(paths, root)
 		var lake_mat := RiverMeshBuilder.lake_material(_get_wave_normal())

@@ -11,7 +11,7 @@ const MODEL_DIR := "res://assets/models/vegetation"
 const CONIFERS := ["conifer_a", "conifer_b", "conifer_c"]
 const BROADLEAF := ["broadleaf_a", "broadleaf_b"]
 const BUSHES := ["bush_a", "bush_b"]
-const ROCKS := ["rock_a", "rock_b", "rock_c", "rock_d"]
+const ROCKS := ["rock_a", "rock_b", "rock_c", "rock_d", "rock_e"]
 const CHUNK_METRES := 256.0
 const T := HexMapGenerator.Terrain
 
@@ -119,7 +119,7 @@ static func _random_point(c: Vector2, s: float, rng: RandomNumberGenerator) -> V
 
 
 static func _ok_ground(surface: TerrainSurface, p: Vector2) -> bool:
-	return not surface.keep_clear(p) and surface.sample(p) > surface.sea_y + 0.6
+	return not surface.keep_clear(p) and surface.sample(p) > surface.sea_y + 0.6 and surface.volcanic_at(p) < 0.5
 
 
 static func _place_tree(items: Dictionary, model: String, surface: TerrainSurface, settings: HexMapSettings, c: Vector2, s: float, rng: RandomNumberGenerator, mult: float) -> void:
@@ -159,7 +159,8 @@ static func _place_rock(items: Dictionary, surface: TerrainSurface, c: Vector2, 
 	basis = Basis(tilt) * basis
 	basis = basis.scaled(Vector3(size * rng.randf_range(0.8, 1.3), size * rng.randf_range(0.6, 1.0), size * rng.randf_range(0.8, 1.3)))
 	var y := surface.sample(p) - size * 0.12
-	_add(items, ROCKS[rng.randi() % ROCKS.size()], Transform3D(basis, Vector3(p.x, y, p.y)), Color.WHITE)
+	# Alpha = basalt: boulders on and around the volcano are dark basalt.
+	_add(items, ROCKS[rng.randi() % ROCKS.size()], Transform3D(basis, Vector3(p.x, y, p.y)), Color(1, 1, 1, surface.volcanic_at(p)))
 
 
 static func _add(items: Dictionary, model: String, xform: Transform3D, custom: Color) -> void:

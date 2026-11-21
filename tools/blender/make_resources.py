@@ -1,4 +1,4 @@
-"""Builds the natural-resource props (ore outcrops, quarry, kiln, reeds...) and exports .glb.
+﻿"""Builds the natural-resource props (ore outcrops, quarry, kiln, reeds...) and exports .glb.
 Animals are made separately by tools/blender/make_animals.py.
 
 Run headless (Blender 4.x):
@@ -193,7 +193,10 @@ def quarry(seed=3):
                 at((x, y, z), rng.uniform(-0.3, 0.3)))
     # Rubble.
     for k in range(10):
-        b.merge(noisy(ico(rng.uniform(0.15, 0.3), 1), 0.05, 3, k), (0.55, 0.53, 0.5), BODY,
+        sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+        from rock_shapes import rock_bmesh, decimate
+        b.merge(decimate(rock_bmesh(300 + k, 0.7, facets=6, cracks=False, radius=rng.uniform(0.15, 0.3), subdiv=3), 200),
+                (0.55, 0.53, 0.5), BODY,
                 at((rng.uniform(-4, 4), rng.uniform(-3, 3), 0.05)))
     return b.finish("quarry", 2.0, smooth=False)
 
@@ -207,8 +210,12 @@ def outcrop(name, vein, glint, seed):
     def color(c):
         v = noise.noise(Vector((c.x * 0.9, c.y * 0.9, c.z * 2.6)) + s)
         return vein if v > 0.22 else ROCK
+    sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+    from rock_shapes import rock_bmesh, decimate
     for k in range(3):
-        rock = noisy(ico(1.0, 3), 0.25, 1.2, seed + k)
+        # A real fractured boulder (tools/blender/rock_shapes.py) rather than a noisy ball.
+        rock = decimate(rock_bmesh(seed * 10 + k, rng.uniform(0.55, 0.8), facets=rng.randint(7, 10),
+                                   radius=1.0, subdiv=4), 1400)
         sc = rng.uniform(1.0, 1.8)
         faces = b.merge(rock, color, BODY, at((rng.uniform(-1.6, 1.6), rng.uniform(-1.2, 1.2), -0.2), rng.uniform(0, 6),
                                              (sc * 1.3, sc, sc * rng.uniform(0.7, 1.1))))
@@ -216,7 +223,7 @@ def outcrop(name, vein, glint, seed):
             for f in faces:
                 if b.colors[f] == vein:
                     f.material_index = GLINT
-    return b.finish(name, 2.0, smooth=False)
+    return b.finish(name, 2.0, smooth=True)
 
 
 def crystals(seed=9):
@@ -349,7 +356,10 @@ MODELS = [
 
 def main():
     os.makedirs(OUT, exist_ok=True)
+    only = os.environ.get("MODELS", "")
     for name, build in MODELS:
+        if only and name not in only.split(","):
+            continue
         bpy.ops.wm.read_factory_settings(use_empty=True)
         obj = build()
         export(obj, name)

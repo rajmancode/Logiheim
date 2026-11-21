@@ -627,7 +627,9 @@ static func build_lakes(hydro: Hydrology, surface: TerrainSurface, material: Mat
 		if id < 0:
 			continue
 		edge[i] = 1.0
-		if surface.heights[i] >= hydro.lake_level[id] - 0.05:
+		# Kept opaque only where the ground clearly rises out of the water; anywhere else (lower
+		# ground, or a flat shelf right at water level) the edge fades.
+		if surface.heights[i] >= hydro.lake_level[id] + 0.4:
 			continue
 		var x := i % nx
 		var z := i / nx
