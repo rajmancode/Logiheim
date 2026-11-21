@@ -61,6 +61,25 @@ const PLACEMENT_ORDER := [
 ]
 
 const GROUP_NAMES := ["Core", "Precious", "Industry", "Wildlife", "Norse"]
+## Resources that naturally share ground with another: deer and furbearers in the woods, sheep
+## grazing fallow fields, peat and bog iron in the same bog, coal seams beside iron ore, reeds
+## on peaty or clayey wet ground. A hex of the first kind may also hold one of these.
+const COMPANIONS := {
+	Kind.TIMBER: [Kind.GAME, Kind.FURS],
+	Kind.OAK: [Kind.GAME],
+	Kind.FARMLAND: [Kind.WOOL],
+	Kind.PEAT: [Kind.BOG_IRON, Kind.REEDS],
+	Kind.BOG_IRON: [Kind.PEAT],
+	Kind.COAL: [Kind.IRON],
+	Kind.IRON: [Kind.COAL],
+	Kind.CLAY: [Kind.REEDS],
+	Kind.LAKE_ORE: [Kind.REEDS],
+}
+## Chance a hex of a deposit also holds its companion.
+const COMPANION_CHANCE := 0.3
+## No land resource on ground steeper than this (rise/run, ~35 degrees).
+const MAX_SLOPE := 0.7
+
 ## Common resources: zoomed out, only their big deposits get an icon.
 const COMMON := [Kind.STONE, Kind.GAME, Kind.TIMBER, Kind.FISH, Kind.FARMLAND, Kind.WOOL, Kind.PEAT, Kind.REEDS]
 const T := HexMapGenerator.Terrain
@@ -84,7 +103,7 @@ static func description(kind: int) -> String:
 
 ## Places deposits on the finest level, then fills the coarser levels from it.
 ## Each level's `deposits` lists {kind, center (cell index), size (finest hexes)}.
-static func place(levels: Array[HexLevel], source: TerrainSource, sea_y: float, abundance: float, mask_threshold: float) -> void:
+static func place(levels: Array[HexLevel], source: TerrainSource, sea_y: float, abundance: float, mask_threshold: float, surface: TerrainSurface = null) -> void:
 	if levels.is_empty():
 		return
 	var lv := levels[0]
@@ -94,7 +113,21 @@ static func place(levels: Array[HexLevel], source: TerrainSource, sea_y: float, 
 	lv.deposit.fill(-1)
 	lv.deposits.clear()
 	var f := _features(lv, sea_y)
+	# The steepest ground in each hex (centre and around it), from the finished terrain.
+	var steep := PackedFloat32Array()
+	steep.resize(n)
+	if surface != null:
+		for i in n:
+			var c := lv.cell_center(i)
+			var m := 0.0
+			for k in 7:
+				var q := c if k == 6 else c + Vector2.from_angle(TAU * k / 6.0) * lv.hex_size * 0.5
+				var ny := surface.normal_at(q).y
+				m = maxf(m, sqrt(maxf(1.0 / (ny * ny) - 1.0, 0.0)))
+			steep[i] = m
+	f["steep"] = steep
 	var rng := RandomNumberGenerator.new()
+	rng.seed = MapSeed.mix(31337)
 	var area_scale := maxf(1.0, lv.hex_size * lv.hex_size / 400.0)
 
 	# Painted masks win: each connected painted patch is one deposit.
@@ -130,7 +163,7 @@ static func place(levels: Array[HexLevel], source: TerrainSource, sea_y: float, 
 			var suit := _suitability(kind, i, lv, f)
 			if suit <= 0.0:
 				continue
-			rng.seed = hash(Vector3i(lv.coords[i].x, lv.coords[i].y, kind * 7919))
+			rng.seed = MapSeed.mix(hash(Vector3i(lv.coords[i].x, lv.coords[i].y, kind * 7919)))
 			if rng.randf() > chance * suit:
 				continue
 			var here := lv.cell_center(i)
@@ -171,6 +204,21 @@ static func place(levels: Array[HexLevel], source: TerrainSource, sea_y: float, 
 		if not cells.is_empty():
 			_commit(lv, Kind.FISH, cells)
 
+	# Companions: a second resource where two naturally go together.
+	if lv.resource2.size() != n:
+		lv.resource2.resize(n)
+	lv.resource2.fill(0)
+	var crng := RandomNumberGenerator.new()
+	crng.seed = MapSeed.mix(4747)
+	for i in n:
+		var a := lv.resource[i]
+		if a == 0 or not COMPANIONS.has(a):
+			continue
+		for b: int in COMPANIONS[a]:
+			if _suitability(b, i, lv, f) > 0.0 and crng.randf() < COMPANION_CHANCE:
+				lv.resource2[i] = b
+				break
+
 	# Coarser levels: the rarest resource among each hex's finest descendants, and the
 	# deposits mapped onto them.
 	var rank := {}
@@ -210,7 +258,11 @@ static func _grow(lv: HexLevel, f: Dictionary, kind: int, seed_cell: int, target
 		var c := cells[head]
 		head += 1
 		var order := [0, 1, 2, 3, 4, 5]
-		order.shuffle()
+		for q in range(5, 0, -1):
+			var r := rng.randi_range(0, q)
+			var tmp: int = order[q]
+			order[q] = order[r]
+			order[r] = tmp
 		for k: int in order:
 			if cells.size() >= target:
 				break
@@ -289,6 +341,9 @@ static func _is_sea(lv: HexLevel, i: int) -> bool:
 
 ## 0 = can't be here, 1 = ideal spot.
 static func _suitability(kind: int, i: int, lv: HexLevel, f: Dictionary) -> float:
+	# Nothing on steep ground (fish and whales live in the water, so they don't care).
+	if kind != Kind.FISH and kind != Kind.WHALES and f.has("steep") and float(f.steep[i]) > MAX_SLOPE:
+		return 0.0
 	var t := lv.terrain[i]
 	var rel: float = f.rel[i]
 	var slope := lv.slope[i]

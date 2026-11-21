@@ -58,7 +58,7 @@ static func build(level: HexLevel, surface: TerrainSurface, settings: HexMapSett
 		var t := level.terrain[i]
 		if HexMapGenerator.is_water(t):
 			continue
-		rng.seed = hash(Vector3i(level.coords[i].x, level.coords[i].y, 7919 + level.level_index))
+		rng.seed = MapSeed.mix(hash(Vector3i(level.coords[i].x, level.coords[i].y, 7919 + level.level_index)))
 		var c := level.cell_center(i)
 		var rel_h := clampf((level.top_y(i) - surface.sea_y) / land_top, 0.0, 1.0)
 		match t:
@@ -159,7 +159,8 @@ static func _place_rock(items: Dictionary, surface: TerrainSurface, c: Vector2, 
 	var tilt := Quaternion(Vector3.UP, up)
 	basis = Basis(tilt) * basis
 	basis = basis.scaled(Vector3(size * rng.randf_range(0.8, 1.3), size * rng.randf_range(0.6, 1.0), size * rng.randf_range(0.8, 1.3)))
-	var y := surface.sample(p) - size * 0.12
+	# Seated on the lowest ground under it (sunk a little), so it never floats on a slope.
+	var y := surface.ground_min(p, size * 0.55) - size * 0.1
 	# Alpha = basalt: boulders on and around the volcano are dark basalt.
 	_add(items, ROCKS[rng.randi() % ROCKS.size()], Transform3D(basis, Vector3(p.x, y, p.y)), Color(1, 1, 1, surface.volcanic_at(p)))
 

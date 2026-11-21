@@ -64,7 +64,7 @@ static func build(level: HexLevel, surface: TerrainSurface, paths: Array[RiverPa
 
 	# 3. Oxbow ponds: a few shallow, elongated hollows on the floor, away from the river.
 	var rng := RandomNumberGenerator.new()
-	rng.seed = 777 + level.level_index
+	rng.seed = MapSeed.mix(777 + level.level_index)
 	var area_cells := 0
 	for i in mask.size():
 		if mask[i] > 0.7:

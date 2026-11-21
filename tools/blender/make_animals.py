@@ -442,10 +442,10 @@ def quadruped(sp):
         b.bone(f"cannon_f.{side}", knee, fet_f, f"forearm.{side}")
         b.bone(f"pastern_f.{side}", fet_f, hoof_f, f"cannon_f.{side}")
         hip = Vector((xb + 0.2 * L, sy * W * 0.6, Hc - 0.12 * H))
-        stifle = Vector((xb + 0.3 * L, y, Hc - D * 1.02))
-        hock = Vector((xb + 0.0 * L, y * 0.95, H * 0.3))
-        fet_h = Vector((xb + 0.03 * L, y * 0.92, H * 0.08))
-        hoof_h = Vector((xb + 0.06 * L, y * 0.92, sp["hoof"] * 0.6))
+        stifle = Vector((xb + 0.32 * L, y, Hc - D * 1.02))
+        hock = Vector((xb + 0.12 * L, y * 0.95, H * 0.3))
+        fet_h = Vector((xb + 0.15 * L, y * 0.92, H * 0.08))
+        hoof_h = Vector((xb + 0.18 * L, y * 0.92, sp["hoof"] * 0.6))
         b.bone(f"thigh.{side}", hip, stifle, "spine1")
         b.bone(f"gaskin.{side}", stifle, hock, f"thigh.{side}")
         b.bone(f"cannon_h.{side}", hock, fet_h, f"gaskin.{side}")
@@ -455,8 +455,11 @@ def quadruped(sp):
         b.limb(knee, fet_f, lr[1] * 0.85, lr[2], "leg_lower")
         b.limb(fet_f, hoof_f, lr[2] * 1.1, sp["hoof"], "hoof")
         b.limb(stifle, hock, lr[0] * 1.0, lr[1] * 0.9, "leg_upper")
-        b.limb(Vector((xb + 0.04 * L, y * 0.9, Hc - D * 0.75)), hock + Vector((0.01 * L, 0, 0.04 * H)),
-               lr[0] * 0.85, lr[1] * 0.75, "leg_upper")
+        # Thigh (hip to stifle) as one solid limb, and the gaskin's muscle as a single flattened
+        # mass on the back of the lower thigh - no second tube, so the leg reads as one leg.
+        b.limb(hip.lerp(stifle, 0.15), stifle, lr[0] * 1.35, lr[0] * 1.05, "leg_upper")
+        b.mass(stifle.lerp(hock, 0.3) + Vector((-0.03 * L, 0, 0)),
+               ((stifle - hock).length * 0.16, lr[0] * 0.9, (stifle - hock).length * 0.3), "leg_upper")
         b.limb(hock, fet_h, lr[1] * 0.85, lr[2], "leg_lower")
         b.limb(fet_h, hoof_h, lr[2] * 1.1, sp["hoof"], "hoof")
         b.mass(shoulder.lerp(scap, 0.45) + Vector((0, -sy * W * 0.1, 0)), (L * 0.13, W * 0.42, D * 0.42), "body")

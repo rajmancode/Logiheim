@@ -39,6 +39,7 @@ var _icon_roots: Array[Node3D] = []
 var fjord_plan: FjordMaker
 var volcano_plan: VolcanoMaker
 var road_plan: RoadNetwork
+var cave_plan: CaveSystem
 
 
 ## Loads map.json from map_dir and builds the map. Returns false if loading failed.
@@ -57,6 +58,7 @@ func rebuild() -> void:
 		return
 	if settings == null:
 		settings = HexMapSettings.new()
+	MapSeed.set_seed(settings.seed)
 	if _base_material == null:
 		_base_material = TerrainMaterial.create()
 	_clear()
@@ -69,6 +71,7 @@ func rebuild() -> void:
 	var fjords: FjordMaker = null
 	var volcano: VolcanoMaker = null
 	var roads: RoadNetwork = null
+	var caves: CaveSystem = null
 	sea_y = gen.sea_y()
 	for level in levels:
 		var t1 := Time.get_ticks_msec()
@@ -118,6 +121,18 @@ func rebuild() -> void:
 		roads.apply(level, surface)
 		# No near-vertical walls: cap the slope once all shaping is done.
 		surface.limit_slopes(settings.max_slope, paths)
+		# Lakes from the final ground: shaping since the first pass (valleys, trails, the slope
+		# limit) may have lowered a shore, so the water level is worked out again here; a lake
+		# can then never stand higher than the ground that holds it.
+		if hydro != null:
+			hydro = Hydrology.from_surface(surface, 2 if level.level_index == 0 else 1, settings, source)
+			for i in level.cell_count():
+				level.lake[i] = 1 if hydro.lake_at(level.cell_center(i)) >= 0 else 0
+		# Caves: planned on the finished finest terrain, cut into every level.
+		if level.level_index == 0:
+			caves = CaveSystem.plan(level, surface, settings)
+			cave_plan = caves
+		caves.apply(level, surface)
 		var fp := Floodplain.build(level, surface, paths, settings)
 		surface.finish_weights()
 		var mat := TerrainMaterial.for_level(_base_material, level, noise, sea_y)
@@ -129,6 +144,7 @@ func rebuild() -> void:
 		volcano.build_effects(surface, root)
 		if level.level_index <= 1:
 			roads.build_meshes(surface, root)
+			caves.build_meshes(surface, root)
 			RockFeatures.build(level, surface, settings, root)
 		if level.level_index <= 1:
 			RiverMeshBuilder.build_falls(paths, root)
@@ -151,7 +167,9 @@ func rebuild() -> void:
 		print("HexMap: level %d (%.0f m hexes, %d x %d terrain) in %d ms" % [
 			level.level_index, level.hex_size, surface.nx, surface.nz, Time.get_ticks_msec() - t1])
 	if settings.resources_enabled:
-		NaturalResources.place(levels, source, sea_y, settings.resource_abundance, settings.mask_threshold)
+		NaturalResources.place(levels, source, sea_y, settings.resource_abundance, settings.mask_threshold, surfaces[0])
+		if cave_plan != null:
+			cave_plan.place_resources(levels)
 		for li in levels.size():
 			ResourceProps.build_ground(levels[li], surfaces[li], _level_roots[li])
 		for li in mini(2, levels.size()):
@@ -322,6 +340,42 @@ func _build_resource_icons() -> void:
 			sprite.visibility_range_end_margin = reach * 0.2
 			sprite.visibility_range_fade_mode = GeometryInstance3D.VISIBILITY_RANGE_FADE_SELF
 			root.add_child(sprite)
+			# A companion resource sharing the hex gets its own small badge beside the main one.
+			if li == 0 and level.resource2.size() == level.cell_count() and level.resource2[i] != 0:
+				var k2 := level.resource2[i]
+				if not textures.has(k2):
+					var path2 := "res://assets/icons/resources/%s.svg" % NaturalResources.key(k2)
+					textures[k2] = load(path2) if ResourceLoader.exists(path2) else null
+				if textures[k2] != null:
+					var s2 := Sprite3D.new()
+					s2.texture = textures[k2]
+					s2.billboard = BaseMaterial3D.BILLBOARD_ENABLED
+					s2.fixed_size = true
+					s2.pixel_size = sprite.pixel_size * 0.75
+					s2.no_depth_test = true
+					s2.shaded = false
+					s2.render_priority = sprite.render_priority + 1
+					s2.position = pos
+					s2.offset = Vector2(70, 40) if is_center else Vector2(90, 50)
+					s2.visibility_range_end = reach
+					s2.visibility_range_end_margin = reach * 0.2
+					s2.visibility_range_fade_mode = GeometryInstance3D.VISIBILITY_RANGE_FADE_SELF
+					root.add_child(s2)
+			if is_center and d.get("cave", false):
+				var cl := Label3D.new()
+				cl.text = "cave"
+				cl.billboard = BaseMaterial3D.BILLBOARD_ENABLED
+				cl.fixed_size = true
+				cl.pixel_size = 0.0003
+				cl.font_size = 32
+				cl.outline_size = 10
+				cl.modulate = Color(0.95, 0.85, 0.6)
+				cl.no_depth_test = true
+				cl.render_priority = 11
+				cl.offset = Vector2(0, -70)
+				cl.position = pos
+				cl.visibility_range_end = reach
+				root.add_child(cl)
 			if is_center and d.size > 1:
 				var label := Label3D.new()
 				label.text = "%d" % d.size

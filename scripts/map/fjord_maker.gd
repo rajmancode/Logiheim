@@ -105,7 +105,7 @@ func _shape(pts: PackedVector2Array, settings: HexMapSettings, hydro: Hydrology)
 	var along := PackedFloat32Array()
 	for k in axis.size():
 		var t := clampf((lengths[k] - 120.0) / maxf(total - 120.0, 1.0), 0.0, 1.0)
-		var wobble := 0.8 + 0.4 * BorderNoise.value_noise(axis[k] * 0.008 + Vector2(2.3, 8.1))
+		var wobble := 0.8 + 0.4 * BorderNoise.snoise(axis[k] * 0.008 + Vector2(2.3, 8.1))
 		hw.append(settings.fjord_width * 0.5 * lerpf(1.0, 0.4, t) * wobble)
 		bottom.append(sea_y - lerpf(settings.fjord_depth, 2.5, pow(t, 0.8)))
 		along.append(t)
@@ -147,7 +147,7 @@ func apply(surface: TerrainSurface) -> void:
 						target = floor_y + (rim - floor_y) * pow(d / w, 2.5)
 					else:
 						# Walls: steep, a little ragged.
-						target = rim + (d - w) * WALL_SLOPE + (BorderNoise.value_noise(p * 0.05) - 0.5) * 6.0
+						target = rim + (d - w) * WALL_SLOPE + (BorderNoise.snoise(p * 0.05) - 0.5) * 6.0
 					var i := z * surface.nx + x
 					if target < surface.heights[i]:
 						surface.heights[i] = target

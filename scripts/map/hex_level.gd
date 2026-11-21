@@ -30,7 +30,9 @@ var lake := PackedByteArray()           ## 1 if the hex centre is under a lake
 var floodplain := PackedByteArray()     ## 1 if the hex is on a river floodplain (floods in rain)
 var resource := PackedByteArray()       ## NaturalResources.Kind (0 = none)
 var resource_amount := PackedByteArray() ## 1 small .. 3 rich
+var resource2 := PackedByteArray()      ## companion resource sharing the hex (0 = none)
 var road := PackedByteArray()          ## 1 if a trail runs through this cell
+var cave := PackedInt32Array()         ## cave system with an entrance in this cell, -1 if none
 var deposit := PackedInt32Array()       ## index into `deposits`, -1 if none
 ## Resource deposits on this level: {kind, center (cell index), size (finest hexes)}.
 var deposits: Array = []
@@ -60,6 +62,9 @@ func allocate() -> void:
 	deposit.resize(n)
 	deposit.fill(-1)
 	road.resize(n)
+	cave.resize(n)
+	cave.fill(-1)
+	resource2.resize(n)
 	for i in n:
 		children[i] = []
 

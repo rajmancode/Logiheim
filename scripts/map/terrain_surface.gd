@@ -90,6 +90,16 @@ func sample(p: Vector2) -> float:
 	return lerpf(a, b, tz)
 
 
+## Lowest ground under a footprint of radius r around p (centre plus a ring of 8): seat
+## anything with a footprint here so no edge hangs in the air on a slope.
+func ground_min(p: Vector2, r: float) -> float:
+	var h := sample(p)
+	for k in 8:
+		var a := TAU * k / 8.0
+		h = minf(h, sample(p + Vector2(cos(a), sin(a)) * r))
+	return h
+
+
 ## Surface normal at world (x, z).
 func normal_at(p: Vector2) -> Vector3:
 	var e := spacing
@@ -342,7 +352,7 @@ func _roughen_coast() -> void:
 			if d > 3.0:
 				continue
 			var p := Vector2(x * spacing, z * spacing)
-			var n := BorderNoise.value_noise(p * 0.025 + Vector2(6.0, 2.0)) * 0.65 + BorderNoise.value_noise(p * 0.08 + Vector2(1.0, 9.0)) * 0.35
+			var n := BorderNoise.snoise(p * 0.025 + Vector2(6.0, 2.0)) * 0.65 + BorderNoise.snoise(p * 0.08 + Vector2(1.0, 9.0)) * 0.35
 			heights[i] += (n - 0.5) * 2.4 * (1.0 - smoothstep(0.0, 3.0, d))
 
 
@@ -535,7 +545,7 @@ func _carve_valleys(paths: Array) -> void:
 			continue
 		var here := Vector2((c % gnx) * gs, (c / gnx) * gs)
 		var fw := seed_w[c] * 0.8 + 3.0
-		var rag := (BorderNoise.value_noise(here * 0.03 + Vector2(5.5, 2.2)) - 0.5) * 5.0 * smoothstep(fw, fw + 40.0, dist[c])
+		var rag := (BorderNoise.snoise(here * 0.03 + Vector2(5.5, 2.2)) - 0.5) * 5.0 * smoothstep(fw, fw + 40.0, dist[c])
 		target[c] = seed_y[c] + 1.5 + slope * maxf(dist[c] - fw, 0.0) + rag
 	# Soften the seams where two rivers' valleys meet.
 	for it in 2:
@@ -589,8 +599,8 @@ func finish_weights() -> void:
 				var beach := 1.0 - smoothstep(sea_y + 0.8, sea_y + 3.5, h)
 				_pull(base, T.SAND, beach * 0.85)
 			var p := Vector2(x * spacing, z * spacing)
-			var n1 := BorderNoise.value_noise(p * 0.021 + Vector2(3.1, 7.7))
-			var n2 := BorderNoise.value_noise(p * 0.067 + Vector2(1.3, 2.9))
+			var n1 := BorderNoise.snoise(p * 0.021 + Vector2(3.1, 7.7))
+			var n2 := BorderNoise.snoise(p * 0.067 + Vector2(1.3, 2.9))
 			var flat := 1.0 - smoothstep(0.08, 0.3, slope)
 			if under <= 0.0:
 				# Dunes: sand drifts a little further inland on low, gentle coasts.
@@ -696,7 +706,7 @@ func _compute_wetland(relief: float) -> void:
 			var b := i * LAYERS
 			var soft := clampf(weights[b + T.GRASS] + weights[b + T.FOREST] * 0.6 + weights[b + T.DIRT] * 0.8, 0.0, 1.0)
 			var p := Vector2(x * spacing, z * spacing)
-			var patch := BorderNoise.value_noise(p * 0.006 + Vector2(11.0, 3.0)) * 0.7 + BorderNoise.value_noise(p * 0.02 + Vector2(4.0, 9.0)) * 0.3
+			var patch := BorderNoise.snoise(p * 0.006 + Vector2(11.0, 3.0)) * 0.7 + BorderNoise.snoise(p * 0.02 + Vector2(4.0, 9.0)) * 0.3
 			var rel := clampf((h - sea_y) / relief, 0.0, 1.0)
 			var w := smoothstep(0.45, 0.8, moisture[i]) * smoothstep(0.42, 0.6, patch)
 			w = maxf(w, smoothstep(0.08, 0.6, hollow[i]))

@@ -15,6 +15,16 @@ var amplitude := 0.0
 var frequency := 0.05
 
 
+## Offset for procedural noise (set from the map seed). The hex-border noise itself doesn't use
+## it, because the terrain shader mirrors that noise exactly.
+static var seed_offset := Vector2.ZERO
+
+
+## Value noise shifted by the map seed: for everything procedural (coasts, meanders, lakes...).
+static func snoise(p: Vector2) -> float:
+	return value_noise(p + seed_offset)
+
+
 func _init(hex_size: float, strength: float) -> void:
 	amplitude = maxf(0.0, hex_size * strength)
 	frequency = 1.0 / (0.9 * hex_size)

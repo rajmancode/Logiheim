@@ -15,6 +15,7 @@ var map_index := 0
 var hovered := -1
 var selected := -1
 var show_grid := true
+var seed_edit: LineEdit
 
 
 func _ready() -> void:
@@ -24,6 +25,10 @@ func _ready() -> void:
 	hex_map = HexMap.new()
 	hex_map.name = "HexMap"
 	hex_map.settings = HexMapSettings.new()
+	# --seed=N on the command line (after --) picks the map seed.
+	for arg in OS.get_cmdline_user_args() + OS.get_cmdline_args():
+		if arg.begins_with("--seed="):
+			hex_map.settings.seed = int(arg.trim_prefix("--seed="))
 	hex_map.level_changed.connect(_on_level_changed)
 	add_child(hex_map)
 
@@ -96,12 +101,9 @@ func _unhandled_input(event: InputEvent) -> void:
 		return
 	var s := hex_map.settings
 	match key.keycode:
-		KEY_BRACKETLEFT:
-			s.base_hex_size = maxf(4.0, s.base_hex_size / 1.25)
-			_rebuild()
-		KEY_BRACKETRIGHT:
-			s.base_hex_size = minf(200.0, s.base_hex_size * 1.25)
-			_rebuild()
+		KEY_F5:
+			# A new random world from the same terrain.
+			_set_seed(randi() % 1000000)
 		KEY_MINUS:
 			s.height_scale = maxf(0.25, s.height_scale - 0.25)
 			_rebuild()
@@ -146,7 +148,7 @@ func _update_hud() -> void:
 	var src := hex_map.source
 	var s := hex_map.settings
 	var lines := PackedStringArray()
-	lines.append("%s   %d x %d m   (map %d/%d, M = next)" % [src.name, src.world_size.x, src.world_size.y, map_index + 1, map_dirs.size()])
+	lines.append("%s   %d x %d m   (map %d/%d, M = next)   seed %d" % [src.name, src.world_size.x, src.world_size.y, map_index + 1, map_dirs.size(), s.seed])
 	lines.append("Level %d/%d   hex %.1f m   %d x %d = %d cells   %s" % [
 		level.level_index + 1, hex_map.levels.size(), level.hex_size, level.cols, level.rows,
 		level.cell_count(), "auto LOD" if hex_map.auto_lod else "manual LOD"])
@@ -156,7 +158,7 @@ func _update_hud() -> void:
 	lines.append(_describe("Selected", level, selected))
 	lines.append("")
 	lines.append("WASD / arrows / middle-drag: pan    wheel: zoom    Q E / right-drag: rotate    click: select")
-	lines.append("[ ]: hex size    - =: height scale    1-5: force level    0: auto LOD    G: grid    T: trees    H: hide")
+	lines.append("- =: height scale    1-5: force level    0: auto LOD    G: grid    T: trees    H: hide    F5: new seed")
 	lines.append("N: pause/run day cycle    , .: time -/+ 1 h    R: weather (clear / cloudy / rain)    I: resource icons")
 	hud.text = "\n".join(lines)
 
@@ -174,11 +176,15 @@ func _describe(label: String, level: HexLevel, i: int) -> String:
 		text += ", lake"
 	if level.road.size() > i and level.road[i] == 1:
 		text += ", trail"
+	if level.cave.size() > i and level.cave[i] >= 0:
+		text += ", cave entrance"
 	text += ", move cost %.1f" % level.move_cost(i)
 	if level.floodplain[i] == 1:
 		text += ", floodplain" + (" (flooded)" if atmosphere.flood > 0.5 else "")
 	if level.resource[i] != 0:
 		text += ", %s (%s)" % [NaturalResources.display_name(level.resource[i]), ["", "small", "good", "rich"][level.resource_amount[i]]]
+		if level.resource2.size() > i and level.resource2[i] != 0:
+			text += " with %s" % NaturalResources.display_name(level.resource2[i])
 		var dep := level.deposit[i]
 		if dep >= 0 and dep < level.deposits.size():
 			text += " in a %d-hex deposit" % level.deposits[dep].size
@@ -202,6 +208,34 @@ func _setup_hud() -> void:
 	style.set_content_margin_all(10)
 	hud_panel.add_theme_stylebox_override("panel", style)
 	layer.add_child(hud_panel)
+	var box := VBoxContainer.new()
+	hud_panel.add_child(box)
 	hud = Label.new()
 	hud.add_theme_font_size_override("font_size", 14)
-	hud_panel.add_child(hud)
+	box.add_child(hud)
+	# Seed: type a number and press Enter (or F5 for a random one).
+	var row := HBoxContainer.new()
+	box.add_child(row)
+	var label := Label.new()
+	label.text = "Seed:"
+	row.add_child(label)
+	seed_edit = LineEdit.new()
+	seed_edit.custom_minimum_size = Vector2(120, 0)
+	seed_edit.text = str(hex_map.settings.seed)
+	seed_edit.text_submitted.connect(func(t: String) -> void:
+		seed_edit.release_focus()
+		if t.strip_edges().is_valid_int():
+			_set_seed(int(t.strip_edges())))
+	row.add_child(seed_edit)
+	var btn := Button.new()
+	btn.text = "Random"
+	btn.focus_mode = Control.FOCUS_NONE
+	btn.pressed.connect(func() -> void: _set_seed(randi() % 1000000))
+	row.add_child(btn)
+
+
+func _set_seed(s: int) -> void:
+	hex_map.settings.seed = s
+	if seed_edit != null:
+		seed_edit.text = str(s)
+	_rebuild()

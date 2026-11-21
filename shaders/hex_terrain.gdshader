@@ -90,8 +90,33 @@ void vertex() {
 vec4 sample_tex(int i, vec3 p, vec3 tw, bool tri, out vec4 nrm) {
 	float layer = float(i);
 	float sc = 1.0 / tex_size[i];
-	vec4 ay = texture(albedo_array, vec3(p.xz * sc, layer));
-	vec4 ny = texture(normal_array, vec3(p.xz * sc, layer));
+	// Anti-tiling: a second copy of the texture, rotated ~120 degrees and shifted, takes over in
+	// large irregular patches (blended by texture height at the seams), so the repeat never
+	// lines up across a field. Its normals are rotated back to match.
+	vec2 uv = p.xz * sc;
+	float m = smoothstep(0.38, 0.62, env_noise(p.xz * 0.011 + vec2(float(i) * 3.7, float(i) * 1.3)));
+	const float RA = 2.094;
+	mat2 rot = mat2(vec2(cos(RA), sin(RA)), vec2(-sin(RA), cos(RA)));
+	vec4 ay;
+	vec4 ny;
+	if (m < 0.99) {
+		ay = texture(albedo_array, vec3(uv, layer));
+		ny = texture(normal_array, vec3(uv, layer));
+	}
+	if (m > 0.01) {
+		vec2 uv2 = rot * uv + vec2(0.37, 0.71);
+		vec4 a2 = texture(albedo_array, vec3(uv2, layer));
+		vec4 n2 = texture(normal_array, vec3(uv2, layer));
+		n2.xy = (transpose(rot) * (n2.xy * 2.0 - 1.0)) * 0.5 + 0.5;
+		if (m >= 0.99) {
+			ay = a2;
+			ny = n2;
+		} else {
+			float hm = clamp((m - 0.5) * 3.0 + (a2.a - ay.a) * 1.5 + 0.5, 0.0, 1.0);
+			ay = mix(ay, a2, hm);
+			ny = mix(ny, n2, hm);
+		}
+	}
 	vec4 alb = ay;
 	nrm = ny;
 	if (tri) {

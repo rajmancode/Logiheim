@@ -95,8 +95,8 @@ func apply(surface: TerrainSurface) -> void:
 			if near[clampi(roundi(p.y / spacing), 0, nz - 1) * nx + clampi(roundi(p.x / spacing), 0, nx - 1)] == 0:
 				continue
 			var h := surface.heights[i]
-			var warp := Vector2(BorderNoise.value_noise(p * 0.012 + Vector2(4.2, 1.1)) - 0.5,
-				BorderNoise.value_noise(p * 0.012 + Vector2(9.7, 6.3)) - 0.5) * spacing * 1.6
+			var warp := Vector2(BorderNoise.snoise(p * 0.012 + Vector2(4.2, 1.1)) - 0.5,
+				BorderNoise.snoise(p * 0.012 + Vector2(9.7, 6.3)) - 0.5) * spacing * 1.6
 			var q := p + warp
 			var lake_w := smoothstep(0.3, 0.7, _bilinear(soft, q))
 			var level := _nearest(lvl, q)
@@ -254,7 +254,7 @@ func _procedural_lakes(hydro: Hydrology, settings: HexMapSettings) -> void:
 	var lowland: Array = []
 	var highland: Array = []
 	var rng := RandomNumberGenerator.new()
-	rng.seed = 1234
+	rng.seed = MapSeed.mix(1234)
 	for c in n:
 		if not hydro.land(c) or hydro.area[c] < river_area * 0.3 or sea_dist[c] < 100.0:
 			continue

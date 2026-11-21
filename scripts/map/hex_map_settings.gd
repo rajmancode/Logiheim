@@ -2,6 +2,10 @@ class_name HexMapSettings
 extends Resource
 ## Tunable parameters for turning Gaea terrain into a hex map.
 
+## Map seed: the same seed always builds the same world from the same Gaea terrain; another
+## seed gives other lakes, fjords, rivers' courses, wetlands, resources, trails, caves...
+@export var seed := 1
+
 @export_group("Grid")
 ## Circumradius of the finest hexes, in metres.
 @export_range(2.0, 500.0, 0.5, "suffix:m") var base_hex_size := 20.0
@@ -70,7 +74,7 @@ extends Resource
 ## River width in metres where 1 km^2 drains into it. Width grows with the square root of
 ## the catchment, like real rivers (a river draining 4 km^2 is twice as wide).
 @export_range(1.0, 60.0, 0.5) var river_width_scale := 30.0
-@export_range(1.0, 20.0, 0.5) var river_min_width := 4.0
+@export_range(1.0, 20.0, 0.5) var river_min_width := 1.2
 @export_range(5.0, 200.0, 1.0) var river_max_width := 80.0
 ## On coarse levels rivers are drawn at least this fraction of the hex size wide, so they
 ## stay readable from far away.
@@ -115,6 +119,10 @@ extends Resource
 ## Rough distance between settlement spots, and trail width, metres.
 @export var road_spacing := 380.0
 @export var road_width := 3.5
+
+@export_group("Caves")
+## Cave systems in the hills (1-3 entrances each), holding ore, coal, silver or gems.
+@export_range(0, 10) var cave_count := 3
 
 @export_group("Wetlands")
 ## How much bog, swamp and fen forms on flat, damp ground (0 = none).

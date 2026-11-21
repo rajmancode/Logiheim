@@ -26,7 +26,7 @@ func _init(p_source: TerrainSource, p_settings: HexMapSettings) -> void:
 	_forest_noise.noise_type = FastNoiseLite.TYPE_SIMPLEX_SMOOTH
 	_forest_noise.frequency = 1.0 / 220.0
 	_forest_noise.fractal_octaves = 3
-	_forest_noise.seed = 9001
+	_forest_noise.seed = MapSeed.mix(9001)
 
 
 ## World y of the sea surface.

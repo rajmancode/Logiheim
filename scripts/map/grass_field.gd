@@ -24,7 +24,7 @@ static func build(surface: TerrainSurface, settings: HexMapSettings, parent: Nod
 			var o := Vector2(bx, bz) * CHUNK_METRES
 			if not _has_grass(surface, o):
 				continue
-			rng.seed = hash(Vector2i(bx, bz))
+			rng.seed = MapSeed.mix(hash(Vector2i(bx, bz)))
 			var xforms: Array[Transform3D] = []
 			for k in per_chunk:
 				var p := o + Vector2(rng.randf(), rng.randf()) * CHUNK_METRES

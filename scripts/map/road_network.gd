@@ -39,7 +39,7 @@ static func plan(level: HexLevel, surface: TerrainSurface, settings: HexMapSetti
 			blocked[i] = 1
 	# Settlement spots.
 	var rng := RandomNumberGenerator.new()
-	rng.seed = 5150
+	rng.seed = MapSeed.mix(5150)
 	var cands: Array = []
 	for i in n:
 		var t := level.terrain[i]
@@ -234,7 +234,7 @@ func _shape(level: HexLevel, surface: TerrainSurface, cells: PackedInt32Array) -
 		if k > 0 and k < cells.size() - 1:
 			var d := (level.cell_center(cells[k + 1]) - level.cell_center(cells[k - 1])).normalized()
 			var side := Vector2(-d.y, d.x)
-			c += side * (BorderNoise.value_noise(c * 0.05) - 0.5) * level.hex_size * 0.7
+			c += side * (BorderNoise.snoise(c * 0.05) - 0.5) * level.hex_size * 0.7
 		pts.append(c)
 	for it in 4:
 		if pts.size() < 3:

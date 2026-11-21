@@ -22,11 +22,13 @@ uniform float grid_fade_start = 2500.0;
 varying vec3 v_world_pos;
 varying float v_edge;
 uniform bool edge_alpha = false;   // lakes: COLOR.a fades the water out at open mesh edges
+uniform float surf = 1.0;          // breakers rolling onto the shore (sea only)
+uniform float surf_period = 8.0;   // seconds between sets of breakers
 
 float waves(vec2 p, float t) {
 	vec2 d1 = wind_direction;
 	vec2 d2 = vec2(-wind_direction.y, wind_direction.x) * 0.7 + wind_direction * 0.7;
-	return sin(dot(p, d1) * 0.045 + t * 1.3) * 0.6 + sin(dot(p, d2) * 0.07 + t * 1.9) * 0.4;
+	return sin(dot(p, d1) * 0.045 + t * 0.45) * 0.6 + sin(dot(p, d2) * 0.07 + t * 0.6) * 0.4;
 }
 
 void vertex() {
@@ -39,9 +41,9 @@ void vertex() {
 
 void fragment() {
 	// Small ripples from two scrolling normal maps, drifting with the wind.
-	vec2 drift = wind_direction * wind_time * 0.04;
-	vec2 uv1 = v_world_pos.xz * wave_scale - drift + TIME * vec2(0.004, 0.002);
-	vec2 uv2 = v_world_pos.xz * wave_scale * 2.3 - drift * 1.7 - TIME * vec2(0.003, 0.006);
+	vec2 drift = wind_direction * wind_time * 0.012;
+	vec2 uv1 = v_world_pos.xz * wave_scale - drift + TIME * vec2(0.0015, 0.0008);
+	vec2 uv2 = v_world_pos.xz * wave_scale * 2.3 - drift * 1.7 - TIME * vec2(0.001, 0.002);
 	vec3 n1 = texture(wave_normal, uv1).xyz * 2.0 - 1.0;
 	vec3 n2 = texture(wave_normal, uv2).xyz * 2.0 - 1.0;
 	vec2 ripple = (n1.xy + n2.xy) * (0.25 + 0.5 * wind_strength);
@@ -64,11 +66,35 @@ void fragment() {
 	vec3 col = mix(water, floor_col * mix(vec3(1.0), shallow_color * 2.2, 0.35), see);
 
 	// Shoreline foam that laps in and out, plus whitecaps in strong wind.
-	float lap = 0.5 + 0.5 * sin(TIME * 1.4 - depth * 2.5);
+	float lap = 0.5 + 0.5 * sin(TIME * 0.7 - depth * 2.5);
 	float foam_noise = env_noise(v_world_pos.xz * 0.35 + drift * 8.0) * 0.6 + env_noise(v_world_pos.xz * 1.1 - drift * 5.0) * 0.4;
 	float shore = 1.0 - smoothstep(0.0, foam_width * (0.6 + 0.6 * lap), depth);
 	float caps = smoothstep(0.78, 0.95, foam_noise) * smoothstep(0.55, 1.0, wind_strength);
 	float foam = clamp(shore * smoothstep(0.3, 0.7, foam_noise + shore * 0.3) + caps * 0.6, 0.0, 1.0);
+	// Breakers: lines of swell come in from ~5 m depth, steepen and whiten as the water shoals,
+	// break at the shore and run up as a sheet of foam that drains away. Two staggered sets,
+	// the timing drifting along the coast so the whole shore doesn't break at once.
+	if (surf > 0.0 && depth < 7.0) {
+		float ph = TIME / surf_period + env_noise(v_world_pos.xz * 0.004) * 0.8;
+		float breakers = 0.0;
+		float swash = 0.0;
+		for (int k = 0; k < 2; k++) {
+			float c = fract(ph + float(k) * 0.5);
+			float front = mix(5.0, -0.2, c * c * (3.0 - 2.0 * c));
+			float w = 0.18 + 0.55 * c;
+			float line = exp(-pow((depth - front) / w, 2.0));
+			float whiten = smoothstep(0.3, 0.75, c);
+			float crest = smoothstep(0.25, 0.65, env_noise(v_world_pos.xz * 0.12 + vec2(float(k) * 7.0, TIME * 0.04)));
+			breakers += line * mix(0.2, 1.0, whiten) * mix(0.5, 1.0, crest);
+			// After breaking: foam sheet over the shallowest water, fading as it drains.
+			float drain = smoothstep(0.75, 0.85, c) * (1.0 - smoothstep(0.85, 1.0, c));
+			swash += drain * (1.0 - smoothstep(0.0, 0.8, depth)) * smoothstep(0.3, 0.7, foam_noise);
+		}
+		float surf_foam = clamp(breakers + swash, 0.0, 1.0) * surf * smoothstep(7.0, 2.0, depth);
+		foam = max(foam, surf_foam);
+		// The face of a breaker catches the light a little.
+		col *= 1.0 + 0.15 * breakers * surf;
+	}
 	col = mix(col, vec3(0.92, 0.95, 0.96), foam);
 
 	col *= cloud_shadow(v_world_pos);

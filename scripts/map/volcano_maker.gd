@@ -3,7 +3,9 @@ extends RefCounted
 ## Volcanoes: a cone with radial gullies and a crater, built up on the land before water is
 ## routed (so rivers run off its flanks), with basalt around it.
 ##
-## plan() picks an inland spot on the finest level (land all around, away from the sea).
+## plan() picks an inland spot on the finest level where a whole cone fits: its footprint
+## (out to 1.3 radii) is land inside the map, and the ground under it is even enough to build
+## on (not a jumble of mountains). If nowhere fits, the map gets no volcano.
 ## apply() raises the cone on any level's TerrainSurface and writes `surface.volcanic`
 ## (0..1): the bare basalt and ash of the cone, plus old lava flows streaking down and out
 ## over the land. The terrain shader turns that into dark basalt, with columnar jointing on
@@ -27,29 +29,37 @@ static func plan(surface: TerrainSurface, settings: HexMapSettings) -> VolcanoMa
 	var size := Vector2((surface.nx - 1) * surface.spacing, (surface.nz - 1) * surface.spacing)
 	var R := settings.volcano_radius
 	var rng := RandomNumberGenerator.new()
-	rng.seed = 7171
+	rng.seed = MapSeed.mix(7171)
 	var cands: Array = []
 	var step := 40.0
-	var z := R
-	while z < size.y - R:
-		var x := R
-		while x < size.x - R:
+	var margin := R * 1.3
+	var z := margin
+	while z < size.y - margin:
+		var x := margin
+		while x < size.x - margin:
 			var c := Vector2(x, z)
-			# Land all the way round, at the foot and half way up.
+			# Land all the way round (foot, flanks and 30% beyond), and even ground under it.
 			var ok := surface.sample(c) > surface.sea_y + 3.0
 			var ring := 0.0
-			for k in 12:
-				var d := Vector2.from_angle(TAU * k / 12.0)
-				var a := surface.sample(c + d * R * 1.05)
-				var b := surface.sample(c + d * R * 0.5)
-				if a < surface.sea_y + 2.0 or b < surface.sea_y + 2.0:
-					ok = false
+			var lo := INF
+			var hi := -INF
+			for k in 16:
+				var d := Vector2.from_angle(TAU * k / 16.0)
+				for f in [0.5, 1.05, 1.3]:
+					var hh := surface.sample(c + d * R * f)
+					if hh < surface.sea_y + 2.0:
+						ok = false
+					lo = minf(lo, hh)
+					hi = maxf(hi, hh)
+				if not ok:
 					break
-				ring += a
+				ring += surface.sample(c + d * R * 1.05)
+			if ok and hi - lo > settings.volcano_height * 0.8:
+				ok = false
 			if ok:
-				ring /= 12.0
+				ring /= 16.0
 				# Prefer moderate ground (not the very top of the mountains), a little random.
-				cands.append([ring - surface.sea_y + rng.randf() * 25.0, c, ring])
+				cands.append([ring - surface.sea_y + rng.randf() * 80.0, c, ring])
 			x += step
 		z += step
 	cands.sort_custom(func(a, b): return a[0] > b[0])
@@ -102,10 +112,10 @@ func apply(surface: TerrainSurface) -> void:
 					if r > rc:
 						f = pow((R - r) / (R - rc), 1.7)
 						# Radial gullies and ribs down the flanks.
-						var g := absf(BorderNoise.value_noise(dir * 9.0 + Vector2(r * 0.004, 1.3)) - 0.5) * 2.0
+						var g := absf(BorderNoise.snoise(dir * 9.0 + Vector2(r * 0.004, 1.3)) - 0.5) * 2.0
 						f *= 1.0 - 0.15 * (1.0 - g) * smoothstep(rc * 1.2, rc * 2.5, r)
 						# Rough, blocky lava surface.
-						f += (BorderNoise.value_noise(p * 0.06) - 0.5) * 2.4 / H + (BorderNoise.value_noise(p * 0.017 + Vector2(3.0, 9.0)) - 0.5) * 7.0 / H
+						f += (BorderNoise.snoise(p * 0.06) - 0.5) * 2.4 / H + (BorderNoise.snoise(p * 0.017 + Vector2(3.0, 9.0)) - 0.5) * 7.0 / H
 					else:
 						f = 1.0 - depth / H * (1.0 - (r / rc) * (r / rc))
 					var target := base + H * f
@@ -116,7 +126,7 @@ func apply(surface: TerrainSurface) -> void:
 					surface.heights[i] = h
 				# Volcanic ground: the cone itself, and old lava flows reaching out over the land.
 				var cone := 1.0 - smoothstep(R * 0.7, R * 1.1, r)
-				var flow := smoothstep(0.6, 0.72, BorderNoise.value_noise(dir * 5.0 + Vector2(7.1, 3.3) + Vector2(r * 0.0015, 0.0)))
+				var flow := smoothstep(0.6, 0.72, BorderNoise.snoise(dir * 5.0 + Vector2(7.1, 3.3) + Vector2(r * 0.0015, 0.0)))
 				flow *= 1.0 - smoothstep(R * 1.1, reach, r)
 				surface.volcanic[i] = maxf(surface.volcanic[i], maxf(cone, flow * 0.85))
 

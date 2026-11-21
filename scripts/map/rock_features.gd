@@ -14,7 +14,7 @@ static func build(level: HexLevel, surface: TerrainSurface, settings: HexMapSett
 	if settings.overhang_spacing <= 0.0:
 		return
 	var rng := RandomNumberGenerator.new()
-	rng.seed = 4242 + level.level_index
+	rng.seed = MapSeed.mix(4242 + level.level_index)
 	var cap := maxf(settings.max_slope, 0.3)
 	var grid := maxi(1, int(8.0 / surface.spacing))
 	# Crest candidates: as steep as the ground may get, on the convex upper edge.
@@ -60,7 +60,8 @@ static func build(level: HexLevel, surface: TerrainSurface, settings: HexMapSett
 			var q := p + off
 			var deep := rng.randf_range(12.0, 20.0)
 			var thick := rng.randf_range(4.0, 8.0)
-			var top := surface.sample(q)
+			# Anchored in the crest: the back half of the slab is set into the ground.
+			var top := minf(surface.sample(q), surface.sample(q - down * deep * 0.2))
 			var basis := Basis(x_axis * deep, Vector3.UP * thick * 2.8, z_axis * wide * rng.randf_range(0.75, 1.1))
 			basis = Basis(z_axis, rng.randf_range(-0.14, 0.04)) * Basis(Vector3.UP, rng.randf_range(-0.2, 0.2)) * basis
 			var pos := Vector3(q.x, top - thick * 0.4, q.y) + x_axis * deep * 0.25
@@ -78,7 +79,7 @@ static func build(level: HexLevel, surface: TerrainSurface, settings: HexMapSett
 				continue
 			var size := rng.randf_range(1.5, 5.0)
 			var bb := Basis(Vector3.UP, rng.randf() * TAU).scaled(Vector3(size * rng.randf_range(0.8, 1.3), size * rng.randf_range(0.6, 1.0), size * rng.randf_range(0.8, 1.3)))
-			_add(items, BOULDERS[rng.randi() % BOULDERS.size()], Transform3D(bb, Vector3(bp.x, surface.sample(bp) - size * 0.15, bp.y)), Color(1, 1, 1, surface.volcanic_at(bp)))
+			_add(items, BOULDERS[rng.randi() % BOULDERS.size()], Transform3D(bb, Vector3(bp.x, surface.ground_min(bp, size * 0.6) - size * 0.12, bp.y)), Color(1, 1, 1, surface.volcanic_at(bp)))
 	for model: String in items:
 		var m := Vegetation.mesh(model)
 		if m == null:

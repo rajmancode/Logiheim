@@ -48,6 +48,7 @@ static func lake_material(wave_normal: Texture2D) -> ShaderMaterial:
 	mat.set_shader_parameter("foam_width", 0.6)
 	mat.set_shader_parameter("wave_height", 0.04)
 	mat.set_shader_parameter("edge_alpha", true)
+	mat.set_shader_parameter("surf", 0.0)
 	return mat
 
 
@@ -134,7 +135,7 @@ static func _make_delta(c: Dictionary, hydro: Hydrology, settings: HexMapSetting
 	var branches := clampi(int(along / (w_end * 5.0)) + 1, 2, settings.delta_max_branches)
 	var spread := 0.85
 	var rng := RandomNumberGenerator.new()
-	rng.seed = hash(start)
+	rng.seed = MapSeed.mix(hash(start))
 	var out: Array = []
 	for b in branches:
 		var ang := lerpf(-spread, spread, float(b) / (branches - 1)) + rng.randf_range(-0.12, 0.12)
@@ -150,7 +151,7 @@ static func _make_delta(c: Dictionary, hydro: Hydrology, settings: HexMapSetting
 			var grad := Vector2(hydro.filled_at(p + Vector2(e, 0)) - hydro.filled_at(p - Vector2(e, 0)),
 				hydro.filled_at(p + Vector2(0, e)) - hydro.filled_at(p - Vector2(0, e)))
 			var down := -grad.normalized() if grad.length() > 1e-4 else dir
-			var wander := BorderNoise.value_noise(p * 0.02 + Vector2(b * 7.3, 1.7)) - 0.5
+			var wander := BorderNoise.snoise(p * 0.02 + Vector2(b * 7.3, 1.7)) - 0.5
 			dir = (dir * 0.8 + down * 0.2).normalized().rotated(wander * 0.25)
 			p += dir * step
 			bp.append(p)
@@ -209,7 +210,7 @@ static func _meander(pts: PackedVector2Array, areas: PackedFloat32Array, hydro: 
 	if total <= 0.0:
 		return [pts, areas]
 	var step := clampf(width_for(areas[0], settings) * 0.5, 1.0, hydro.spacing * 0.5)
-	var phase := float(hash(pts[0]) % 1000) / 1000.0 * TAU
+	var phase := float(absi(MapSeed.mix(hash(pts[0]))) % 1000) / 1000.0 * TAU
 	var along := 0.0
 	var k := 0
 	var seg_start := 0.0
@@ -230,11 +231,11 @@ static func _meander(pts: PackedVector2Array, areas: PackedFloat32Array, hydro: 
 		var slope := absf(hydro.filled_at(p - dir * probe) - hydro.filled_at(p + dir * probe)) / (2.0 * probe)
 		var flat := 1.0 - smoothstep(0.004, 0.035, slope)
 		var taper := smoothstep(0.0, w * 6.0, along) * smoothstep(0.0, w * 6.0, total - along)
-		var wavelength := 12.0 * w * (0.8 + 0.4 * BorderNoise.value_noise(p * 0.004))
+		var wavelength := 12.0 * w * (0.8 + 0.4 * BorderNoise.snoise(p * 0.004))
 		phase += step * TAU / wavelength
 		var amp := w * 1.3 * settings.river_meander * flat * taper
-		var seed_v := float(hash(pts[0]) % 997)
-		var wander := (BorderNoise.value_noise(Vector2(along * 0.011, seed_v)) - 0.5) * 2.0 			+ (BorderNoise.value_noise(Vector2(along * 0.032, seed_v + 31.0)) - 0.5) * 0.8
+		var seed_v := float(absi(MapSeed.mix(hash(pts[0]))) % 997)
+		var wander := (BorderNoise.snoise(Vector2(along * 0.011, seed_v)) - 0.5) * 2.0 			+ (BorderNoise.snoise(Vector2(along * 0.032, seed_v + 31.0)) - 0.5) * 0.8
 		var w_taper := smoothstep(0.0, 40.0, along) * smoothstep(0.0, 40.0, total - along)
 		var w_amp := maxf(w * 1.5, 9.0) * settings.river_meander * w_taper * (1.0 - 0.4 * flat)
 		out_p.append(p + side * (sin(phase) * amp + wander * w_amp))
@@ -304,7 +305,12 @@ static func place(all: Array, level: HexLevel, surface: TerrainSurface, hydro: H
 		for k in n:
 			if k > 0:
 				along += pts[k].distance_to(pts[k - 1])
-			var w := maxf(width_for(areas[k], settings), min_w)
+			var w := width_for(areas[k], settings)
+			# Rivers are born thin: from a trickle at the source, widening over the first
+			# few hundred metres (delta branches start from a full river, so not those).
+			if not (c.get("delta", false) and c.to_sea):
+				w *= lerpf(0.25, 1.0, smoothstep(0.0, 300.0, along))
+			w = maxf(w, min_w)
 			if c.to_sea and not c.get("delta", false):
 				w *= lerpf(1.0, 1.8, smoothstep(total * 0.75, total, along))
 			var y := hydro.filled_at(pts[k]) - depth_for(w) * 0.25

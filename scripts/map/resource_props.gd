@@ -79,27 +79,64 @@ static func build(level: HexLevel, surface: TerrainSurface, hydro: Hydrology, pa
 	var items: Dictionary = {}        # model -> [[Transform3D], [Color]]
 	var fields := MeshData.new()
 	var shoals := MeshData.new()
+	# Every resource in a hex: its main one, plus a companion where two naturally go together
+	# (deer in timber, peat with bog iron...); companions get a smaller share of props.
+	var entries: Array = []
+	var has2 := level.resource2.size() == level.cell_count()
+	var has_cave := level.cave.size() == level.cell_count()
 	for i in level.cell_count():
-		var kind := level.resource[i]
-		if kind == 0 or not PROPS.has(kind):
+		# Cave resources are inside the hill: nothing to show outside but the mouth.
+		if has_cave and level.cave[i] >= 0:
+			continue
+		if level.resource[i] != 0:
+			entries.append([i, level.resource[i], level.resource_amount[i], false])
+		if has2 and level.resource2[i] != 0:
+			entries.append([i, level.resource2[i], 2, true])
+	# Props of different resources never land on top of each other: [pos, radius, kind].
+	var occ: Array = []
+	for e: Array in entries:
+		var i: int = e[0]
+		var kind: int = e[1]
+		if not PROPS.has(kind):
 			continue
 		var def: Array = PROPS[kind]
 		var model: String = def[0]
-		var amount := level.resource_amount[i]
+		var amount: int = e[2]
 		# Every hex of a deposit gets props; herds graze its richer hexes.
 		if def[4] and amount < 2:
 			continue
-		rng.seed = hash(Vector3i(level.coords[i].x, level.coords[i].y, 4111 + level.level_index))
+		rng.seed = MapSeed.mix(hash(Vector3i(level.coords[i].x, level.coords[i].y, 4111 + level.level_index + kind * 97)))
 		var c := level.cell_center(i)
 		var count := rng.randi_range(def[1], def[2]) + (amount - 1)
 		if def[4]:
 			count = rng.randi_range(def[1], def[2]) + (amount - 2) * 3
 		elif NaturalResources.INFO[kind][7] >= 6 and amount == 1:
 			count = maxi(1, count / 2)  # thin edges of big deposits
+		if e[3]:
+			count = maxi(1, int(def[1]))
 		var herd_spot := _spot(def[3], c, s, surface, hydro, rng)
+		if def[4] and herd_spot.x != INF:
+			var hr := s * 0.3 * sqrt(scale)
+			if not _free(occ, herd_spot, hr, kind):
+				herd_spot = _spot(def[3], c, s, surface, hydro, rng)
+				if herd_spot.x != INF and not _free(occ, herd_spot, hr, kind):
+					herd_spot = Vector2(INF, INF)
+			if herd_spot.x != INF:
+				occ.append([herd_spot, hr, kind])
 		var base_model := model
+		var pr := _prop_radius(base_model, s, scale)
 		for k in count:
-			var p: Vector2 = herd_spot if def[4] else _spot(def[3], c, s, surface, hydro, rng)
+			var p := Vector2(INF, INF)
+			if def[4]:
+				p = herd_spot
+			else:
+				for attempt in 4:
+					var q := _spot(def[3], c, s, surface, hydro, rng)
+					if q.x != INF and _free(occ, q, pr, kind):
+						p = q
+						break
+				if p.x != INF:
+					occ.append([p, pr, kind])
 			if p.x == INF:
 				continue
 			if def[4]:
@@ -115,7 +152,7 @@ static func build(level: HexLevel, surface: TerrainSurface, hydro: Hydrology, pa
 					var r := s * 0.3 * rng.randf_range(0.7, 1.2)
 					_add_quad(shoals, Vector3(p.x, wy + 0.06, p.y), r)
 				_:
-					var y := _water_level(p, surface, hydro) if def[3] == "deep" else surface.sample(p)
+					var y := _water_level(p, surface, hydro) if def[3] == "deep" else surface.ground_min(p, scale * PROP_BOOST * 1.2)
 					var size := scale * rng.randf_range(0.85, 1.2)
 					var custom := Color.WHITE
 					if model.begins_with("a:"):
@@ -144,7 +181,7 @@ static func build(level: HexLevel, surface: TerrainSurface, hydro: Hydrology, pa
 						basis = basis.scaled(Vector3.ONE * size)
 						_add(items, model, Transform3D(basis, Vector3(p.x, y - 0.05 * size, p.y)), custom)
 
-	_wetland_plants(surface, items, scale, level.level_index)
+	_wetland_plants(surface, items, scale, level.level_index, occ)
 
 	for model: String in items:
 		var m := _mesh(model)
@@ -189,7 +226,7 @@ static func build_ground(level: HexLevel, surface: TerrainSurface, parent: Node3
 	var uvs := PackedVector2Array()
 	for i in level.cell_count():
 		var kind := level.resource[i]
-		if not PATCH.has(kind):
+		if not PATCH.has(kind) or (level.cave.size() == level.cell_count() and level.cave[i] >= 0):
 			continue
 		var c := level.cell_center(i)
 		var tint: Color = PATCH[kind]
@@ -313,13 +350,36 @@ static func build_outlines(level: HexLevel, surface: TerrainSurface, sea_y: floa
 	return mi
 
 
+## True if a prop of `kind` with radius r at p doesn't overlap a prop of another resource.
+static func _free(occ: Array, p: Vector2, r: float, kind: int) -> bool:
+	for o: Array in occ:
+		if o[2] != kind and (o[0] as Vector2).distance_to(p) < r + float(o[1]):
+			return false
+	return true
+
+
+## Rough footprint radius of one prop, metres.
+static func _prop_radius(model: String, s: float, scale: float) -> float:
+	if model == "@field":
+		return s * 0.45
+	if model == "@shoal":
+		return s * 0.3
+	if model.begins_with("a:"):
+		return scale * 1.5
+	if model == "@broadleaf_b":
+		return 4.0
+	return scale * PROP_BOOST * float(PROP_SIZE.get(model, 1.0)) * 1.2
+
+
 ## Picks a spot in the hex that suits the resource. Returns Vector2(INF, INF) if none.
 static func _spot(kind: String, c: Vector2, s: float, surface: TerrainSurface, hydro: Hydrology, rng: RandomNumberGenerator) -> Vector2:
 	var best := Vector2(INF, INF)
 	var best_score := -INF
 	for attempt in 14:
-		var p := c + Vector2(rng.randf_range(-s, s), rng.randf_range(-s, s)) * 0.85
-		if not HexCoords.contains(p - c, s * 0.9):
+		var p := c + Vector2(rng.randf_range(-s, s), rng.randf_range(-s, s)) * 0.75
+		if not HexCoords.contains(p - c, s * 0.8):
+			continue
+		if kind != "water" and kind != "deep" and surface.normal_at(p).y < 0.8:
 			continue
 		var h := surface.sample(p)
 		var water := hydro != null and hydro.lake_at(p) >= 0
@@ -370,7 +430,7 @@ static func _add_field(data: MeshData, center: Vector2, s: float, surface: Terra
 	var radii := PackedFloat32Array()
 	for k in SIDES:
 		var a := TAU * k / SIDES
-		var wob := BorderNoise.value_noise(Vector2(cos(a), sin(a)) * 1.6 + Vector2(seed_v, 2.0))
+		var wob := BorderNoise.snoise(Vector2(cos(a), sin(a)) * 1.6 + Vector2(seed_v, 2.0))
 		radii.append(r0 * (0.7 + 0.55 * wob))
 	# Points: centre, then rings outwards.
 	var pts: Array[Vector3] = []
@@ -404,11 +464,11 @@ static func _add_field(data: MeshData, center: Vector2, s: float, surface: Terra
 
 ## Reed clumps and sedge tussocks scattered over lowland wetland (bogs up high stay open,
 ## with the odd tussock).
-static func _wetland_plants(surface: TerrainSurface, items: Dictionary, scale: float, level_index: int) -> void:
+static func _wetland_plants(surface: TerrainSurface, items: Dictionary, scale: float, level_index: int, occ: Array) -> void:
 	if surface.wetland.is_empty():
 		return
 	var rng := RandomNumberGenerator.new()
-	rng.seed = 90210 + level_index
+	rng.seed = MapSeed.mix(90210 + level_index)
 	var step := 9.0 * (1.0 + level_index * 1.5)
 	var y := 0.0
 	var gz := 0.0
@@ -418,7 +478,7 @@ static func _wetland_plants(surface: TerrainSurface, items: Dictionary, scale: f
 			var p := Vector2(gx + rng.randf_range(-0.45, 0.45) * step, gz + rng.randf_range(-0.45, 0.45) * step)
 			gx += step
 			var w := surface.wetland_at(p)
-			if w < 0.45 or rng.randf() > w * 0.55:
+			if w < 0.45 or rng.randf() > w * 0.55 or not _free(occ, p, 2.0, -1):
 				continue
 			var h := surface.sample(p)
 			var upland := smoothstep(30.0, 70.0, h - surface.sea_y)
