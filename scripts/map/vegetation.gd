@@ -160,7 +160,7 @@ static func _place_rock(items: Dictionary, surface: TerrainSurface, c: Vector2, 
 	basis = Basis(tilt) * basis
 	basis = basis.scaled(Vector3(size * rng.randf_range(0.8, 1.3), size * rng.randf_range(0.6, 1.0), size * rng.randf_range(0.8, 1.3)))
 	# Seated on the lowest ground under it (sunk a little), so it never floats on a slope.
-	var y := surface.ground_min(p, size * 0.55) - size * 0.1
+	var y := surface.ground_min(p, size * 0.7) - size * 0.12
 	# Alpha = basalt: boulders on and around the volcano are dark basalt.
 	_add(items, ROCKS[rng.randi() % ROCKS.size()], Transform3D(basis, Vector3(p.x, y, p.y)), Color(1, 1, 1, surface.volcanic_at(p)))
 

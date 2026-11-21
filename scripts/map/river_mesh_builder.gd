@@ -552,6 +552,20 @@ static func _ribbon(path: RiverPath, verts: PackedVector3Array, normals: PackedV
 		for q in range(f, mini(f + 3, n)):
 			turb[q] = maxf(turb[q], 1.0 if q <= f + 1 else 0.8)
 			speed[q] = maxf(speed[q], 5.0)
+	# At the sea the river fades into it over its last couple of widths (COLOR.g), so the
+	# ribbon never shows as a flat slab over the waves.
+	var fade := PackedFloat32Array()
+	fade.resize(n)
+	fade.fill(1.0)
+	if path.to_sea:
+		var from_end := 0.0
+		var reach := maxf(path.widths[n - 1] * 2.5, 12.0)
+		for k in range(n - 1, -1, -1):
+			if k < n - 1:
+				from_end += path.points[k].distance_to(path.points[k + 1])
+			fade[k] = smoothstep(0.0, reach, from_end)
+			if from_end > reach:
+				break
 	var base := verts.size()
 	for k in n:
 		var a := path.points[maxi(k - 1, 0)]
@@ -569,7 +583,7 @@ static func _ribbon(path: RiverPath, verts: PackedVector3Array, normals: PackedV
 		for e in 2:
 			normals.append(nrm)
 			uv2s.append(Vector2(turb[k], path.widths[k]))
-			colors.append(Color(speed[k] / 6.0, 0.0, 0.0))
+			colors.append(Color(speed[k] / 6.0, fade[k], 0.0))
 		uvs.append(Vector2(0.0, path.dist[k]))
 		uvs.append(Vector2(1.0, path.dist[k]))
 	for k in n - 1:

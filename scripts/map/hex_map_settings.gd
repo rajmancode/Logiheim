@@ -30,8 +30,8 @@ extends Resource
 ## Island shape: land height above the sea is scaled by distance from the coast, from
 ## coast_height at the shore to inland_height `coast_reach` metres inland - low-lying coasts,
 ## hilly heart. 1 and 1 leave the Gaea terrain as it is.
-@export_range(0.1, 1.5, 0.05) var coast_height := 0.35
-@export_range(0.5, 2.0, 0.05) var inland_height := 1.2
+@export_range(0.1, 1.5, 0.05) var coast_height := 0.3
+@export_range(0.5, 2.0, 0.05) var inland_height := 0.8
 @export var coast_reach := 400.0
 ## Rock overhangs jutting from the steepest crests, at most one per this many metres (0 = none).
 @export var overhang_spacing := 90.0
@@ -129,6 +129,10 @@ extends Resource
 @export_group("Caves")
 ## Cave systems in the hills (1-3 entrances each), holding ore, coal, silver or gems.
 @export_range(0, 10) var cave_count := 3
+@export_group("Landforms")
+## Coastal landforms (beaches, cliffs, sea stacks, spits, a lagoon, a tombolo, an atoll) and
+## oxbow lakes, each only where the map has room for it.
+@export var landforms_enabled := true
 
 @export_group("Wetlands")
 ## How much bog, swamp and fen forms on flat, damp ground (0 = none).
@@ -138,7 +142,7 @@ extends Resource
 ## Volcanic cones placed inland, with a crater, lava, smoke and basalt around them.
 @export_range(0, 3) var volcano_count := 1
 @export var volcano_radius := 380.0
-@export var volcano_height := 150.0
+@export var volcano_height := 105.0
 
 @export_group("Floodplains")
 @export var floodplains_enabled := true

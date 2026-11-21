@@ -1,9 +1,9 @@
 class_name RockFeatures
 extends RefCounted
-## Overhangs and talus. A height grid can't hang over itself, so overhangs are rock: wide,
-## flat, fractured slabs (the Blender boulders, stretched) set into the crest of the steepest
-## slopes and jutting out over them, like a ledge of harder rock the slope below has worn back
-## from. Below each, the rock that has already fallen: a spill of boulders at the foot.
+## Rock bands and talus. Wide, flat, fractured slabs (the Blender boulders, stretched) break
+## out of the steepest slopes just below the crest: each lies along the slope, half buried and
+## seated so no edge hangs in the air, standing proud as a low step like a band of harder rock.
+## Below each, the rock that has already fallen: a spill of boulders at the foot.
 ## Uses the boulder shader (photo-scanned rock, moss on top; basalt near the volcano).
 
 const SLABS := ["rock_d", "rock_e", "rock_b"]
@@ -50,21 +50,27 @@ static func build(level: HexLevel, surface: TerrainSurface, settings: HexMapSett
 		var along := Vector2(-down.y, down.x)
 		var crest := surface.sample(p)
 		var basalt := surface.volcanic_at(p)
-		# A ledge of two or three slabs along the crest, deep enough to jut well out over the
-		# slope, each a little tilted and offset like a broken band of harder rock.
+		# A band of two or three slabs of harder rock breaking out of the slope below the crest:
+		# each lies along the slope, its lower half buried, so it stands proud of the surface
+		# (a low step on its downhill face) without hanging in the air.
 		var wide := rng.randf_range(16.0, 28.0)
 		var x_axis := Vector3(down.x, 0, down.y)
 		var z_axis := Vector3(along.x, 0, along.y)
 		for s in rng.randi_range(2, 3):
 			var off := along * (s - 1) * wide * 0.7 + down * rng.randf_range(-2.0, 2.0)
 			var q := p + off
-			var deep := rng.randf_range(12.0, 20.0)
-			var thick := rng.randf_range(4.0, 8.0)
-			# Anchored in the crest: the back half of the slab is set into the ground.
-			var top := minf(surface.sample(q), surface.sample(q - down * deep * 0.2))
-			var basis := Basis(x_axis * deep, Vector3.UP * thick * 2.8, z_axis * wide * rng.randf_range(0.75, 1.1))
-			basis = Basis(z_axis, rng.randf_range(-0.14, 0.04)) * Basis(Vector3.UP, rng.randf_range(-0.2, 0.2)) * basis
-			var pos := Vector3(q.x, top - thick * 0.4, q.y) + x_axis * deep * 0.25
+			q += down * rng.randf_range(3.0, 7.0)
+			var deep := rng.randf_range(10.0, 16.0)
+			var thick := rng.randf_range(3.0, 6.0)
+			var span := wide * rng.randf_range(0.75, 1.1)
+			var gq := _gradient(surface, q)
+			# Tilt with the slope (a touch shallower, so the downhill edge stands out as a low step).
+			var slope_dir := gq.dot(down)
+			var tilt := atan(slope_dir) * 0.9
+			var basis := Basis(x_axis * deep, Vector3.UP * thick * 2.8, z_axis * span)
+			basis = Basis(z_axis, tilt + rng.randf_range(-0.06, 0.06)) * Basis(Vector3.UP, rng.randf_range(-0.2, 0.2)) * basis
+			var seat := surface.seat_on_slope(q, gq, down, deep * 0.5, span * 0.45)
+			var pos := Vector3(q.x, seat + thick * 0.1, q.y)
 			_add(items, SLABS[rng.randi() % SLABS.size()], Transform3D(basis, pos), Color(1, 1, 1, basalt))
 		# Talus: walk downhill to where the slope eases, scatter fallen boulders there.
 		var foot := p
@@ -79,7 +85,7 @@ static func build(level: HexLevel, surface: TerrainSurface, settings: HexMapSett
 				continue
 			var size := rng.randf_range(1.5, 5.0)
 			var bb := Basis(Vector3.UP, rng.randf() * TAU).scaled(Vector3(size * rng.randf_range(0.8, 1.3), size * rng.randf_range(0.6, 1.0), size * rng.randf_range(0.8, 1.3)))
-			_add(items, BOULDERS[rng.randi() % BOULDERS.size()], Transform3D(bb, Vector3(bp.x, surface.ground_min(bp, size * 0.6) - size * 0.12, bp.y)), Color(1, 1, 1, surface.volcanic_at(bp)))
+			_add(items, BOULDERS[rng.randi() % BOULDERS.size()], Transform3D(bb, Vector3(bp.x, surface.ground_min(bp, size * 0.7) - size * 0.08, bp.y)), Color(1, 1, 1, surface.volcanic_at(bp)))
 	for model: String in items:
 		var m := Vegetation.mesh(model)
 		if m == null:

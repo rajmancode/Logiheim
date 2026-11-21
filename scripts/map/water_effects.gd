@@ -82,6 +82,94 @@ static func build_shore_spray(surface: TerrainSurface, parent: Node3D) -> void:
 	print("WaterEffects: %d shore spray points" % picked.size())
 
 
+## Where a river runs into the sea or a lake: the current meets standing water and churns -
+## low bursts of spray and droplets across the mouth, stronger for wide, fast rivers.
+static func build_river_mouths(paths: Array[RiverPath], hydro: Hydrology, surface: TerrainSurface, parent: Node3D) -> void:
+	var made := 0
+	for path in paths:
+		var n := path.points.size()
+		if n < 2:
+			continue
+		var q := path.points[n - 1]
+		var prev := path.points[n - 2]
+		var dir := Vector3(q.x - prev.x, 0.0, q.z - prev.z).normalized()
+		var w := path.widths[n - 1]
+		var ahead := Vector2(q.x + dir.x * (w + 3.0), q.z + dir.z * (w + 3.0))
+		var water_y := 0.0
+		if path.to_sea:
+			water_y = surface.sea_y
+		elif hydro != null and hydro.lake_at(ahead) >= 0:
+			water_y = hydro.lake_level[hydro.lake_at(ahead)]
+		else:
+			continue
+		var speed := path.speeds[n - 1] if path.speeds.size() == n else 1.0
+		var strength := clampf(w / 12.0, 0.25, 1.5) * clampf(0.6 + speed * 0.4, 0.6, 1.6)
+		var pos := Vector3(q.x, water_y + 0.15, q.z)
+		# Droplets kicked up across the mouth.
+		var p := GPUParticles3D.new()
+		p.name = "RiverMouthSplash"
+		p.amount = clampi(int(24 + 40 * strength), 24, 90)
+		p.lifetime = 1.3
+		p.preprocess = 1.3
+		p.randomness = 0.5
+		p.position = pos
+		p.visibility_range_end = 380.0
+		p.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+		p.visibility_aabb = AABB(Vector3(-w - 10, -2, -w - 10), Vector3(w * 2 + 20, 10, w * 2 + 20))
+		var pm := ParticleProcessMaterial.new()
+		pm.emission_shape = ParticleProcessMaterial.EMISSION_SHAPE_BOX
+		pm.emission_box_extents = Vector3(w * 0.5, 0.1, w * 0.5)
+		pm.direction = Vector3(dir.x * 0.8, 1.0, dir.z * 0.8)
+		pm.spread = 50.0
+		pm.initial_velocity_min = 1.2 * strength + 0.8
+		pm.initial_velocity_max = 2.8 * strength + 1.5
+		pm.gravity = Vector3(0, -9.8, 0)
+		pm.scale_min = 0.15
+		pm.scale_max = 0.4
+		var grad := Gradient.new()
+		grad.set_color(0, Color(1, 1, 1, 0.85))
+		grad.set_color(1, Color(1, 1, 1, 0.0))
+		var gt := GradientTexture1D.new()
+		gt.gradient = grad
+		pm.color_ramp = gt
+		p.process_material = pm
+		p.draw_pass_1 = _drops()
+		parent.add_child(p)
+		# A soft spray cloud drifting out over the open water.
+		var mist := GPUParticles3D.new()
+		mist.name = "RiverMouthMist"
+		mist.amount = clampi(int(6 + 10 * strength), 6, 24)
+		mist.lifetime = 3.0
+		mist.preprocess = 3.0
+		mist.position = pos + dir * w * 0.6
+		mist.visibility_range_end = 380.0
+		mist.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+		mist.visibility_aabb = AABB(Vector3(-w - 15, -2, -w - 15), Vector3(w * 2 + 30, 10, w * 2 + 30))
+		var mm := ParticleProcessMaterial.new()
+		mm.emission_shape = ParticleProcessMaterial.EMISSION_SHAPE_BOX
+		mm.emission_box_extents = Vector3(w * 0.6, 0.1, w * 0.6)
+		mm.direction = Vector3(dir.x, 0.4, dir.z)
+		mm.spread = 40.0
+		mm.initial_velocity_min = 0.6
+		mm.initial_velocity_max = 1.6 * strength + 0.6
+		mm.gravity = Vector3(0, -0.4, 0)
+		mm.scale_min = 0.5
+		mm.scale_max = 1.2 + strength
+		var mg := Gradient.new()
+		mg.set_color(0, Color(1, 1, 1, 0.0))
+		mg.set_color(1, Color(1, 1, 1, 0.0))
+		mg.add_point(0.15, Color(1, 1, 1, 0.55))
+		mg.add_point(0.6, Color(1, 1, 1, 0.25))
+		var mgt := GradientTexture1D.new()
+		mgt.gradient = mg
+		mm.color_ramp = mgt
+		mist.process_material = mm
+		mist.draw_pass_1 = RiverMeshBuilder._mist_quad()
+		parent.add_child(mist)
+		made += 1
+	print("WaterEffects: %d river mouth splashes" % made)
+
+
 ## Droplets thrown up where a waterfall hits its pool.
 static func waterfall_splash(foot: Vector3, dir: Vector3, w: float, drop: float, parent: Node3D) -> void:
 	var p := GPUParticles3D.new()

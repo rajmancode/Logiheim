@@ -114,10 +114,24 @@ func sample_mesh(p: Vector2) -> float:
 ## Lowest ground under a footprint of radius r around p (centre plus a ring of 8): seat
 ## anything with a footprint here so no edge hangs in the air on a slope.
 func ground_min(p: Vector2, r: float) -> float:
-	var h := sample(p)
+	var h := sample_mesh(p)
 	for k in 8:
 		var a := TAU * k / 8.0
-		h = minf(h, sample(p + Vector2(cos(a), sin(a)) * r))
+		h = minf(h, sample_mesh(p + Vector2(cos(a), sin(a)) * r))
+		h = minf(h, sample_mesh(p + Vector2(cos(a), sin(a)) * r * 0.5))
+	return h
+
+
+## Seat for a slab lying along the slope: the height at p of the highest plane with the
+## slope's gradient `g` that stays under the ground everywhere in a footprint (half extents
+## a along `ax`, b across). Anything resting on it is buried on the high side, never floating.
+func seat_on_slope(p: Vector2, g: Vector2, ax: Vector2, a: float, b: float) -> float:
+	var across := Vector2(-ax.y, ax.x)
+	var h := INF
+	for u in [-1.0, -0.5, 0.0, 0.5, 1.0]:
+		for v in [-1.0, 0.0, 1.0]:
+			var o: Vector2 = ax * a * u + across * b * v
+			h = minf(h, sample_mesh(p + o) - g.dot(o))
 	return h
 
 

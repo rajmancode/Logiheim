@@ -38,6 +38,8 @@ var _icon_roots: Array[Node3D] = []
 ## Fjords cut into this map (for tools and debugging).
 var fjord_plan: FjordMaker
 var volcano_plan: VolcanoMaker
+## Coastal landforms and oxbow lakes (finest level plan).
+var landform_plan: Landforms
 var road_plan: RoadNetwork
 var cave_plan: CaveSystem
 ## Cave being explored (-1 = on the surface), and the node holding the cave interiors.
@@ -75,6 +77,7 @@ func rebuild() -> void:
 	var volcano: VolcanoMaker = null
 	var roads: RoadNetwork = null
 	var caves: CaveSystem = null
+	var landforms: Landforms = null
 	sea_y = gen.sea_y()
 	# Phase 1, every level: shape the ground (volcano, fjords, lakes, rivers, caves, slope limit)
 	# and work out where the water is. Nothing is meshed yet.
@@ -89,6 +92,12 @@ func rebuild() -> void:
 			volcano_plan = volcano
 		volcano.apply(surface)
 		volcano.mark_level(level, surface)
+		# Coastal landforms (beaches, cliffs, stacks, spits, lagoon, tombolo, atoll) before the
+		# water is worked out, so rivers and the sea find them.
+		if level.level_index == 0:
+			landforms = Landforms.plan_coast(surface, settings)
+			landform_plan = landforms
+		landforms.apply(surface)
 		var paths: Array[RiverPath] = []
 		var hydro: Hydrology = null
 		if settings.rivers_enabled:
@@ -125,6 +134,10 @@ func rebuild() -> void:
 		if not paths.is_empty():
 			RiverMeshBuilder.settle(paths, surface)
 			surface.carve_channels(paths)
+		# Oxbow lakes beside the slow lowland rivers.
+		if level.level_index == 0:
+			landforms.plan_oxbows(paths, surface, hydro, settings)
+		landforms.carve_oxbows(level, surface)
 		# Lakes from the final ground: shaping since the first pass (valleys, the slope limit)
 		# may have lowered a shore, so the water level is worked out again here; a lake can
 		# then never stand higher than the ground that holds it.
@@ -132,9 +145,11 @@ func rebuild() -> void:
 			hydro = Hydrology.from_surface(surface, 2 if level.level_index == 0 else 1, settings, source)
 			for i in level.cell_count():
 				level.lake[i] = 1 if hydro.lake_at(level.cell_center(i)) >= 0 else 0
+		landforms.mark_oxbows(level, hydro)
 		# Cave mouths: a ledge cut into the finished ground on every level.
 		caves.apply(level, surface)
 		var fp := Floodplain.build(level, surface, paths, settings)
+		landforms.unflood_oxbows(surface)
 		surface.finish_weights()
 		surfaces.append(surface)
 		river_paths.append(paths)
@@ -186,12 +201,14 @@ func rebuild() -> void:
 		_lake_materials.append(lake_mat)
 		if hydro != null:
 			RiverMeshBuilder.build_lakes(hydro, surface, lake_mat, root)
+		landforms.build_meshes(level.level_index, surface, lake_mat, root)
 		(rec.fp as Floodplain).build_meshes(lake_mat, root)
 		Vegetation.build(level, surface, settings, root)
 		if level.level_index == 0 and settings.grass_enabled:
 			GrassField.build(surface, settings, root)
 		if level.level_index == 0:
 			WaterEffects.build_shore_spray(surface, root)
+			WaterEffects.build_river_mouths(paths, hydro, surface, root)
 		_level_roots.append(root)
 		_materials.append(mat)
 	if settings.resources_enabled:
@@ -442,17 +459,7 @@ func _build_cave_markers() -> void:
 					sp.position = pos
 					sp.visibility_range_end = hs * 60.0
 					root.add_child(sp)
-				var lb := Label3D.new()
-				lb.text = "Cave %d" % (si + 1)
-				lb.billboard = BaseMaterial3D.BILLBOARD_ENABLED
-				lb.fixed_size = true
-				lb.pixel_size = 0.0003
-				lb.font_size = 34
-				lb.outline_size = 10
-				lb.modulate = Color(1.0, 0.8, 0.5)
-				lb.no_depth_test = true
-				lb.render_priority = 13
-				lb.offset = Vector2(0, -95)
+				var lb := UiStyle.map_label("Cave %d" % (si + 1), 54, UiStyle.GOLD, Vector2(0, -104), 14)
 				lb.position = pos
 				lb.visibility_range_end = hs * 60.0
 				root.add_child(lb)
@@ -533,32 +540,8 @@ func _build_resource_icons() -> void:
 					s2.visibility_range_end_margin = reach * 0.2
 					s2.visibility_range_fade_mode = GeometryInstance3D.VISIBILITY_RANGE_FADE_SELF
 					root.add_child(s2)
-			if is_center and d.get("cave", false):
-				var cl := Label3D.new()
-				cl.text = "cave"
-				cl.billboard = BaseMaterial3D.BILLBOARD_ENABLED
-				cl.fixed_size = true
-				cl.pixel_size = 0.0003
-				cl.font_size = 32
-				cl.outline_size = 10
-				cl.modulate = Color(0.95, 0.85, 0.6)
-				cl.no_depth_test = true
-				cl.render_priority = 11
-				cl.offset = Vector2(0, -70)
-				cl.position = pos
-				cl.visibility_range_end = reach
-				root.add_child(cl)
 			if is_center and d.size > 1:
-				var label := Label3D.new()
-				label.text = "%d" % d.size
-				label.billboard = BaseMaterial3D.BILLBOARD_ENABLED
-				label.fixed_size = true
-				label.pixel_size = 0.00034
-				label.font_size = 40
-				label.outline_size = 12
-				label.no_depth_test = true
-				label.render_priority = 11
-				label.offset = Vector2(52, -46)
+				var label := UiStyle.map_label("×%d" % d.size, 44, UiStyle.PARCHMENT, Vector2(54, -48), 12, 0.00034)
 				label.position = pos
 				label.visibility_range_end = reach
 				label.visibility_range_end_margin = reach * 0.2

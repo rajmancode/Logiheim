@@ -354,6 +354,15 @@ func apply(level: HexLevel, surface: TerrainSurface) -> void:
 	if level.road.size() != level.cell_count():
 		level.road.resize(level.cell_count())
 	level.road.fill(0)
+	# Every trail first records, per terrain vertex, the bed height it wants and how strongly
+	# (1 on the bed, easing to 0 across a bank whose width grows with the depth of the cut or
+	# fill, so embankments slope gently instead of dropping as walls). The strongest wins and
+	# the ground is blended once, then the bank band is smoothed so it melds into the land.
+	var nv := surface.heights.size()
+	var want_t := PackedFloat32Array()
+	want_t.resize(nv)
+	var want_y := PackedFloat32Array()
+	want_y.resize(nv)
 	for r: Dictionary in roads:
 		var pts: PackedVector2Array = r.pts
 		var bridge: PackedByteArray = r.bridge
@@ -387,7 +396,6 @@ func apply(level: HexLevel, surface: TerrainSurface) -> void:
 		# The levelled bed must reach the nearest terrain grid vertices, or the 5 m grid would
 		# leave the trail on the old slope between them.
 		var flat_r := half + surface.spacing * 0.75
-		var reach := flat_r + 4.0
 		for k in n:
 			var p := pts[k]
 			var cell := level.cell_at(p)
@@ -395,6 +403,9 @@ func apply(level: HexLevel, surface: TerrainSurface) -> void:
 				level.road[cell] = 1
 			if bridge[k] == 1:
 				continue
+			# Bank width: at least 7 m, and about 1 in 3 for deep cuts and fills.
+			var bank := 7.0 + absf(sm[k] - ys[k]) * 3.0
+			var reach := flat_r + bank
 			var x0 := maxi(0, floori((p.x - reach) / surface.spacing))
 			var x1 := mini(surface.nx - 1, ceili((p.x + reach) / surface.spacing))
 			var z0 := maxi(0, floori((p.y - reach) / surface.spacing))
@@ -405,12 +416,35 @@ func apply(level: HexLevel, surface: TerrainSurface) -> void:
 					var d := Vector2(x * surface.spacing, z * surface.spacing).distance_to(p)
 					if d > reach or surface.river_mask[i] > 0.5:
 						continue
-					# Level across the whole width (t = 1), blending back into the ground beyond.
-					var t := 1.0 - smoothstep(flat_r, reach, d)
-					surface.heights[i] = lerpf(surface.heights[i], sm[k], t)
+					# Level across the whole width (t = 1), easing back into the ground beyond
+					# (smootherstep: no crease where the bank meets the bed or the land).
+					var u := clampf((d - flat_r) / bank, 0.0, 1.0)
+					var t := 1.0 - u * u * u * (u * (u * 6.0 - 15.0) + 10.0)
+					if t > want_t[i]:
+						want_t[i] = t
+						want_y[i] = sm[k]
 					surface.path_mask[i] = maxf(surface.path_mask[i], 1.0 - smoothstep(half * 0.6, half + 1.0, d))
 					if d < half + 2.0:
 						surface.clear_mask[i] = 1
+	for i in nv:
+		if want_t[i] > 0.0:
+			surface.heights[i] = lerpf(surface.heights[i], want_y[i], want_t[i])
+	# Smooth the banks (not the bed, not river channels): two passes of a 3x3 average, weighted
+	# towards the middle of the bank where creases would show.
+	for it in 2:
+		var src := surface.heights.duplicate()
+		for z in range(1, surface.nz - 1):
+			for x in range(1, surface.nx - 1):
+				var i := z * surface.nx + x
+				var t := want_t[i]
+				if t <= 0.0 or t >= 0.98 or surface.river_mask[i] > 0.5:
+					continue
+				var acc := 0.0
+				for dz in range(-1, 2):
+					for dx in range(-1, 2):
+						acc += src[i + dz * surface.nx + dx]
+				var w := 4.0 * t * (1.0 - t) + 0.25
+				surface.heights[i] = lerpf(src[i], acc / 9.0, minf(w, 1.0))
 
 
 ## The trail ribbons and bridges.

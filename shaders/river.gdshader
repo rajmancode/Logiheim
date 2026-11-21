@@ -24,12 +24,14 @@ varying vec3 v_world_pos;
 varying float v_speed;
 varying float v_turb;
 varying float v_width;
+varying float v_fade;
 
 void vertex() {
 	v_world_pos = (MODEL_MATRIX * vec4(VERTEX, 1.0)).xyz;
 	v_speed = COLOR.r * 6.0;
 	v_turb = UV2.x;
 	v_width = UV2.y;
+	v_fade = COLOR.g;
 }
 
 // Ripple normal (xy) and a foam-pattern value pushed `shift` metres downstream.
@@ -87,5 +89,5 @@ void fragment() {
 	NORMAL = normalize((VIEW_MATRIX * vec4(wn, 0.0)).xyz);
 	// Soft banks: fade out where the water gets very shallow.
 	ALPHA = clamp(depth / 0.25, 0.0, 1.0) * smoothstep(0.0, 0.06, min(UV.x, 1.0 - UV.x)) + foam * 0.3;
-	ALPHA = clamp(ALPHA, 0.0, 1.0);
+	ALPHA = clamp(ALPHA, 0.0, 1.0) * v_fade;
 }
