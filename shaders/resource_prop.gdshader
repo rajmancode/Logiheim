@@ -85,21 +85,23 @@ void fragment() {
 	float sandy = warm * smoothstep(0.45, 0.6, lum) * (1.0 - stone) * (1.0 - woody);
 	float earthy = clamp(warm * (1.0 - stone) - woody - sandy, 0.0, 1.0);
 
-	vec3 rock_a = tri_albedo(5.0, p, tw) / layer_mean(5.0);
-	vec3 rock_n = tri_normal(5.0, p, tw);
+	vec3 rock_a = tri_albedo(11.0, p, tw) / layer_mean(11.0);
+	vec3 rock_n = tri_normal(11.0, p, tw);
 	vec3 mod_col = rock_a;
 	vec3 nrm = rock_n;
 	if (sandy > 0.01) {
-		mod_col = mix(mod_col, tri_albedo(2.0, p * 2.0, tw) / layer_mean(2.0), sandy);
-		nrm = mix(nrm, tri_normal(2.0, p * 2.0, tw), sandy);
+		mod_col = mix(mod_col, tri_albedo(0.0, p * 2.0, tw) / layer_mean(0.0), sandy);
+		nrm = mix(nrm, tri_normal(0.0, p * 2.0, tw), sandy);
 	}
 	if (earthy > 0.01) {
-		mod_col = mix(mod_col, tri_albedo(7.0, p * 1.5, tw) / layer_mean(7.0), earthy);
-		nrm = mix(nrm, tri_normal(7.0, p * 1.5, tw), earthy);
+		mod_col = mix(mod_col, tri_albedo(18.0, p * 1.5, tw) / layer_mean(18.0), earthy);
+		nrm = mix(nrm, tri_normal(18.0, p * 1.5, tw), earthy);
 	}
 	if (woody > 0.01) {
-		mod_col = mix(mod_col, vec3(wood(v_world_pos, tw)), woody);
-		nrm.xy *= 1.0 - woody * 0.7;
+		// Real wood grain (and bark on darker wood), from the texture set.
+		float wl = lum < 0.2 ? 24.0 : 25.0;
+		mod_col = mix(mod_col, tri_albedo(wl, p * 1.4, tw) / layer_mean(wl), woody);
+		nrm = mix(nrm, tri_normal(wl, p * 1.4, tw), woody);
 	}
 	// Coloured details (ore streaks, plants, glints) keep their colour but get the relief.
 	float textured = clamp(stone + sandy + earthy + woody, 0.25, 1.0) * detail;

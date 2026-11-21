@@ -4,8 +4,8 @@ Usage:
     python tools/pack_ambientcg.py <folder with the *_1K-JPG.zip downloads>
 
 For each terrain layer this writes two PNGs to assets/textures/terrain/:
-    <layer>_albedo.png   RGB = colour,      A = height (displacement, for height blending)
-    <layer>_normal.png   RG  = normal (GL), B = ambient occlusion, A = roughness
+    <layer>_albedo.webp  RGB = colour,      A = height (displacement, for height blending)
+    <layer>_normal.webp  RG  = normal (GL), B = ambient occlusion, A = roughness
 
 Download the zips from https://ambientcg.com (CC0), e.g.
     https://ambientcg.com/get?file=Grass004_1K-JPG.zip
@@ -19,14 +19,42 @@ from pathlib import Path
 import numpy as np
 from PIL import Image
 
-# Terrain layer -> ambientCG asset id.
+# Texture name -> ambientCG asset id. Order doesn't matter here; the game's texture array
+# order is TerrainMaterial.TEXTURES.
 LAYERS = {
+    # Sand and shore
     "sand": "Ground054",
+    "sand_dune": "Ground097",
+    "sand_wet": "Ground100",
+    "pebbles": "Rocks022",
+    # Grass
     "grass": "Grass004",
+    "grass_meadow": "Grass001",
+    "grass_sparse": "Ground003",
+    "moss": "Moss001",
+    # Forest floor
     "forest_floor": "Ground037",
+    "leaf_litter": "ScatteredLeaves008",
+    "needles": "Ground042",
+    # Rock
     "rock": "Rock051",
+    "rock_cliff": "Rock030",
+    "rock_mossy": "Rock063",
+    "rock_dark": "Rock035",
+    # Snow and ice
     "snow": "Snow006",
+    "snow_rocky": "Snow014",
+    "ice": "Ice003",
+    # Earth
     "dirt": "Ground067",
+    "mud": "Ground036",
+    "soil": "Ground048",
+    "gravel": "Gravel040",
+    "ash": "Ground038",
+    "lava": "Lava002",
+    # Props
+    "bark": "Bark014",
+    "wood": "Wood049",
 }
 SIZE = 1024
 OUT = Path(__file__).resolve().parent.parent / "assets" / "textures" / "terrain"
@@ -58,8 +86,9 @@ def main() -> None:
         rough = rough if rough is not None else np.full((SIZE, SIZE), 200, np.uint8)
         albedo = np.dstack([color, height])
         nrm = np.dstack([normal[..., 0], normal[..., 1], ao, rough])
-        Image.fromarray(albedo, "RGBA").save(OUT / f"{layer}_albedo.png", optimize=True)
-        Image.fromarray(nrm, "RGBA").save(OUT / f"{layer}_normal.png", optimize=True)
+        # Lossy WebP (with alpha) keeps the repository small; detail survives at these settings.
+        Image.fromarray(albedo, "RGBA").save(OUT / f"{layer}_albedo.webp", quality=90, alpha_quality=95, method=6)
+        Image.fromarray(nrm, "RGBA").save(OUT / f"{layer}_normal.webp", quality=94, alpha_quality=95, method=6)
         print(f"{layer:13s} <- {asset}")
 
 

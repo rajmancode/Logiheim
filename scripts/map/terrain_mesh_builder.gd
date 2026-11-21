@@ -4,7 +4,8 @@ extends RefCounted
 ##
 ## Vertex data used by shaders/hex_terrain.gdshader: the 8 terrain blend weights are packed
 ## into COLOR (layers 0-3), UV (4-5) and UV2 (6-7); CUSTOM0 = (floodplain strength, river
-## level the floodplain floods from, arable land 0..1, volcanic ground 0..1).
+## level the floodplain floods from, arable land 0..1, volcanic ground 0..1); CUSTOM1 =
+## (moisture, convexity, river bed / bank 0..1, 0) for picking textures within each layer.
 
 ## Quads per chunk edge.
 const CHUNK := 64
@@ -35,6 +36,8 @@ static func _chunk(s: TerrainSurface, x0: int, z0: int, x1: int, z1: int) -> Arr
 	var uv2 := PackedVector2Array()
 	var custom := PackedFloat32Array()
 	custom.resize(n * 4)
+	var custom1 := PackedFloat32Array()
+	custom1.resize(n * 4)
 	verts.resize(n)
 	normals.resize(n)
 	colors.resize(n)
@@ -61,6 +64,9 @@ static func _chunk(s: TerrainSurface, x0: int, z0: int, x1: int, z1: int) -> Arr
 			custom[k * 4 + 1] = s.flood_y[i]
 			custom[k * 4 + 2] = s.arable[i]
 			custom[k * 4 + 3] = s.volcanic[i]
+			custom1[k * 4] = s.moisture[i]
+			custom1[k * 4 + 1] = s.convexity[i]
+			custom1[k * 4 + 2] = s.river_mask[i]
 			k += 1
 
 	var indices := PackedInt32Array()
@@ -90,7 +96,8 @@ static func _chunk(s: TerrainSurface, x0: int, z0: int, x1: int, z1: int) -> Arr
 	arrays[Mesh.ARRAY_TEX_UV2] = uv2
 	arrays[Mesh.ARRAY_INDEX] = indices
 	arrays[Mesh.ARRAY_CUSTOM0] = custom
+	arrays[Mesh.ARRAY_CUSTOM1] = custom1
 	var mesh := ArrayMesh.new()
-	var fmt := Mesh.ARRAY_CUSTOM_RGBA_FLOAT << Mesh.ARRAY_FORMAT_CUSTOM0_SHIFT
+	var fmt := (Mesh.ARRAY_CUSTOM_RGBA_FLOAT << Mesh.ARRAY_FORMAT_CUSTOM0_SHIFT) 		| (Mesh.ARRAY_CUSTOM_RGBA_FLOAT << Mesh.ARRAY_FORMAT_CUSTOM1_SHIFT)
 	mesh.add_surface_from_arrays(Mesh.PRIMITIVE_TRIANGLES, arrays, [], {}, fmt)
 	return mesh

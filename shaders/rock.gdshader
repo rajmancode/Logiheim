@@ -10,8 +10,9 @@ render_mode cull_back, diffuse_burley, specular_schlick_ggx;
 
 uniform sampler2DArray albedo_array : source_color, filter_linear_mipmap_anisotropic, repeat_enable;
 uniform sampler2DArray normal_array : filter_linear_mipmap_anisotropic, repeat_enable;
-uniform float rock_layer = 5.0;
-uniform float moss_layer = 4.0;
+uniform float moss_layer = 7.0;       // moss
+// Rock textures a boulder can be: granite, cliff, mossy, dark slate (TerrainMaterial.TEXTURES).
+const float ROCKS[4] = float[](11.0, 12.0, 13.0, 14.0);
 uniform float texture_metres = 3.0;
 uniform float moss_amount = 0.4;
 uniform vec3 basalt_color = vec3(0.05, 0.048, 0.047);
@@ -20,12 +21,15 @@ varying vec3 v_world_pos;
 varying vec3 v_world_normal;
 varying float v_ao;
 varying float v_basalt;
+varying float v_kind;
 
 void vertex() {
 	v_world_pos = (MODEL_MATRIX * vec4(VERTEX, 1.0)).xyz;
 	v_world_normal = normalize((MODEL_MATRIX * vec4(NORMAL, 0.0)).xyz);
 	v_ao = COLOR.r;
 	v_basalt = INSTANCE_CUSTOM.a;
+	// Each boulder its own kind of rock, from where it stands.
+	v_kind = fract(sin(dot(MODEL_MATRIX[3].xz, vec2(12.9898, 78.233))) * 43758.5453);
 }
 
 vec4 tri(sampler2DArray tex, vec3 p, vec3 w, float layer) {
@@ -37,6 +41,7 @@ void fragment() {
 	vec3 w = pow(abs(n), vec3(4.0));
 	w /= w.x + w.y + w.z;
 	vec3 p = v_world_pos / texture_metres;
+	float rock_layer = v_basalt > 0.5 ? 14.0 : ROCKS[int(v_kind * 3.999)];
 	vec4 rock = tri(albedo_array, p, w, rock_layer);
 	vec4 rn = tri(normal_array, p, w, rock_layer);
 	// Second, larger scale breaks up repetition.

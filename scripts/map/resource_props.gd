@@ -61,7 +61,7 @@ const PATCH := {
 	K.STONE: Color(0.72, 0.72, 0.7), K.SOAPSTONE: Color(0.55, 0.65, 0.58), K.IRON: Color(0.6, 0.22, 0.12),
 	K.BOG_IRON: Color(0.5, 0.28, 0.1), K.COAL: Color(0.1, 0.1, 0.1), K.GOLD: Color(0.78, 0.64, 0.3),
 	K.SILVER: Color(0.8, 0.86, 0.95), K.GEMS: Color(0.6, 0.3, 0.85), K.SEALS: Color(0.75, 0.75, 0.72),
-	K.FARMLAND: Color(0.72, 0.58, 0.3), K.WOOL: Color(0.42, 0.58, 0.2), K.HORSES: Color(0.7, 0.62, 0.35),
+	K.WOOL: Color(0.42, 0.58, 0.2), K.HORSES: Color(0.7, 0.62, 0.35),
 	K.GAME: Color(0.4, 0.5, 0.2), K.FURS: Color(0.55, 0.48, 0.32), K.CLAY: Color(0.78, 0.42, 0.22),
 	K.SALT: Color(0.86, 0.84, 0.78), K.PEAT: Color(0.25, 0.17, 0.1), K.AMBER: Color(0.95, 0.55, 0.12),
 	K.REEDS: Color(0.7, 0.72, 0.3), K.LAKE_ORE: Color(0.55, 0.3, 0.15),

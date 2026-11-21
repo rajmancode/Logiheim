@@ -1,29 +1,55 @@
 class_name TerrainMaterial
 extends RefCounted
-## Builds the terrain ShaderMaterial: PBR texture arrays (one layer per terrain type) plus
-## per-layer scale and tint. for_level() makes a copy carrying one level's grid settings.
+## Builds the terrain ShaderMaterial: one PBR texture array holding every ground, rock and prop
+## texture (TEXTURES), plus a tint per terrain layer. The terrain shader gives each of the 8
+## terrain layers a family of these textures (grass: lush, meadow, sparse, moss; rock: granite,
+## cliff, mossy, dark; ...) and picks between them per pixel from moisture, height, slope and
+## so on. for_level() makes a copy carrying one level's grid settings.
 ##
-## Layer textures live in assets/textures/terrain/ (see tools/pack_ambientcg.py):
-##   <name>_albedo.png  RGB colour, A height      <name>_normal.png  RG normal, B AO, A roughness
+## Textures live in assets/textures/terrain/ (see tools/pack_ambientcg.py):
+##   <name>_albedo.webp  RGB colour, A height     <name>_normal.webp  RG normal, B AO, A roughness
 
 const SHADER_PATH := "res://shaders/hex_terrain.gdshader"
 const TEXTURE_DIR := "res://assets/textures/terrain"
 const LAYER_SIZE := 1024
 
-## Texture used for each HexMapGenerator.Terrain layer (the two water layers are the sea floor).
-const LAYER_TEXTURES := ["sand", "sand", "sand", "grass", "forest_floor", "rock", "snow", "dirt"]
-## Metres covered by one repeat of each layer's texture.
-const LAYER_METRES := [7.0, 6.0, 5.0, 4.0, 4.5, 9.0, 7.0, 3.5]
+## Every texture, in texture-array order. The shaders refer to them by these indices
+## (constants T_* in shaders/hex_terrain.gdshader; index() for scripts).
+const TEXTURES := [
+	"sand", "sand_dune", "sand_wet", "pebbles",
+	"grass", "grass_meadow", "grass_sparse", "moss",
+	"forest_floor", "leaf_litter", "needles",
+	"rock", "rock_cliff", "rock_mossy", "rock_dark",
+	"snow", "snow_rocky", "ice",
+	"dirt", "mud", "soil", "gravel", "ash", "lava",
+	"bark", "wood",
+]
+## Metres covered by one repeat of each texture.
+const TEXTURE_METRES := [
+	7.0, 9.0, 6.0, 3.0,
+	4.0, 4.5, 5.0, 3.5,
+	4.5, 3.0, 3.5,
+	9.0, 12.0, 8.0, 8.0,
+	7.0, 8.0, 10.0,
+	3.5, 4.0, 4.0, 3.0, 4.0, 6.0,
+	2.0, 2.0,
+]
+## Per-texture colour correction: rgb multiplier (sRGB) and saturation in alpha. Ice loses
+## most of its turquoise; sparse grass is darkened so it doesn't wash out; leaf litter less
+## autumn-yellow; lava only ever shows as dark crust on the ground.
+const TEXTURE_TINTS := {
+	"grass_sparse": Color(0.82, 0.85, 0.78, 0.9),
+	"leaf_litter": Color(0.8, 0.75, 0.65, 0.65),
+	"ice": Color(0.95, 0.98, 1.0, 0.25),
+	"moss": Color(0.9, 0.95, 0.85, 0.85),
+}
 ## Tint per layer (sRGB). The sea floor is darker and greener; forest floor a touch darker.
 const LAYER_TINTS := [
 	Color(0.5, 0.56, 0.5), Color(0.78, 0.8, 0.74), Color.WHITE, Color(0.95, 0.97, 0.9),
 	Color(0.82, 0.88, 0.78), Color.WHITE, Color.WHITE, Color(0.9, 0.86, 0.82),
 ]
-## Used as a flat colour when a layer's texture file is missing.
-const FALLBACK_COLORS := [
-	Color(0.55, 0.5, 0.4), Color(0.7, 0.65, 0.5), Color(0.80, 0.72, 0.52), Color(0.32, 0.48, 0.20),
-	Color(0.20, 0.32, 0.15), Color(0.48, 0.46, 0.43), Color(0.92, 0.94, 0.97), Color(0.40, 0.29, 0.19),
-]
+## Used as a flat colour when a texture file is missing.
+const FALLBACK := Color(0.5, 0.5, 0.48, 0.5)
 
 static var _albedo_array: Texture2DArray
 static var _normal_array: Texture2DArray
@@ -35,13 +61,18 @@ static func create() -> ShaderMaterial:
 	var mat := ShaderMaterial.new()
 	mat.shader = load(SHADER_PATH)
 	var tints := PackedColorArray()
-	for i in LAYER_TEXTURES.size():
-		var tint: Color = FALLBACK_COLORS[i] if _missing[i] else LAYER_TINTS[i]
-		tints.append(tint.srgb_to_linear())
+	for i in LAYER_TINTS.size():
+		tints.append((LAYER_TINTS[i] as Color).srgb_to_linear())
 	mat.set_shader_parameter("albedo_array", _albedo_array)
 	mat.set_shader_parameter("normal_array", _normal_array)
 	mat.set_shader_parameter("layer_tint", tints)
-	mat.set_shader_parameter("layer_size", PackedFloat32Array(LAYER_METRES))
+	mat.set_shader_parameter("tex_size", PackedFloat32Array(TEXTURE_METRES))
+	var tex_tints := PackedColorArray()
+	for t: String in TEXTURES:
+		var c: Color = TEXTURE_TINTS.get(t, Color(1, 1, 1, 1))
+		var lin := Color(c.r, c.g, c.b).srgb_to_linear()
+		tex_tints.append(Color(lin.r, lin.g, lin.b, c.a))
+	mat.set_shader_parameter("tex_tint", tex_tints)
 	mat.set_shader_parameter("flood_ripples", _ripples())
 	return mat
 
@@ -86,6 +117,10 @@ static func set_grid(mat: ShaderMaterial, level: HexLevel, noise: BorderNoise) -
 
 
 ## The arrays are shared by every level's material and by the rock shader.
+static func index(texture_name: String) -> int:
+	return TEXTURES.find(texture_name)
+
+
 static func albedo_array() -> Texture2DArray:
 	_ensure_arrays()
 	return _albedo_array
@@ -99,16 +134,18 @@ static func normal_array() -> Texture2DArray:
 static func _ensure_arrays() -> void:
 	if _albedo_array != null:
 		return
+	var t0 := Time.get_ticks_msec()
 	var albedo_images: Array[Image] = []
 	var normal_images: Array[Image] = []
 	_missing.clear()
-	for i in LAYER_TEXTURES.size():
-		var layer_name: String = LAYER_TEXTURES[i]
-		var albedo := _load_layer("%s/%s_albedo.png" % [TEXTURE_DIR, layer_name])
+	for i in TEXTURES.size():
+		var layer_name: String = TEXTURES[i]
+		var albedo := _load_layer("%s/%s_albedo" % [TEXTURE_DIR, layer_name])
 		_missing.append(albedo == null)
 		if albedo == null:
-			albedo = _solid(Color(1.0, 1.0, 1.0, 0.5))
-		var normal := _load_layer("%s/%s_normal.png" % [TEXTURE_DIR, layer_name])
+			push_warning("TerrainMaterial: missing texture %s" % layer_name)
+			albedo = _solid(FALLBACK)
+		var normal := _load_layer("%s/%s_normal" % [TEXTURE_DIR, layer_name])
 		if normal == null:
 			normal = _solid(Color(0.5, 0.5, 1.0, 0.85))
 		albedo_images.append(albedo)
@@ -117,16 +154,22 @@ static func _ensure_arrays() -> void:
 	_albedo_array.create_from_images(albedo_images)
 	_normal_array = Texture2DArray.new()
 	_normal_array.create_from_images(normal_images)
+	print("TerrainMaterial: %d textures in %d ms" % [TEXTURES.size(), Time.get_ticks_msec() - t0])
 
 
-static func _load_layer(path: String) -> Image:
+## Loads <base>.webp (or .png).
+static func _load_layer(base: String) -> Image:
 	var img: Image = null
-	if ResourceLoader.exists(path):
-		var tex := load(path) as Texture2D
-		if tex != null:
-			img = tex.get_image()
-	if img == null and FileAccess.file_exists(path):
-		img = Image.load_from_file(path)
+	for ext in [".webp", ".png"]:
+		var path: String = base + ext
+		if ResourceLoader.exists(path):
+			var tex := load(path) as Texture2D
+			if tex != null:
+				img = tex.get_image()
+		if img == null and FileAccess.file_exists(path):
+			img = Image.load_from_file(path)
+		if img != null:
+			break
 	if img == null:
 		return null
 	if img.is_compressed():

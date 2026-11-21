@@ -196,6 +196,7 @@ static func _lava_material() -> ShaderMaterial:
 	if _lava_mat == null:
 		_lava_mat = ShaderMaterial.new()
 		_lava_mat.shader = load("res://shaders/lava.gdshader")
+		_lava_mat.set_shader_parameter("albedo_array", TerrainMaterial.albedo_array())
 	return _lava_mat
 
 

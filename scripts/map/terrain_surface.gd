@@ -30,6 +30,11 @@ var flood_mask := PackedFloat32Array()
 var flood_y := PackedFloat32Array()
 ## 0..1 how good the ground is for farming (flat, low, fertile); drawn as fields and rich soil.
 var arable := PackedFloat32Array()
+## 0..1 how damp the ground is (near rivers, lakes, floodplains, low ground); picks lush
+## meadow, mud and mossy rock over dry grass, dirt and bare rock.
+var moisture := PackedFloat32Array()
+## Local convexity, -1 (hollow) .. 1 (crest); dry, thin soil on crests.
+var convexity := PackedFloat32Array()
 ## 0..1 volcanic ground (basalt and ash): the cone of a volcano and its old lava flows.
 var volcanic := PackedFloat32Array()
 ## Plateau height of each hex.
@@ -463,6 +468,8 @@ func finish_weights() -> void:
 	arable.resize(nx * nz)
 	arable.fill(0.0)
 	var relief := maxf(_meters, 1.0)
+	convexity.resize(nx * nz)
+	convexity.fill(0.0)
 	for z in nz:
 		for x in nx:
 			var vi := z * nx + x
@@ -508,6 +515,7 @@ func finish_weights() -> void:
 				var z2b := mini(z + 2, nz - 1)
 				var around := (heights[z * nx + x2a] + heights[z * nx + x2b] + heights[z2a * nx + x] + heights[z2b * nx + x]) * 0.25
 				var convex := h - around
+				convexity[vi] = clampf(convex / 3.0, -1.0, 1.0)
 				_pull(base, T.ROCK, smoothstep(1.2, 3.5, convex) * (0.3 + 0.7 * smoothstep(0.2, 0.55, rel)) * 0.8)
 				# High ground: broken, rocky patches between the grass and snow.
 				_pull(base, T.ROCK, smoothstep(0.5, 0.8, rel) * smoothstep(0.55, 0.75, n1) * 0.7)
@@ -547,6 +555,47 @@ func finish_weights() -> void:
 			total = maxf(total, 1e-5)
 			for k in LAYERS:
 				weights[base + k] /= total
+	_compute_moisture(relief)
+
+
+## Moisture: water (rivers, lakes, floodplains) spread out over ~40 m with a box blur, plus
+## low ground near the sea being damper than high, exposed ground.
+func _compute_moisture(relief: float) -> void:
+	var n := nx * nz
+	moisture.resize(n)
+	for i in n:
+		moisture[i] = maxf(river_mask[i], flood_mask[i])
+	var r := maxi(2, int(40.0 / spacing))
+	for it in 2:
+		moisture = _box_blur(moisture, r)
+	for i in n:
+		var low := 1.0 - smoothstep(sea_y + 2.0, sea_y + relief * 0.35, heights[i])
+		moisture[i] = clampf(moisture[i] * 2.2 + low * 0.3, 0.0, 1.0)
+
+
+## Separable box blur with running sums (cost independent of the radius).
+func _box_blur(src: PackedFloat32Array, r: int) -> PackedFloat32Array:
+	var tmp := PackedFloat32Array()
+	tmp.resize(nx * nz)
+	var out := PackedFloat32Array()
+	out.resize(nx * nz)
+	var inv := 1.0 / (2 * r + 1)
+	for z in nz:
+		var row := z * nx
+		var acc := 0.0
+		for x in range(-r, r + 1):
+			acc += src[row + clampi(x, 0, nx - 1)]
+		for x in nx:
+			tmp[row + x] = acc * inv
+			acc += src[row + mini(x + r + 1, nx - 1)] - src[row + maxi(x - r, 0)]
+	for x in nx:
+		var acc := 0.0
+		for z in range(-r, r + 1):
+			acc += tmp[clampi(z, 0, nz - 1) * nx + x]
+		for z in nz:
+			out[z * nx + x] = acc * inv
+			acc += tmp[mini(z + r + 1, nz - 1) * nx + x] - tmp[maxi(z - r, 0) * nx + x]
+	return out
 
 
 ## Moves `amount` (0..1) of a vertex's blend towards one layer.

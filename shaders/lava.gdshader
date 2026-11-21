@@ -5,6 +5,9 @@ render_mode cull_back, diffuse_burley;
 
 #include "res://shaders/include/environment.gdshaderinc"
 
+uniform sampler2DArray albedo_array : source_color, filter_linear_mipmap_anisotropic, repeat_enable;
+uniform float lava_layer = 23.0;
+
 varying vec3 v_world_pos;
 
 void vertex() {
@@ -20,6 +23,9 @@ void fragment() {
 	float pulse = 0.85 + 0.15 * sin(TIME * 0.7 + n1 * 6.0);
 	vec3 hot = mix(vec3(1.0, 0.35, 0.05), vec3(1.0, 0.8, 0.3), smoothstep(0.2, 0.0, n2));
 	vec3 crust_col = vec3(0.08, 0.06, 0.05);
+	vec3 tex = texture(albedo_array, vec3(v_world_pos.xz / 12.0 + vec2(t * 0.3, 0.0), lava_layer)).rgb;
+	crust = clamp(crust * 0.6 + (1.0 - smoothstep(0.05, 0.3, dot(tex, vec3(0.6, 0.3, 0.1)))) * 0.6, 0.0, 1.0);
+	crust_col = mix(crust_col, tex * 0.4, 0.5);
 	ALBEDO = mix(hot * 0.4, crust_col, crust);
 	EMISSION = hot * (1.0 - crust) * 4.5 * pulse;
 	ROUGHNESS = mix(0.4, 0.95, crust);

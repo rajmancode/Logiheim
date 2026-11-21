@@ -113,6 +113,7 @@ func rebuild() -> void:
 		surface.finish_weights()
 		var mat := TerrainMaterial.for_level(_base_material, level, noise, sea_y)
 		mat.set_shader_parameter("flood_rise", settings.floodplain_depth + 0.9)
+		mat.set_shader_parameter("relief", maxf(level.max_top_y() - sea_y, 10.0))
 		mat.set_shader_parameter("show_grid", _show_grid)
 		TerrainMeshBuilder.build(surface, mat, root)
 		RiverMeshBuilder.build(paths, root)

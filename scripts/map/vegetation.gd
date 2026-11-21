@@ -196,6 +196,7 @@ static func _material(kind: String) -> Material:
 		"Bark":
 			mat.shader = load("res://shaders/tree_wind.gdshader")
 			mat.set_shader_parameter("albedo", Color(0.3, 0.22, 0.16))
+			mat.set_shader_parameter("albedo_array", TerrainMaterial.albedo_array())
 			mat.set_shader_parameter("is_leaves", false)
 			mat.set_shader_parameter("roughness", 0.95)
 		_:

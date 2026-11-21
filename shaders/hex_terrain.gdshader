@@ -17,15 +17,42 @@ uniform sampler2D flood_ripples : hint_normal, filter_linear_mipmap, repeat_enab
 
 const int LAYERS = 8;
 
+// Texture-array indices (TerrainMaterial.TEXTURES).
+const int T_SAND = 0;
+const int T_DUNE = 1;
+const int T_WET_SAND = 2;
+const int T_PEBBLES = 3;
+const int T_GRASS = 4;
+const int T_MEADOW = 5;
+const int T_SPARSE = 6;
+const int T_MOSS = 7;
+const int T_FOREST = 8;
+const int T_LEAVES = 9;
+const int T_NEEDLES = 10;
+const int T_ROCK = 11;
+const int T_CLIFF = 12;
+const int T_MOSSY_ROCK = 13;
+const int T_DARK_ROCK = 14;
+const int T_SNOW = 15;
+const int T_SNOW_ROCK = 16;
+const int T_ICE = 17;
+const int T_DIRT = 18;
+const int T_MUD = 19;
+const int T_SOIL = 20;
+const int T_GRAVEL = 21;
+const int T_ASH = 22;
+
 uniform sampler2DArray albedo_array : source_color, filter_linear_mipmap_anisotropic, repeat_enable;
 uniform sampler2DArray normal_array : filter_linear_mipmap_anisotropic, repeat_enable;
-uniform float layer_size[8];          // metres covered by one texture repeat, per layer
+uniform float tex_size[26];           // metres covered by one texture repeat, per texture
 uniform vec4 layer_tint[8];
+uniform vec4 tex_tint[26];            // per-texture colour correction (a = saturation)
 uniform float blend_depth = 0.18;     // softness of height blending (texture height units)
 uniform float normal_strength = 1.0;
 uniform float macro_scale = 0.0035;   // large-scale colour variation, 1/metres
 uniform float macro_strength = 0.22;
 uniform float sea_level = 0.0;        // world y of the sea, for wet sand and the grid
+uniform float relief = 300.0;         // metres from the sea to the highest ground
 uniform float grid_fade_start = 2500.0;
 
 varying vec3 v_world_pos;
@@ -35,6 +62,7 @@ varying vec4 v_w1;
 varying vec2 v_flood;
 varying float v_arable;
 varying float v_volcanic;
+varying vec3 v_ctx;   // moisture, convexity, river bed
 
 void vertex() {
 	v_world_pos = (MODEL_MATRIX * vec4(VERTEX, 1.0)).xyz;
@@ -44,13 +72,14 @@ void vertex() {
 	v_flood = CUSTOM0.xy;
 	v_arable = CUSTOM0.z;
 	v_volcanic = CUSTOM0.w;
+	v_ctx = CUSTOM1.xyz;
 }
 
-// Samples one layer: planar from above on flat ground, triplanar on slopes.
+// Samples one texture: planar from above on flat ground, triplanar on slopes.
 // Returns albedo (rgb, a = height) and writes normal (xy -1..1, z = AO, w = roughness).
-vec4 sample_layer(int i, vec3 p, vec3 tw, bool tri, out vec4 nrm) {
+vec4 sample_tex(int i, vec3 p, vec3 tw, bool tri, out vec4 nrm) {
 	float layer = float(i);
-	float sc = 1.0 / layer_size[i];
+	float sc = 1.0 / tex_size[i];
 	vec4 ay = texture(albedo_array, vec3(p.xz * sc, layer));
 	vec4 ny = texture(normal_array, vec3(p.xz * sc, layer));
 	vec4 alb = ay;
@@ -64,7 +93,67 @@ vec4 sample_layer(int i, vec3 p, vec3 tw, bool tri, out vec4 nrm) {
 		nrm = nx * tw.x + ny * tw.y + nz * tw.z;
 	}
 	nrm.xy = nrm.xy * 2.0 - 1.0;
+	float l = dot(alb.rgb, vec3(0.3, 0.55, 0.15));
+	alb.rgb = mix(vec3(l), alb.rgb, tex_tint[i].a) * tex_tint[i].rgb;
 	return alb;
+}
+
+// Picks two textures from a terrain layer's family and how much of the second shows, from
+// where the pixel is: height above the sea (hr), slope (0 flat .. 1 vertical), relative
+// altitude, moisture, convexity, river bed, volcanic ground, farmland and two noises.
+void pick(int cls, float hr, float slope, float alt, float moist, float convex, float river,
+		float volc, float arable, float n1, float n2, out int a, out int b, out float t) {
+	float c1 = 0.0;
+	float c2 = 0.0;
+	float c3 = 0.0;
+	int b1 = 0;
+	int b2 = 0;
+	int b3 = 0;
+	if (cls <= 1) {
+		// Sea floor: sand with pebble beds near the shore and on rises.
+		a = T_SAND;
+		b1 = T_PEBBLES; c1 = smoothstep(0.5, 0.68, n1);
+		b2 = T_WET_SAND; c2 = 0.5;
+	} else if (cls == 2) {
+		a = T_SAND;
+		b1 = T_WET_SAND; c1 = 1.0 - smoothstep(0.3, 1.5, hr);
+		b2 = T_PEBBLES;  c2 = smoothstep(0.58, 0.7, n1) * (1.0 - smoothstep(1.5, 5.0, hr)) + smoothstep(0.12, 0.3, slope) + smoothstep(0.75, 0.95, river) * 0.8;
+		b3 = T_DUNE;     c3 = smoothstep(1.8, 4.0, hr) * smoothstep(0.38, 0.6, n2);
+	} else if (cls == 3) {
+		a = T_GRASS;
+		b1 = T_MEADOW; c1 = max(smoothstep(0.35, 0.75, moist), smoothstep(0.6, 0.75, n2) * 0.7);
+		b2 = T_SPARSE; c2 = max(smoothstep(0.2, 0.75, convex), smoothstep(0.66, 0.8, n1) * 0.5) * (1.0 - moist * 0.6);
+		b3 = T_MOSS;   c3 = smoothstep(0.42, 0.7, alt) * smoothstep(0.4, 0.62, n2 + moist * 0.3);
+	} else if (cls == 4) {
+		a = T_FOREST;
+		b1 = T_NEEDLES; c1 = smoothstep(0.12, 0.4, alt) * (0.7 + 0.3 * n1);
+		b2 = T_LEAVES;  c2 = smoothstep(0.55, 0.72, n1) * (1.0 - smoothstep(0.15, 0.35, alt));
+		b3 = T_MOSS;    c3 = smoothstep(0.5, 0.85, moist) * smoothstep(0.45, 0.6, n2);
+	} else if (cls == 5) {
+		a = T_ROCK;
+		b1 = T_DARK_ROCK;  c1 = max(volc, smoothstep(0.55, 0.85, alt) * smoothstep(0.45, 0.62, n1));
+		b2 = T_CLIFF;      c2 = smoothstep(0.5, 0.8, slope) * (0.55 + 0.45 * n2);
+		b3 = T_MOSSY_ROCK; c3 = smoothstep(0.35, 0.75, moist) * (1.0 - smoothstep(0.3, 0.55, alt)) * smoothstep(0.42, 0.6, n2) * (1.0 - volc);
+	} else if (cls == 6) {
+		a = T_SNOW;
+		b1 = T_SNOW_ROCK; c1 = smoothstep(0.22, 0.5, slope) + smoothstep(0.62, 0.76, n1) * 0.6;
+		b2 = T_ICE;       c2 = smoothstep(0.8, 0.9, n2) * (1.0 - smoothstep(0.06, 0.15, slope)) * 0.8;
+	} else {
+		a = T_DIRT;
+		b1 = T_MUD;    c1 = max(smoothstep(0.55, 0.9, moist), smoothstep(0.35, 0.7, river) * (1.0 - smoothstep(0.85, 1.0, river)));
+		b2 = T_GRAVEL; c2 = max(smoothstep(0.2, 0.45, slope), smoothstep(0.85, 1.0, river) * smoothstep(0.35, 0.6, n2));
+		b3 = T_ASH;    c3 = volc;
+		if (arable > c3) {
+			b3 = T_SOIL;
+			c3 = arable;
+		}
+	}
+	// The strongest alternative wins; its strength is how much of it shows.
+	b = b1;
+	t = c1;
+	if (c2 > t) { b = b2; t = c2; }
+	if (c3 > t) { b = b3; t = c3; }
+	t = clamp(t, 0.0, 1.0);
 }
 
 void fragment() {
@@ -75,8 +164,13 @@ void fragment() {
 	bool tri = n.y < 0.9;
 
 	float w[LAYERS] = float[](v_w0.x, v_w0.y, v_w0.z, v_w0.w, v_w1.x, v_w1.y, v_w1.z, v_w1.w);
+	float hr = p.y - sea_level;
+	float slope = 1.0 - n.y;
+	float alt = clamp(hr / max(relief, 1.0), 0.0, 1.0);
+	float n1 = env_fbm(p.xz * 0.018);
+	float n2 = env_noise(p.xz * 0.07 + vec2(13.0, 5.0));
 
-	// Height blending: each layer's texture height raises its claim on the pixel.
+	// Each layer: two textures from its family, blended; then height blending across layers.
 	vec4 alb[LAYERS];
 	vec4 nrm[LAYERS];
 	float score[LAYERS];
@@ -86,8 +180,21 @@ void fragment() {
 		alb[i] = vec4(0.0);
 		nrm[i] = vec4(0.0);
 		if (w[i] > 0.01) {
+			int ta;
+			int tb;
+			float t;
+			pick(i, hr, slope, alt, v_ctx.x, v_ctx.y, v_ctx.z, v_volcanic, v_arable, n1, n2, ta, tb, t);
 			vec4 nr;
-			alb[i] = sample_layer(i, p, tw, tri, nr);
+			vec4 a = sample_tex(ta, p, tw, tri, nr);
+			if (t > 0.03) {
+				vec4 nr2;
+				vec4 b2 = sample_tex(tb, p, tw, tri, nr2);
+				// Height-aware mix, so the second texture fills in between the first's bumps.
+				float m = smoothstep(0.0, 1.0, clamp(t * 1.6 - 0.3 + (b2.a - a.a) * 0.6, 0.0, 1.0));
+				a = mix(a, b2, m);
+				nr = mix(nr, nr2, m);
+			}
+			alb[i] = a;
 			nrm[i] = nr;
 			score[i] = w[i] + alb[i].a * 0.5;
 			best = max(best, score[i]);
@@ -117,9 +224,11 @@ void fragment() {
 	// Volcanic ground: dark basalt. Steep faces show columnar jointing: tall prisms with dark
 	// joints between them and the odd cross-crack, each column a slightly different shade.
 	if (v_volcanic > 0.02) {
-		float lum = dot(albedo, vec3(0.3, 0.55, 0.15));
-		// (Linear albedo: basalt is genuinely dark, ~0.05.)
-		vec3 basalt = vec3(0.048, 0.046, 0.045) * (0.6 + 1.4 * lum);
+		// The dark rock texture, darkened further (linear albedo: basalt is genuinely ~0.05).
+		vec4 dn_b;
+		vec3 dark = sample_tex(T_DARK_ROCK, p, tw, tri, dn_b).rgb;
+		float lum = dot(dark, vec3(0.3, 0.55, 0.15));
+		vec3 basalt = vec3(0.048, 0.046, 0.045) * (0.5 + 2.0 * lum);
 		if (n.y < 0.75) {
 			vec2 tdir = normalize(vec2(-n.z, n.x) + vec2(1e-5));
 			float u = dot(p.xz, tdir) / 1.5;
@@ -149,7 +258,7 @@ void fragment() {
 		vec2 dir = vec2(cos(ang), sin(ang));
 		float furrow = 0.5 + 0.5 * sin(dot(p.xz, dir) * 6.2832 / 1.6);
 		vec4 dn;
-		vec3 soil = sample_layer(7, p, tw, false, dn).rgb * layer_tint[7].rgb * vec3(0.78, 0.7, 0.62);
+		vec3 soil = sample_tex(T_SOIL, p, tw, false, dn).rgb;
 		vec3 field;
 		// Crops tint the real grass texture, so fields keep its detail instead of flat paint.
 		if (r2 < 0.3) {
