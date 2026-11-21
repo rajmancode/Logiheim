@@ -70,6 +70,12 @@ extends Resource
 @export_range(0.0, 0.3, 0.01) var river_min_width_per_hex := 0.06
 ## How much rivers wind on flat ground (1 = natural meanders about 12 widths long).
 @export_range(0.0, 2.0, 0.05) var river_meander := 1.0
+## Rivers at least this wide (m) that reach the sea over low land split into a delta.
+@export var delta_min_width := 6.0
+## Land up to this many metres above the sea counts as delta plain (the first hex terrace
+## above the sea is one step_height up).
+@export var delta_height := 8.0
+@export_range(2, 6) var delta_max_branches := 4
 ## Hollows at least this big and deep fill up as lakes.
 @export var lake_min_area := 8000.0
 @export var lake_min_depth := 2.0
@@ -96,7 +102,7 @@ extends Resource
 @export_range(0.0, 4.0, 0.05) var resource_abundance := 1.0
 ## Props are drawn this much larger than life on the finest level (and more on coarser
 ## levels) so they read from the strategy camera.
-@export_range(1.0, 5.0, 0.1) var resource_prop_scale := 1.6
+@export_range(1.0, 5.0, 0.1) var resource_prop_scale := 1.8
 
 @export_group("Vegetation")
 @export var trees_enabled := true

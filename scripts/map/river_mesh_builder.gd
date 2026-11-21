@@ -76,11 +76,103 @@ static func courses(hydro: Hydrology, settings: HexMapSettings) -> Array:
 		for c in cells:
 			pts.append(hydro.cell_pos(c))
 			areas.append(hydro.area[c] if hydro.land(c) else hydro.area[cells[maxi(0, cells.size() - 2)]])
-		var smooth := _smooth(pts, areas, 2)
+		var smooth := _smooth(_relax(pts, 6), areas, 3)
 		var course := _meander(smooth[0], smooth[1], hydro, settings)
-		out.append({"pts": course[0], "areas": course[1], "to_sea": seg.to_sea, "joins": not seg.to_sea and hydro.parent[cells[cells.size() - 1]] >= 0})
+		out.append({"pts": course[0], "areas": course[1], "to_sea": seg.to_sea, "delta": false,
+			"joins": not seg.to_sea and hydro.parent[cells[cells.size() - 1]] >= 0})
 	_snap_junctions(out, hydro.spacing * 3.0)
+	# Deltas: wide rivers reaching the sea over low, flat land split into distributaries.
+	var deltas: Array = []
+	for c: Dictionary in out:
+		if c.to_sea:
+			deltas.append_array(_make_delta(c, hydro, settings))
+	out.append_array(deltas)
 	return out
+
+
+## Laplacian smoothing with fixed ends: pulls each point towards its neighbours so the
+## 45-degree steps of the drainage grid melt into curves.
+static func _relax(pts: PackedVector2Array, passes: int) -> PackedVector2Array:
+	var p := pts
+	for it in passes:
+		if p.size() < 3:
+			break
+		var np := p.duplicate()
+		for k in range(1, p.size() - 1):
+			np[k] = (p[k - 1] + p[k] * 2.0 + p[k + 1]) * 0.25
+		p = np
+	return p
+
+
+## If a wide river crosses low, flat land on its way into the sea, cuts its course where that
+## land begins and returns 2-4 distributary courses fanning out from there to the coast.
+## (The river's own course is shortened in place.)
+static func _make_delta(c: Dictionary, hydro: Hydrology, settings: HexMapSettings) -> Array:
+	var pts: PackedVector2Array = c.pts
+	var areas: PackedFloat32Array = c.areas
+	var n := pts.size()
+	if n < 8:
+		return []
+	var w_end := width_for(areas[n - 2], settings)
+	if w_end < settings.delta_min_width:
+		return []
+	# Walk upstream from the mouth while the land stays low.
+	var max_len := minf(w_end * 40.0, 600.0)
+	var along := 0.0
+	var ks := n - 1
+	while ks > 1:
+		var step := pts[ks].distance_to(pts[ks - 1])
+		if along + step > max_len or hydro.filled_at(pts[ks - 1]) - hydro.sea_y > settings.delta_height:
+			break
+		along += step
+		ks -= 1
+	if along < maxf(w_end * 3.0, 30.0):
+		return []
+	var start := pts[ks]
+	var main_dir := (pts[n - 1] - start).normalized()
+	var branches := clampi(int(along / (w_end * 5.0)) + 1, 2, settings.delta_max_branches)
+	var spread := 0.85
+	var rng := RandomNumberGenerator.new()
+	rng.seed = hash(start)
+	var out: Array = []
+	for b in branches:
+		var ang := lerpf(-spread, spread, float(b) / (branches - 1)) + rng.randf_range(-0.12, 0.12)
+		var dir := main_dir.rotated(ang)
+		var bw := w_end * (0.7 if branches == 2 else 0.55) * rng.randf_range(0.8, 1.1)
+		var step := maxf(bw * 0.6, hydro.spacing * 0.4)
+		var bp := PackedVector2Array([start])
+		var p := start
+		var reached := false
+		for i in int(along * 2.2 / step) + 4:
+			# Head downhill, keep fanning out, wander a little.
+			var e := hydro.spacing
+			var grad := Vector2(hydro.filled_at(p + Vector2(e, 0)) - hydro.filled_at(p - Vector2(e, 0)),
+				hydro.filled_at(p + Vector2(0, e)) - hydro.filled_at(p - Vector2(0, e)))
+			var down := -grad.normalized() if grad.length() > 1e-4 else dir
+			var wander := BorderNoise.value_noise(p * 0.02 + Vector2(b * 7.3, 1.7)) - 0.5
+			dir = (dir * 0.8 + down * 0.2).normalized().rotated(wander * 0.25)
+			p += dir * step
+			bp.append(p)
+			if hydro.height_at(p) < hydro.sea_y - 0.5:
+				reached = true
+				bp.append(p + dir * step * 2.0)
+				break
+		if not reached:
+			continue
+		var area := pow(bw / settings.river_width_scale, 2.0) * 1.0e6
+		var ba := PackedFloat32Array()
+		for k in bp.size():
+			ba.append(area)
+		var sm := _smooth(_relax(bp, 3), ba, 2)
+		out.append({"pts": sm[0], "areas": sm[1], "to_sea": true, "joins": false, "delta": true})
+	if out.size() >= 2:
+		# The river now ends where its delta begins.
+		c.pts = pts.slice(0, ks + 1)
+		c.areas = areas.slice(0, ks + 1)
+		c.to_sea = false
+		c.delta = true
+		return out
+	return []
 
 
 ## Corner-cutting smoothing that keeps both ends (so junctions stay put).
@@ -167,6 +259,11 @@ static func _snap_junctions(all: Array, radius: float) -> void:
 				if d < best_d:
 					best_d = d
 					best = q
+		# Shift the last stretch gradually so the tributary bends in instead of kinking.
+		var off := best - end
+		var m := mini(pts.size() - 1, 8)
+		for j in m + 1:
+			pts[pts.size() - 1 - j] += off * (1.0 - float(j) / (m + 1))
 		pts[pts.size() - 1] = best
 		c.pts = pts
 
@@ -201,7 +298,7 @@ static func place(all: Array, level: HexLevel, surface: TerrainSurface, hydro: H
 			if k > 0:
 				along += pts[k].distance_to(pts[k - 1])
 			var w := maxf(width_for(areas[k], settings), min_w)
-			if c.to_sea:
+			if c.to_sea and not c.get("delta", false):
 				w *= lerpf(1.0, 1.8, smoothstep(total * 0.75, total, along))
 			var y := hydro.filled_at(pts[k]) - depth_for(w) * 0.25
 			if c.to_sea and k == n - 1:
@@ -210,7 +307,19 @@ static func place(all: Array, level: HexLevel, surface: TerrainSurface, hydro: H
 			prev_y = y
 			ys[k] = y
 			ws[k] = w
-		placed.append([pts, ys, ws])
+		# Smooth the water surface along the river so it slopes evenly instead of tilting in
+		# steps between terraces, then keep it falling downstream.
+		var sm_y := ys.duplicate()
+		for k in range(1, n - 1):
+			var acc := 0.0
+			var cnt := 0
+			for q in range(maxi(0, k - 5), mini(n, k + 6)):
+				acc += ys[q]
+				cnt += 1
+			sm_y[k] = acc / cnt
+		for k in range(1, n):
+			sm_y[k] = maxf(minf(sm_y[k], sm_y[k - 1]), surface.sea_y + 0.03)
+		placed.append([pts, sm_y, ws])
 
 	# Pass 2: tributaries meet the main river at its water level.
 	for i in all.size():

@@ -17,7 +17,7 @@ Gaea exports a heightmap and terrain masks. Logiheim samples them onto a hex gri
 - **Photo-scanned textures:** CC0 PBR sets from ambientCG (colour, height, normal, AO, roughness). Layers mix by **height-based blending**, so grass grows between stones and sand fills cracks. Steep ground turns to rock, and beaches form at the waterline. Textures follow the real landscape (`natural_texturing`) instead of painting each hex one colour, with large-scale variation to hide tiling.
 - **Sea:** depth-coloured water using the depth buffer, refraction of the sea floor, wind-driven waves, foam lapping at the shoreline, whitecaps in strong wind and sky reflections.
 - **Rivers and lakes:** water is routed over the actual terrain (a priority flood on a 10 m grid), so rivers follow real valleys, join into bigger rivers and collect in lakes where hollows fill up.
-  - Width grows with the square root of the land draining into the river, like real rivers (`river_width_scale`). Rivers meander on flat ground and widen into estuaries at the sea.
+  - Width grows with the square root of the land draining into the river, like real rivers (`river_width_scale`). Courses are smoothed into curves, meander on flat ground and widen into estuaries at the sea. Wide rivers that reach the sea over low, flat land split into a delta of 2–4 distributaries (`delta_min_width`, `delta_height`, `delta_max_branches`).
   - Water runs in carved channels with muddy beds and banks, and its level never rises downstream, so rivers cut gorges instead of flowing uphill.
   - Flow speed follows the slope (flow-mapped, so fast and slow water never smear). Rapids appear where the real landscape is steep, and small cascades at each terrace step. Trees keep clear of the banks.
   - A Gaea `river` mask adds rivers wherever it is painted.
@@ -30,7 +30,9 @@ Gaea exports a heightmap and terrain masks. Logiheim samples them onto a hex gri
   - **Wildlife:** game, horses, furs in the cold uplands.
   - **Norse:** bog iron, ship oak, pine tar, soapstone, wool, seals & walrus ivory, whales, peat.
   - **Lakes and wetlands:** lake ore raked from lake beds, reed beds for thatch, freshwater fish.
-  - Each shows in the world as a prop made in Blender (ore outcrops, quarry, tar kiln, bog pools, reed beds, salt pans, fish shoals, farm fields...), plus a toggleable icon overlay. Each deposit gets one icon at its centre showing its size in hexes, with faint mini badges on its other hexes.
+  - Each shows in the world as a prop made in Blender (ore outcrops, quarry, tar kiln, bog pools, reed beds, salt pans, fish shoals, farm fields...), on every hex of the deposit, drawn larger than life so they read from the strategy camera (`resource_prop_scale`). Herds graze the richer hexes.
+  - The ground under a deposit is tinted (rusty soil over iron, golden stubble on farmland, pale salt crust...), fading out only at the deposit's outer edge, so a multi-hex deposit reads as one region.
+  - A toggleable overlay shows one icon at each deposit's centre with its size in hexes, faint mini badges on its other hexes, and an outline around the whole deposit.
 - **Animals (made in Blender):** Fjord horses, Norse sheep, red deer, reindeer, wild boar, red fox, harbour seals, walrus and humpback whales (`tools/blender/make_animals.py`).
   - Each is built from real body measurements: an anatomical skeleton with muscle masses (ribcage, belly, shoulders, haunches, head and jaw) sculpted with metaballs.
   - Each has a fur texture and fur normal map baked in Blender, and a rig with looping walk, graze and idle animations (whale: swim; seals: rest and galumph).
@@ -104,6 +106,7 @@ shaders/tree_wind.gdshader         swaying trees and bushes
 shaders/rock.gdshader              boulders with moss
 shaders/grass.gdshader             grass blades
 shaders/resource_prop.gdshader     resource props (glints on gold, silver, gems, amber)
+shaders/resource_ground.gdshader   ground tint under resource deposits
 shaders/farm_field.gdshader        farm fields
 shaders/fish_shoal.gdshader        fish shoals
 shaders/clouds.gdshader            cloud layer

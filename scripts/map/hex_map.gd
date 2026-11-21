@@ -116,6 +116,8 @@ func rebuild() -> void:
 			level.level_index, level.hex_size, surface.nx, surface.nz, Time.get_ticks_msec() - t1])
 	if settings.resources_enabled:
 		NaturalResources.place(levels, source, sea_y, settings.resource_abundance, settings.mask_threshold)
+		for li in levels.size():
+			ResourceProps.build_ground(levels[li], surfaces[li], _level_roots[li])
 		for li in mini(2, levels.size()):
 			ResourceProps.build(levels[li], surfaces[li], hydrology[li], _level_roots[li], settings.resource_prop_scale * (1.0 + 1.2 * li))
 		_build_resource_icons()
@@ -241,6 +243,9 @@ func _build_resource_icons() -> void:
 		root.visible = _show_icons
 		_level_roots[li].add_child(root)
 		_icon_roots.append(root)
+		var outline := ResourceProps.build_outlines(level, surfaces[li], sea_y)
+		if outline != null:
+			root.add_child(outline)
 		var centers := {}
 		for d: Dictionary in level.deposits:
 			centers[d.center] = d
@@ -269,7 +274,7 @@ func _build_resource_icons() -> void:
 			sprite.fixed_size = true
 			# The deposit's centre gets the full badge; its other hexes a small, faint one so
 			# you can see how far it spreads.
-			sprite.pixel_size = 0.00028 if is_center else 0.00013
+			sprite.pixel_size = 0.00036 if is_center else 0.00016
 			sprite.modulate = Color(1, 1, 1, 1.0 if is_center else 0.6)
 			sprite.no_depth_test = true
 			sprite.shaded = false
@@ -286,7 +291,7 @@ func _build_resource_icons() -> void:
 				label.text = "%d" % d.size
 				label.billboard = BaseMaterial3D.BILLBOARD_ENABLED
 				label.fixed_size = true
-				label.pixel_size = 0.00028
+				label.pixel_size = 0.00034
 				label.font_size = 40
 				label.outline_size = 12
 				label.no_depth_test = true

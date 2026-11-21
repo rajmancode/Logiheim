@@ -47,6 +47,23 @@ const COATS := {
 }
 const ANIMAL_DIR := "res://assets/models/animals"
 
+## Static props (ore, quarries, kilns...) are drawn this much bigger again than animals, so a
+## deposit reads from the strategy camera.
+const PROP_BOOST := 2.0
+
+## Ground tint per resource: deposits colour the land they cover (rusty soil over iron, golden
+## stubble on farmland, pale salt crust...), so a deposit reads as one region across its hexes.
+const PATCH := {
+	K.TIMBER: Color(0.16, 0.3, 0.12), K.OAK: Color(0.34, 0.4, 0.14), K.TAR: Color(0.22, 0.15, 0.1),
+	K.STONE: Color(0.72, 0.72, 0.7), K.SOAPSTONE: Color(0.55, 0.65, 0.58), K.IRON: Color(0.6, 0.22, 0.12),
+	K.BOG_IRON: Color(0.5, 0.28, 0.1), K.COAL: Color(0.1, 0.1, 0.1), K.GOLD: Color(0.78, 0.64, 0.3),
+	K.SILVER: Color(0.8, 0.86, 0.95), K.GEMS: Color(0.6, 0.3, 0.85), K.SEALS: Color(0.75, 0.75, 0.72),
+	K.FARMLAND: Color(0.72, 0.58, 0.3), K.WOOL: Color(0.42, 0.58, 0.2), K.HORSES: Color(0.7, 0.62, 0.35),
+	K.GAME: Color(0.4, 0.5, 0.2), K.FURS: Color(0.55, 0.48, 0.32), K.CLAY: Color(0.78, 0.42, 0.22),
+	K.SALT: Color(0.86, 0.84, 0.78), K.PEAT: Color(0.25, 0.17, 0.1), K.AMBER: Color(0.95, 0.55, 0.12),
+	K.REEDS: Color(0.7, 0.72, 0.3), K.LAKE_ORE: Color(0.55, 0.3, 0.15),
+}
+
 const CROPS := [Color(0.36, 0.5, 0.17), Color(0.55, 0.6, 0.22), Color(0.8, 0.66, 0.3), Color(0.72, 0.6, 0.28), Color(0.42, 0.55, 0.45)]
 
 static var _meshes: Dictionary = {}
@@ -65,18 +82,17 @@ static func build(level: HexLevel, surface: TerrainSurface, hydro: Hydrology, pa
 			continue
 		var def: Array = PROPS[kind]
 		var model: String = def[0]
-		var amount_here := level.resource_amount[i]
-		# Big deposits only show props where they are richer, and herds gather at the centre.
-		if NaturalResources.INFO[kind][7] >= 6 and amount_here < 2:
-			continue
-		if def[4] and amount_here < 3:
+		var amount := level.resource_amount[i]
+		# Every hex of a deposit gets props; herds graze its richer hexes.
+		if def[4] and amount < 2:
 			continue
 		rng.seed = hash(Vector3i(level.coords[i].x, level.coords[i].y, 4111 + level.level_index))
 		var c := level.cell_center(i)
-		var amount := level.resource_amount[i]
 		var count := rng.randi_range(def[1], def[2]) + (amount - 1)
 		if def[4]:
-			count += amount * 2
+			count = rng.randi_range(def[1], def[2]) + (amount - 2) * 3
+		elif NaturalResources.INFO[kind][7] >= 6 and amount == 1:
+			count = maxi(1, count / 2)  # thin edges of big deposits
 		var herd_spot := _spot(def[3], c, s, surface, hydro, rng)
 		var base_model := model
 		for k in count:
@@ -93,7 +109,7 @@ static func build(level: HexLevel, surface: TerrainSurface, hydro: Hydrology, pa
 					_add_field(fields, p, s, surface, rng)
 				"@shoal":
 					var wy := _water_level(p, surface, hydro)
-					var r := s * 0.22 * rng.randf_range(0.7, 1.2)
+					var r := s * 0.3 * rng.randf_range(0.7, 1.2)
 					_add_quad(shoals, Vector3(p.x, wy + 0.06, p.y), r)
 				_:
 					var y := _water_level(p, surface, hydro) if def[3] == "deep" else surface.sample(p)
@@ -120,6 +136,8 @@ static func build(level: HexLevel, surface: TerrainSurface, hydro: Hydrology, pa
 						_spawn_animal(parent, model.trim_prefix("a:"), Vector3(p.x, y, p.y), yaw, size, custom,
 							surface, home, s * (0.6 if def[3] == "deep" else 0.9) * sqrt(scale), rng.randi())
 					else:
+						if not model.begins_with("a:"):
+							size *= PROP_BOOST
 						basis = basis.scaled(Vector3.ONE * size)
 						_add(items, model, Transform3D(basis, Vector3(p.x, y - 0.05 * size, p.y)), custom)
 
@@ -154,6 +172,140 @@ static func build(level: HexLevel, surface: TerrainSurface, hydro: Hydrology, pa
 		mi.material_override = _material("shoal")
 		mi.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
 		parent.add_child(mi)
+
+
+## Tints the ground under every deposit hex (PATCH colours), soft and mottled, fading out only
+## at the deposit's outer edge so its hexes merge into one region. Strength follows richness.
+static func build_ground(level: HexLevel, surface: TerrainSurface, parent: Node3D) -> void:
+	const N := 6
+	var s := level.hex_size
+	var verts := PackedVector3Array()
+	var colors := PackedColorArray()
+	var uvs := PackedVector2Array()
+	for i in level.cell_count():
+		var kind := level.resource[i]
+		if not PATCH.has(kind):
+			continue
+		var c := level.cell_center(i)
+		var tint: Color = PATCH[kind]
+		var strength := 0.22 + 0.11 * level.resource_amount[i]
+		for k in 6:
+			var ca := HexCoords.corner(k, s * 1.02)
+			var cb := HexCoords.corner((k + 1) % 6, s * 1.02)
+			var j := level.cell_at(c + (ca + cb))
+			var open := j < 0 or not same_deposit(level, i, j)
+			# Barycentric grid over the sector (centre, corner k, corner k+1).
+			var grid: Array = []
+			for a in N + 1:
+				var row: Array = []
+				for b in N + 1 - a:
+					var p := c + (ca * a + cb * b) / N
+					var h := surface.sample(p)
+					var t := float(a + b) / N
+					var al := strength * (1.0 - smoothstep(0.55, 1.0, t) if open else 1.0)
+					al *= smoothstep(0.6, 0.85, surface.normal_at(p).y)
+					if h < surface.sea_y + 0.1:
+						al = 0.0
+					row.append([Vector3(p.x, h + 0.18, p.y), Color(tint.r, tint.g, tint.b, al)])
+				grid.append(row)
+			for a in N:
+				for b in N - a:
+					_patch_tri(verts, colors, uvs, grid[a][b], grid[a + 1][b], grid[a][b + 1])
+					if b < N - a - 1:
+						_patch_tri(verts, colors, uvs, grid[a + 1][b], grid[a + 1][b + 1], grid[a][b + 1])
+	if verts.is_empty():
+		return
+	var arrays := []
+	arrays.resize(Mesh.ARRAY_MAX)
+	arrays[Mesh.ARRAY_VERTEX] = verts
+	arrays[Mesh.ARRAY_COLOR] = colors
+	arrays[Mesh.ARRAY_TEX_UV] = uvs
+	var normals := PackedVector3Array()
+	normals.resize(verts.size())
+	normals.fill(Vector3.UP)
+	arrays[Mesh.ARRAY_NORMAL] = normals
+	var mesh := ArrayMesh.new()
+	mesh.add_surface_from_arrays(Mesh.PRIMITIVE_TRIANGLES, arrays)
+	var mi := MeshInstance3D.new()
+	mi.name = "Res_ground"
+	mi.mesh = mesh
+	mi.material_override = _material("ground")
+	mi.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+	parent.add_child(mi)
+
+
+static func _patch_tri(verts: PackedVector3Array, colors: PackedColorArray, uvs: PackedVector2Array, a: Array, b: Array, c: Array) -> void:
+	if a[1].a <= 0.0 and b[1].a <= 0.0 and c[1].a <= 0.0:
+		return
+	# Leave out triangles that would hang across a terrace cliff.
+	var pa: Vector3 = a[0]
+	var pb: Vector3 = b[0]
+	var pc: Vector3 = c[0]
+	var rise := maxf(pa.y, maxf(pb.y, pc.y)) - minf(pa.y, minf(pb.y, pc.y))
+	if rise > Vector2(pa.x - pb.x, pa.z - pb.z).length() * 2.0:
+		return
+	# Clockwise seen from above (Godot front faces).
+	var order := [a, c, b] if (b[0] - a[0]).cross(c[0] - a[0]).y > 0.0 else [a, b, c]
+	for v: Array in order:
+		verts.append(v[0])
+		colors.append(v[1])
+		uvs.append(Vector2(v[0].x, v[0].z))
+
+
+## True if hexes i and j belong to the same deposit (on coarse levels: the same resource).
+static func same_deposit(level: HexLevel, i: int, j: int) -> bool:
+	if level.deposit[i] >= 0:
+		return level.deposit[j] == level.deposit[i]
+	return level.resource[j] == level.resource[i]
+
+
+## Outline ribbons around every deposit (shown with the resource icons): a coloured line along
+## each hex edge where the deposit ends, following the ground.
+static func build_outlines(level: HexLevel, surface: TerrainSurface, sea_y: float) -> MeshInstance3D:
+	var s := level.hex_size
+	var w := s * 0.05
+	var data := MeshData.new()
+	for i in level.cell_count():
+		var kind := level.resource[i]
+		if kind == 0:
+			continue
+		var c := level.cell_center(i)
+		var col: Color = PATCH.get(kind, Color(0.3, 0.6, 1.0)).lightened(0.25)
+		for k in 6:
+			var ca := HexCoords.corner(k, s)
+			var cb := HexCoords.corner((k + 1) % 6, s)
+			var j := level.cell_at(c + (ca + cb))
+			if j >= 0 and same_deposit(level, i, j):
+				continue
+			# Inset a little so neighbouring deposits' lines sit side by side.
+			var pa := c + ca * (1.0 - w / s)
+			var pb := c + cb * (1.0 - w / s)
+			var inward := -(ca + cb).normalized() * w
+			const SEG := 4
+			for q in SEG:
+				var p0 := pa.lerp(pb, float(q) / SEG)
+				var p1 := pa.lerp(pb, float(q + 1) / SEG)
+				var y0 := maxf(surface.sample(p0), sea_y) + 0.6
+				var y1 := maxf(surface.sample(p1), sea_y) + 0.6
+				var a := Vector3(p0.x, y0, p0.y)
+				var b := Vector3(p1.x, y1, p1.y)
+				var a2 := Vector3(p0.x + inward.x, y0, p0.y + inward.y)
+				var b2 := Vector3(p1.x + inward.x, y1, p1.y + inward.y)
+				data.tri(a, b, b2, Vector2.ZERO, Vector2.ZERO, Vector2.ZERO, Vector3.UP, Vector2.ZERO, col)
+				data.tri(a, b2, a2, Vector2.ZERO, Vector2.ZERO, Vector2.ZERO, Vector3.UP, Vector2.ZERO, col)
+	if data.verts.is_empty():
+		return null
+	var mi := MeshInstance3D.new()
+	mi.name = "DepositOutlines"
+	mi.mesh = data.to_mesh()
+	var mat := StandardMaterial3D.new()
+	mat.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+	mat.vertex_color_use_as_albedo = true
+	mat.cull_mode = BaseMaterial3D.CULL_DISABLED
+	mat.render_priority = 5
+	mi.material_override = mat
+	mi.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+	return mi
 
 
 ## Picks a spot in the hex that suits the resource. Returns Vector2(INF, INF) if none.
@@ -375,6 +527,8 @@ static func _material(kind: String) -> Material:
 			mat.shader = load("res://shaders/farm_field.gdshader")
 		"shoal":
 			mat.shader = load("res://shaders/fish_shoal.gdshader")
+		"ground":
+			mat.shader = load("res://shaders/resource_ground.gdshader")
 		_:
 			mat.shader = load("res://shaders/resource_prop.gdshader")
 			mat.set_shader_parameter("glint", kind.ends_with("glint"))

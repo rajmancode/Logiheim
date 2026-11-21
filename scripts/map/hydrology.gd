@@ -60,6 +60,11 @@ func filled_at(p: Vector2) -> float:
 	return _bilinear(filled, p)
 
 
+## Bilinear ground height (before pooling) at world (x, z).
+func height_at(p: Vector2) -> float:
+	return _bilinear(height, p)
+
+
 func area_at(p: Vector2) -> float:
 	var x := clampi(roundi(p.x / spacing), 0, nx - 1)
 	var z := clampi(roundi(p.y / spacing), 0, nz - 1)
