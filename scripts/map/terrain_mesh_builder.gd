@@ -5,7 +5,7 @@ extends RefCounted
 ## Vertex data used by shaders/hex_terrain.gdshader: the 8 terrain blend weights are packed
 ## into COLOR (layers 0-3), UV (4-5) and UV2 (6-7); CUSTOM0 = (floodplain strength, river
 ## level the floodplain floods from, arable land 0..1, volcanic ground 0..1); CUSTOM1 =
-## (moisture, convexity, river bed / bank 0..1, 0) for picking textures within each layer.
+## (moisture, convexity, river bed / bank 0..1, wetland 0..1) for picking textures within each layer.
 
 ## Quads per chunk edge.
 const CHUNK := 64
@@ -67,6 +67,7 @@ static func _chunk(s: TerrainSurface, x0: int, z0: int, x1: int, z1: int) -> Arr
 			custom1[k * 4] = s.moisture[i]
 			custom1[k * 4 + 1] = s.convexity[i]
 			custom1[k * 4 + 2] = s.river_mask[i]
+			custom1[k * 4 + 3] = s.wetland[i] if not s.wetland.is_empty() else 0.0
 			k += 1
 
 	var indices := PackedInt32Array()

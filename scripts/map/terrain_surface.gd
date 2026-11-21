@@ -35,6 +35,11 @@ var arable := PackedFloat32Array()
 var moisture := PackedFloat32Array()
 ## Local convexity, -1 (hollow) .. 1 (crest); dry, thin soil on crests.
 var convexity := PackedFloat32Array()
+## 0..1 wetland: bogs (uplands, blanket bog on high flats) and swamps/fens (lowland flats by
+## rivers and lakes, and hollows that hold water but are too small for a lake).
+var wetland := PackedFloat32Array()
+## Depth (m) water would pool to in small hollows that aren't lakes; feeds wetland.
+var hollow := PackedFloat32Array()
 ## 0..1 volcanic ground (basalt and ash): the cone of a volcano and its old lava flows.
 var volcanic := PackedFloat32Array()
 ## Plateau height of each hex.
@@ -62,6 +67,7 @@ func _init(p_level: HexLevel, source: TerrainSource, settings: HexMapSettings, g
 	_compute_plateaus()
 	_compute_heights()
 	_smooth_heights(_settings.terrain_smoothing)
+	_roughen_coast()
 
 
 func index(x: int, z: int) -> int:
@@ -102,6 +108,14 @@ func keep_clear(p: Vector2) -> bool:
 	var x := clampi(roundi(p.x / spacing), 0, nx - 1)
 	var z := clampi(roundi(p.y / spacing), 0, nz - 1)
 	return clear_mask[z * nx + x] == 1
+
+
+func wetland_at(p: Vector2) -> float:
+	if wetland.is_empty():
+		return 0.0
+	var x := clampi(roundi(p.x / spacing), 0, nx - 1)
+	var z := clampi(roundi(p.y / spacing), 0, nz - 1)
+	return wetland[z * nx + x]
 
 
 func volcanic_at(p: Vector2) -> float:
@@ -256,6 +270,20 @@ func _compute_heights() -> void:
 		_sink_edge(nx - 1, z)
 
 
+## Low, flat coasts (sand bars, beaches) would trace the hex outlines where the sea meets
+## them; a little noise on ground near sea level gives them natural bays and spits instead.
+func _roughen_coast() -> void:
+	for z in nz:
+		for x in nx:
+			var i := z * nx + x
+			var d := absf(heights[i] - sea_y)
+			if d > 3.0:
+				continue
+			var p := Vector2(x * spacing, z * spacing)
+			var n := BorderNoise.value_noise(p * 0.025 + Vector2(6.0, 2.0)) * 0.65 + BorderNoise.value_noise(p * 0.08 + Vector2(1.0, 9.0)) * 0.35
+			heights[i] += (n - 0.5) * 2.4 * (1.0 - smoothstep(0.0, 3.0, d))
+
+
 ## Rounds off the hex terraces: a few passes of a 3x3 blur over the whole grid. The coastline
 ## stays put (land never sinks below the sea, sea floor never rises out of it).
 func _smooth_heights(passes: int) -> void:
@@ -308,6 +336,13 @@ func _sink_edge(x: int, z: int) -> void:
 
 ## Marks lake beds (keeps trees and grass out, gives them muddy banks).
 func mark_lakes(hydro: Hydrology) -> void:
+	hollow.resize(nx * nz)
+	hollow.fill(0.0)
+	for z in nz:
+		for x in nx:
+			var p := Vector2(x * spacing, z * spacing)
+			if hydro.lake_at(p) < 0:
+				hollow[z * nx + x] = maxf(hydro.filled_at(p) - heights[z * nx + x], 0.0)
 	if hydro.lake_level.is_empty():
 		return
 	for z in nz:
@@ -571,6 +606,44 @@ func _compute_moisture(relief: float) -> void:
 	for i in n:
 		var low := 1.0 - smoothstep(sea_y + 2.0, sea_y + relief * 0.35, heights[i])
 		moisture[i] = clampf(moisture[i] * 2.2 + low * 0.3, 0.0, 1.0)
+	_compute_wetland(relief)
+
+
+## Wetland: flat, soft, damp ground in big irregular patches (swamps and fens low down, bogs
+## higher up), plus hollows that hold water, plus blanket bog on high flat plateaus. Kept out
+## of river channels, the sea shore and volcanic ground; farmland gives way to it.
+func _compute_wetland(relief: float) -> void:
+	var n := nx * nz
+	wetland.resize(n)
+	wetland.fill(0.0)
+	var amount := _settings.wetland_amount
+	if amount <= 0.0:
+		return
+	if hollow.size() != n:
+		hollow.resize(n)
+		hollow.fill(0.0)
+	for z in range(1, nz - 1):
+		for x in range(1, nx - 1):
+			var i := z * nx + x
+			var h := heights[i]
+			if h < sea_y + 0.8:
+				continue
+			var gx := (heights[i + 1] - heights[i - 1]) / (2.0 * spacing)
+			var gz := (heights[i + nx] - heights[i - nx]) / (2.0 * spacing)
+			var flat := 1.0 - smoothstep(0.03, 0.13, sqrt(gx * gx + gz * gz))
+			var b := i * LAYERS
+			var soft := clampf(weights[b + T.GRASS] + weights[b + T.FOREST] * 0.6 + weights[b + T.DIRT] * 0.8, 0.0, 1.0)
+			var p := Vector2(x * spacing, z * spacing)
+			var patch := BorderNoise.value_noise(p * 0.006 + Vector2(11.0, 3.0)) * 0.7 + BorderNoise.value_noise(p * 0.02 + Vector2(4.0, 9.0)) * 0.3
+			var rel := clampf((h - sea_y) / relief, 0.0, 1.0)
+			var w := smoothstep(0.45, 0.8, moisture[i]) * smoothstep(0.42, 0.6, patch)
+			w = maxf(w, smoothstep(0.08, 0.6, hollow[i]))
+			w = maxf(w, smoothstep(0.3, 0.55, rel) * smoothstep(0.58, 0.72, patch) * 0.85)
+			w *= flat * soft * (1.0 - smoothstep(0.5, 0.8, river_mask[i])) * (1.0 - volcanic[i])
+			wetland[i] = clampf(w * amount, 0.0, 1.0)
+	wetland = _box_blur(wetland, 2)
+	for i in n:
+		arable[i] *= 1.0 - smoothstep(0.1, 0.5, wetland[i])
 
 
 ## Separable box blur with running sums (cost independent of the radius).

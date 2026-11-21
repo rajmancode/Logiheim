@@ -144,6 +144,8 @@ static func build(level: HexLevel, surface: TerrainSurface, hydro: Hydrology, pa
 						basis = basis.scaled(Vector3.ONE * size)
 						_add(items, model, Transform3D(basis, Vector3(p.x, y - 0.05 * size, p.y)), custom)
 
+	_wetland_plants(surface, items, scale, level.level_index)
+
 	for model: String in items:
 		var m := _mesh(model)
 		if m == null:
@@ -352,35 +354,81 @@ static func _water_level(p: Vector2, surface: TerrainSurface, hydro: Hydrology) 
 	return surface.sea_y
 
 
-## A field draped over the ground: a grid following the terrain, furrows along its length.
+## A field draped over the ground: an irregular, rounded plot (a ring of noisy radii, so no
+## two fields share a shape and none is a rectangle), triangulated in rings that follow the
+## terrain. Furrows run along one direction (UV.x across them, metres).
 static func _add_field(data: MeshData, center: Vector2, s: float, surface: TerrainSurface, rng: RandomNumberGenerator) -> void:
-	var w := s * rng.randf_range(0.35, 0.55)
-	var l := s * rng.randf_range(0.55, 0.85)
+	const SIDES := 14
+	const RINGS := 3
+	var r0 := s * rng.randf_range(0.28, 0.42)
+	var stretch := rng.randf_range(1.1, 1.7)
 	var yaw := rng.randf() * PI
 	var ax := Vector2(cos(yaw), sin(yaw))
 	var ay := Vector2(-ax.y, ax.x)
 	var crop: Color = CROPS[rng.randi() % CROPS.size()]
-	var nu := 4
-	var nv := 6
+	var seed_v := rng.randf() * 100.0
+	var radii := PackedFloat32Array()
+	for k in SIDES:
+		var a := TAU * k / SIDES
+		var wob := BorderNoise.value_noise(Vector2(cos(a), sin(a)) * 1.6 + Vector2(seed_v, 2.0))
+		radii.append(r0 * (0.7 + 0.55 * wob))
+	# Points: centre, then rings outwards.
 	var pts: Array[Vector3] = []
 	var uvs: Array[Vector2] = []
-	for v in nv + 1:
-		for u in nu + 1:
-			var fu := (float(u) / nu - 0.5) * w
-			var fv := (float(v) / nv - 0.5) * l
-			var p := center + ax * fu + ay * fv
-			if surface.sample(p) < surface.sea_y + 0.4 or surface.keep_clear(p):
+	var local := Vector2.ZERO
+	for ring in RINGS + 1:
+		var count := 1 if ring == 0 else SIDES
+		for k in count:
+			var a := TAU * k / SIDES
+			var rr := 0.0 if ring == 0 else radii[k] * float(ring) / RINGS
+			local = Vector2(cos(a) * rr * stretch, sin(a) * rr)
+			var p := center + ax * local.x + ay * local.y
+			if surface.sample(p) < surface.sea_y + 0.4 or surface.keep_clear(p) or surface.wetland_at(p) > 0.5:
 				return
 			pts.append(Vector3(p.x, surface.sample(p) + 0.12, p.y))
-			uvs.append(Vector2(fu, fv))
-	for v in nv:
-		for u in nu:
-			var a := v * (nu + 1) + u
-			var b := a + 1
-			var c := a + nu + 1
-			var d := c + 1
-			data.tri(pts[a], pts[b], pts[d], uvs[a], uvs[b], uvs[d], Vector3.UP, Vector2.ZERO, crop)
-			data.tri(pts[a], pts[d], pts[c], uvs[a], uvs[d], uvs[c], Vector3.UP, Vector2.ZERO, crop)
+			uvs.append(Vector2(local.y, local.x))
+	for ring in RINGS:
+		for k in SIDES:
+			var k2 := (k + 1) % SIDES
+			if ring == 0:
+				var c := 0
+				var a := 1 + k
+				var b := 1 + k2
+				data.tri(pts[c], pts[a], pts[b], uvs[c], uvs[a], uvs[b], Vector3.UP, Vector2.ZERO, crop)
+			else:
+				var i0 := 1 + (ring - 1) * SIDES
+				var i1 := 1 + ring * SIDES
+				data.tri(pts[i0 + k], pts[i1 + k], pts[i1 + k2], uvs[i0 + k], uvs[i1 + k], uvs[i1 + k2], Vector3.UP, Vector2.ZERO, crop)
+				data.tri(pts[i0 + k], pts[i1 + k2], pts[i0 + k2], uvs[i0 + k], uvs[i1 + k2], uvs[i0 + k2], Vector3.UP, Vector2.ZERO, crop)
+
+
+## Reed clumps and sedge tussocks scattered over lowland wetland (bogs up high stay open,
+## with the odd tussock).
+static func _wetland_plants(surface: TerrainSurface, items: Dictionary, scale: float, level_index: int) -> void:
+	if surface.wetland.is_empty():
+		return
+	var rng := RandomNumberGenerator.new()
+	rng.seed = 90210 + level_index
+	var step := 9.0 * (1.0 + level_index * 1.5)
+	var y := 0.0
+	var gz := 0.0
+	while gz < (surface.nz - 1) * surface.spacing:
+		var gx := 0.0
+		while gx < (surface.nx - 1) * surface.spacing:
+			var p := Vector2(gx + rng.randf_range(-0.45, 0.45) * step, gz + rng.randf_range(-0.45, 0.45) * step)
+			gx += step
+			var w := surface.wetland_at(p)
+			if w < 0.45 or rng.randf() > w * 0.55:
+				continue
+			var h := surface.sample(p)
+			var upland := smoothstep(30.0, 70.0, h - surface.sea_y)
+			if rng.randf() < upland * 0.75:
+				continue
+			var size := scale * rng.randf_range(0.7, 1.3) * 0.8
+			var basis := Basis(Vector3.UP, rng.randf() * TAU).scaled(Vector3.ONE * size)
+			y = h - 0.05
+			_add(items, "reeds", Transform3D(basis, Vector3(p.x, y, p.y)), Color(rng.randf_range(0.85, 1.05), rng.randf_range(0.9, 1.05), 0.85, 1.0))
+		gz += step
 
 
 static func _add_quad(data: MeshData, c: Vector3, r: float) -> void:

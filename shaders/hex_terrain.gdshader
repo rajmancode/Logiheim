@@ -41,12 +41,22 @@ const int T_MUD = 19;
 const int T_SOIL = 20;
 const int T_GRAVEL = 21;
 const int T_ASH = 22;
+const int T_BOG_MOSS = 26;
+const int T_SWAMP_MUD = 27;
+const int T_HEATH = 28;
+const int T_DRY_MEADOW = 29;
+const int T_TUNDRA = 30;
+const int T_ALPINE = 31;
+const int T_ROOTS = 32;
+const int T_SEDGE = 33;
+const int T_FEN = 34;
+const int T_REEDS = 35;
 
 uniform sampler2DArray albedo_array : source_color, filter_linear_mipmap_anisotropic, repeat_enable;
 uniform sampler2DArray normal_array : filter_linear_mipmap_anisotropic, repeat_enable;
-uniform float tex_size[26];           // metres covered by one texture repeat, per texture
+uniform float tex_size[36];           // metres covered by one texture repeat, per texture
 uniform vec4 layer_tint[8];
-uniform vec4 tex_tint[26];            // per-texture colour correction (a = saturation)
+uniform vec4 tex_tint[36];            // per-texture colour correction (a = saturation)
 uniform float blend_depth = 0.18;     // softness of height blending (texture height units)
 uniform float normal_strength = 1.0;
 uniform float macro_scale = 0.0035;   // large-scale colour variation, 1/metres
@@ -62,7 +72,7 @@ varying vec4 v_w1;
 varying vec2 v_flood;
 varying float v_arable;
 varying float v_volcanic;
-varying vec3 v_ctx;   // moisture, convexity, river bed
+varying vec4 v_ctx;   // moisture, convexity, river bed, wetland
 
 void vertex() {
 	v_world_pos = (MODEL_MATRIX * vec4(VERTEX, 1.0)).xyz;
@@ -72,7 +82,7 @@ void vertex() {
 	v_flood = CUSTOM0.xy;
 	v_arable = CUSTOM0.z;
 	v_volcanic = CUSTOM0.w;
-	v_ctx = CUSTOM1.xyz;
+	v_ctx = CUSTOM1;
 }
 
 // Samples one texture: planar from above on flat ground, triplanar on slopes.
@@ -106,9 +116,15 @@ void pick(int cls, float hr, float slope, float alt, float moist, float convex, 
 	float c1 = 0.0;
 	float c2 = 0.0;
 	float c3 = 0.0;
+	float c4 = 0.0;
+	float c5 = 0.0;
+	float c6 = 0.0;
 	int b1 = 0;
 	int b2 = 0;
 	int b3 = 0;
+	int b4 = 0;
+	int b5 = 0;
+	int b6 = 0;
 	if (cls <= 1) {
 		// Sea floor: sand with pebble beds near the shore and on rises.
 		a = T_SAND;
@@ -123,17 +139,25 @@ void pick(int cls, float hr, float slope, float alt, float moist, float convex, 
 		a = T_GRASS;
 		b1 = T_MEADOW; c1 = max(smoothstep(0.35, 0.75, moist), smoothstep(0.6, 0.75, n2) * 0.7);
 		b2 = T_SPARSE; c2 = max(smoothstep(0.2, 0.75, convex), smoothstep(0.66, 0.8, n1) * 0.5) * (1.0 - moist * 0.6);
-		b3 = T_MOSS;   c3 = smoothstep(0.42, 0.7, alt) * smoothstep(0.4, 0.62, n2 + moist * 0.3);
+		b3 = T_MOSS;   c3 = smoothstep(0.42, 0.7, alt) * smoothstep(0.4, 0.62, n2 + moist * 0.3) * 0.8;
+		// Moorland heath on the middle slopes, hay meadows in dry lowland, stony upland
+		// grass near the tops.
+		b4 = T_HEATH;      c4 = smoothstep(0.22, 0.45, alt) * smoothstep(0.45, 0.65, n1) * (1.0 - moist * 0.5);
+		b5 = T_DRY_MEADOW; c5 = smoothstep(0.56, 0.72, n1) * (1.0 - smoothstep(0.2, 0.4, alt)) * (1.0 - moist);
+		b6 = T_TUNDRA;     c6 = smoothstep(0.55, 0.8, alt) * (0.6 + 0.4 * n2);
 	} else if (cls == 4) {
 		a = T_FOREST;
 		b1 = T_NEEDLES; c1 = smoothstep(0.12, 0.4, alt) * (0.7 + 0.3 * n1);
 		b2 = T_LEAVES;  c2 = smoothstep(0.55, 0.72, n1) * (1.0 - smoothstep(0.15, 0.35, alt));
 		b3 = T_MOSS;    c3 = smoothstep(0.5, 0.85, moist) * smoothstep(0.45, 0.6, n2);
+		b4 = T_ROOTS;   c4 = smoothstep(0.7, 0.82, n2) * 0.8;
 	} else if (cls == 5) {
 		a = T_ROCK;
 		b1 = T_DARK_ROCK;  c1 = max(volc, smoothstep(0.55, 0.85, alt) * smoothstep(0.45, 0.62, n1));
 		b2 = T_CLIFF;      c2 = smoothstep(0.5, 0.8, slope) * (0.55 + 0.45 * n2);
 		b3 = T_MOSSY_ROCK; c3 = smoothstep(0.35, 0.75, moist) * (1.0 - smoothstep(0.3, 0.55, alt)) * smoothstep(0.42, 0.6, n2) * (1.0 - volc);
+		// Flat high rock is broken, mossy stony ground rather than a bare face.
+		b4 = T_ALPINE;     c4 = smoothstep(0.45, 0.75, alt) * (1.0 - smoothstep(0.12, 0.3, slope)) * (1.0 - volc);
 	} else if (cls == 6) {
 		a = T_SNOW;
 		b1 = T_SNOW_ROCK; c1 = smoothstep(0.22, 0.5, slope) + smoothstep(0.62, 0.76, n1) * 0.6;
@@ -147,12 +171,16 @@ void pick(int cls, float hr, float slope, float alt, float moist, float convex, 
 			b3 = T_SOIL;
 			c3 = arable;
 		}
+		b4 = T_SWAMP_MUD; c4 = smoothstep(0.7, 0.95, moist);
 	}
 	// The strongest alternative wins; its strength is how much of it shows.
 	b = b1;
 	t = c1;
 	if (c2 > t) { b = b2; t = c2; }
 	if (c3 > t) { b = b3; t = c3; }
+	if (c4 > t) { b = b4; t = c4; }
+	if (c5 > t) { b = b5; t = c5; }
+	if (c6 > t) { b = b6; t = c6; }
 	t = clamp(t, 0.0, 1.0);
 }
 
@@ -247,34 +275,121 @@ void fragment() {
 		rough = mix(rough, 0.72, vb);
 	}
 
-	// Arable land: a patchwork of fields (ploughed furrows, young green crops, ripening
-	// grain, fallow meadow) on rich dark soil, each field with its own furrow direction.
+	// Wetlands: bogs up high (sphagnum with heather hummocks), swamps and fens lower down
+	// (sedge and fen grass with mud), reed beds ringing dark, peaty pools of standing water.
+	float wet = v_ctx.w;
+	float pool_w = 0.0;
+	if (wet > 0.02 && !tri) {
+		float upland = smoothstep(0.12, 0.3, alt);
+		float hum = env_fbm(p.xz * 0.09 + vec2(3.0, 1.0));
+		vec4 dw1;
+		vec4 dw2;
+		vec4 g1 = sample_tex(upland > 0.5 ? T_BOG_MOSS : T_SEDGE, p, tw, false, dw1);
+		vec4 g2 = sample_tex(upland > 0.5 ? T_HEATH : T_FEN, p, tw, false, dw2);
+		float hm = smoothstep(0.45, 0.6, hum + (g2.a - g1.a) * 0.3);
+		vec3 ground = mix(g1.rgb, g2.rgb, hm);
+		vec2 gn = mix(dw1.xy, dw2.xy, hm);
+		vec4 dw3;
+		vec3 mud = sample_tex(T_SWAMP_MUD, p, tw, false, dw3).rgb;
+		float mudm = smoothstep(0.55, 0.7, env_noise(p.xz * 0.05 + vec2(7.0, 2.0))) * (1.0 - upland * 0.6);
+		ground = mix(ground, mud, mudm);
+		float wa = smoothstep(0.05, 0.45, wet);
+		albedo = mix(albedo, ground, wa);
+		nrm_xy = mix(nrm_xy, gn, wa);
+		rough = mix(rough, mix(0.8, 0.35, mudm), wa);
+		float poolf = env_fbm(p.xz * 0.035 + vec2(2.7, 8.1)) + wet * 0.3;
+		float reedb = smoothstep(0.44, 0.5, poolf) * (1.0 - smoothstep(0.54, 0.58, poolf)) * (1.0 - upland) * smoothstep(0.4, 0.7, wet);
+		if (reedb > 0.01) {
+			vec4 dr;
+			vec3 reed = sample_tex(T_REEDS, p, tw, false, dr).rgb;
+			albedo = mix(albedo, reed * vec3(0.85, 0.9, 0.7), reedb * 0.85);
+		}
+		float pool = smoothstep(0.54, 0.58, poolf) * smoothstep(0.4, 0.65, wet);
+		if (pool > 0.0) {
+			vec2 ruv = p.xz * 0.05 - wind_direction * wind_time * 0.02;
+			vec3 r1 = texture(flood_ripples, ruv).xyz * 2.0 - 1.0;
+			albedo = mix(albedo, vec3(0.012, 0.016, 0.018), pool);
+			pool_w = pool;
+			rough = mix(rough, 0.05, pool);
+			nrm_xy = mix(nrm_xy, r1.xy * 0.08, pool);
+			ao = mix(ao, 1.0, pool);
+		}
+	}
+
+	// Flower meadows: scattered blooms (yellow, white, purple, blue) in lowland grass.
+	float grassy = w[3] * (1.0 - wet) * (1.0 - v_arable);
+	if (grassy > 0.3 && !tri) {
+		float bloom = smoothstep(0.5, 0.68, env_fbm(p.xz * 0.012 + vec2(9.0, 4.0))) * (1.0 - smoothstep(0.2, 0.55, alt));
+		if (bloom > 0.01) {
+			vec2 fc = p.xz * 2.2;
+			vec2 cell = floor(fc);
+			if (env_hash(cell + vec2(500.0, 3.0)) > 0.8) {
+				vec2 off = vec2(env_hash(cell + vec2(31.0, 1.0)), env_hash(cell + vec2(77.0, 5.0))) * 0.6 + 0.2;
+				float fd = length(fract(fc) - off);
+				float f = (1.0 - smoothstep(0.07, 0.15, fd)) * bloom * smoothstep(0.3, 0.7, grassy);
+				float k = env_hash(cell + vec2(9.0, 13.0));
+				vec3 fcol = k < 0.3 ? vec3(0.85, 0.72, 0.1) : (k < 0.55 ? vec3(0.85, 0.85, 0.8) : (k < 0.8 ? vec3(0.45, 0.18, 0.6) : vec3(0.22, 0.3, 0.75)));
+				albedo = mix(albedo, fcol, f);
+			}
+		}
+	}
+
+	// Farmland: irregular parcels like old field systems (Voronoi cells on a warped plane,
+	// 30-80 m across), each with its own crop and furrow direction; some are split into long
+	// strips. Grassy margins and patchy hedgerows run along the boundaries.
 	if (v_arable > 0.02 && !tri) {
-		vec2 fc = p.xz / 46.0;
-		vec2 cell = floor(fc + vec2(env_noise(p.xz * 0.03), env_noise(p.zx * 0.03 + 5.0)) * 0.6);
-		float r = env_hash(cell);
-		float r2 = env_hash(cell + vec2(17.0, 3.0));
+		vec2 warp = vec2(env_fbm(p.xz * 0.008), env_fbm(p.zx * 0.008 + vec2(4.0, 2.0))) * 45.0;
+		vec2 q = (p.xz + warp) / 48.0;
+		vec2 ic = floor(q);
+		float d1 = 9.0;
+		float d2 = 9.0;
+		vec2 pid = ic;
+		for (int j = -1; j <= 1; j++) {
+			for (int i = -1; i <= 1; i++) {
+				vec2 c = ic + vec2(float(i), float(j));
+				vec2 fp = c + vec2(env_hash(c + vec2(101.0, 7.0)), env_hash(c + vec2(211.0, 3.0))) * 0.9 + 0.05;
+				float d = length(q - fp);
+				if (d < d1) {
+					d2 = d1;
+					d1 = d;
+					pid = c;
+				} else if (d < d2) {
+					d2 = d;
+				}
+			}
+		}
+		float edge = d2 - d1;
+		float r = env_hash(pid + vec2(7.0, 11.0));
+		float r2 = env_hash(pid + vec2(17.0, 3.0));
 		float ang = r * 3.14159;
 		vec2 dir = vec2(cos(ang), sin(ang));
-		float furrow = 0.5 + 0.5 * sin(dot(p.xz, dir) * 6.2832 / 1.6);
+		float across = dot(p.xz, vec2(-dir.y, dir.x));
+		float furrow = 0.5 + 0.5 * sin(across * 6.2832 / 1.6 + env_noise(p.xz * 0.05) * 1.5);
+		float rs = r2;
+		if (r2 > 0.62) {
+			float strip = floor(across / (7.0 + 9.0 * r));
+			rs = env_hash(vec2(strip, pid.x * 3.0 + pid.y * 17.0));
+		}
 		vec4 dn;
 		vec3 soil = sample_tex(T_SOIL, p, tw, false, dn).rgb;
 		vec3 field;
 		// Crops tint the real grass texture, so fields keep its detail instead of flat paint.
-		if (r2 < 0.3) {
-			field = soil * (0.7 + 0.45 * furrow);                                   // ploughed
-		} else if (r2 < 0.55) {
-			field = mix(soil, albedo * vec3(0.78, 1.05, 0.6), 0.35 + 0.45 * furrow); // young crop
-		} else if (r2 < 0.75) {
-			field = mix(soil, albedo * vec3(1.3, 1.08, 0.55), 0.4 + 0.4 * furrow);   // ripening grain
+		if (rs < 0.28) {
+			field = soil * (0.7 + 0.45 * furrow);                                    // ploughed
+		} else if (rs < 0.52) {
+			field = mix(soil, albedo * vec3(0.78, 1.05, 0.6), 0.35 + 0.45 * furrow);  // young crop
+		} else if (rs < 0.74) {
+			field = mix(soil, albedo * vec3(1.3, 1.08, 0.55), 0.4 + 0.4 * furrow);    // ripening grain
 		} else {
-			field = albedo * vec3(0.92, 1.08, 0.82);                               // fallow meadow
+			vec4 dm;
+			field = sample_tex(T_DRY_MEADOW, p, tw, false, dm).rgb;                  // hay meadow
 		}
-		// Field margins stay grassy.
-		vec2 fe = abs(fract(fc + vec2(env_noise(p.xz * 0.03), env_noise(p.zx * 0.03 + 5.0)) * 0.6) - 0.5);
-		float margin = smoothstep(0.42, 0.48, max(fe.x, fe.y));
-		float a = smoothstep(0.1, 0.6, v_arable) * (1.0 - margin) * 0.85;
+		float margin = 1.0 - smoothstep(0.025, 0.08, edge);
+		float hedge = (1.0 - smoothstep(0.0, 0.03, edge)) * smoothstep(0.42, 0.52, env_noise(p.xz * 0.025 + vec2(1.0, 8.0)));
+		float fa = smoothstep(0.1, 0.6, v_arable);
+		float a = fa * (1.0 - margin) * 0.85;
 		albedo = mix(albedo, field, a);
+		albedo = mix(albedo, albedo * vec3(0.45, 0.6, 0.38), hedge * fa * 0.85);
 		rough = mix(rough, 0.95, a);
 	}
 
@@ -330,5 +445,10 @@ void fragment() {
 	AO = ao;
 	AO_LIGHT_AFFECT = 0.3;
 	NORMAL = normalize((VIEW_MATRIX * vec4(wn, 0.0)).xyz);
+	// Standing water in wetlands mirrors the sky, strongest at grazing angles.
+	if (pool_w > 0.0) {
+		float fres = pow(1.0 - clamp(dot(normalize(VIEW), NORMAL), 0.0, 1.0), 4.0);
+		emission += vec3(0.28, 0.36, 0.45) * (0.12 + 0.88 * fres) * pool_w * cloud_shadow(p) * (0.4 + 0.6 * max(sun_direction.y, 0.0));
+	}
 	EMISSION = emission;
 }

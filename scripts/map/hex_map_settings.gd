@@ -104,6 +104,10 @@ extends Resource
 @export var fjord_width := 80.0
 @export var fjord_depth := 22.0
 
+@export_group("Wetlands")
+## How much bog, swamp and fen forms on flat, damp ground (0 = none).
+@export_range(0.0, 2.0, 0.05) var wetland_amount := 1.0
+
 @export_group("Volcano")
 ## Volcanic cones placed inland, with a crater, lava, smoke and basalt around them.
 @export_range(0, 3) var volcano_count := 1

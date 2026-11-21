@@ -602,7 +602,10 @@ static func build_lakes(hydro: Hydrology, surface: TerrainSurface, material: Mat
 			if m < 0 or cover[m] >= 0 or surface.heights[m] >= hydro.lake_level[id]:
 				continue
 			var mp := Vector2(m % nx * sp, m / nx * sp)
-			if reach[_hcell(hydro, mp.x, mp.y)] == id and surface.river_mask[m] < (0.7 if hydro.lake_at(mp) == id else 0.6):
+			# (Beyond the lake itself it never spreads out over the sea floor.)
+			var own := hydro.lake_at(mp) == id
+			if reach[_hcell(hydro, mp.x, mp.y)] == id and surface.river_mask[m] < (0.7 if own else 0.6) \
+					and (own or surface.heights[m] > surface.sea_y + 0.3):
 				cover[m] = id
 				queue.append(m)
 	# Two rings into the shore, only where the ground rises out of the water.

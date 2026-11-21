@@ -55,6 +55,17 @@ LAYERS = {
     # Props
     "bark": "Bark014",
     "wood": "Wood049",
+    # Wetlands, moor and upland
+    "bog_moss": "Moss002",
+    "swamp_mud": "Ground050",
+    "heath": "Ground073",
+    "dry_meadow": "Ground063",
+    "tundra": "Ground086",
+    "alpine": "Ground047",
+    "roots": "Ground076",
+    "sedge": "Grass002",
+    "fen": "Ground074",
+    "reeds": "ThatchedRoof001A",
 }
 SIZE = 1024
 OUT = Path(__file__).resolve().parent.parent / "assets" / "textures" / "terrain"

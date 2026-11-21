@@ -12,6 +12,8 @@ extends RefCounted
 const SHADER_PATH := "res://shaders/hex_terrain.gdshader"
 const TEXTURE_DIR := "res://assets/textures/terrain"
 const LAYER_SIZE := 1024
+## Block-compress the texture arrays (saves ~300 MB of video memory, costs load time).
+const COMPRESS := true
 
 ## Every texture, in texture-array order. The shaders refer to them by these indices
 ## (constants T_* in shaders/hex_terrain.gdshader; index() for scripts).
@@ -23,6 +25,7 @@ const TEXTURES := [
 	"snow", "snow_rocky", "ice",
 	"dirt", "mud", "soil", "gravel", "ash", "lava",
 	"bark", "wood",
+	"bog_moss", "swamp_mud", "heath", "dry_meadow", "tundra", "alpine", "roots", "sedge", "fen", "reeds",
 ]
 ## Metres covered by one repeat of each texture.
 const TEXTURE_METRES := [
@@ -33,6 +36,7 @@ const TEXTURE_METRES := [
 	7.0, 8.0, 10.0,
 	3.5, 4.0, 4.0, 3.0, 4.0, 6.0,
 	2.0, 2.0,
+	3.0, 3.5, 4.0, 4.0, 5.0, 6.0, 3.5, 4.0, 4.5, 3.0,
 ]
 ## Per-texture colour correction: rgb multiplier (sRGB) and saturation in alpha. Ice loses
 ## most of its turquoise; sparse grass is darkened so it doesn't wash out; leaf litter less
@@ -42,6 +46,11 @@ const TEXTURE_TINTS := {
 	"leaf_litter": Color(0.8, 0.75, 0.65, 0.65),
 	"ice": Color(0.95, 0.98, 1.0, 0.25),
 	"moss": Color(0.9, 0.95, 0.85, 0.85),
+	# Sphagnum: from vivid green to the ochre and rusty tones of a real bog.
+	"bog_moss": Color(0.95, 0.85, 0.6, 0.75),
+	# Heather: a purplish-brown cast.
+	"heath": Color(0.85, 0.72, 0.8, 0.8),
+	"reeds": Color(0.95, 0.9, 0.75, 1.0),
 }
 ## Tint per layer (sRGB). The sea floor is darker and greener; forest floor a touch darker.
 const LAYER_TINTS := [
@@ -150,6 +159,12 @@ static func _ensure_arrays() -> void:
 			normal = _solid(Color(0.5, 0.5, 1.0, 0.85))
 		albedo_images.append(albedo)
 		normal_images.append(normal)
+	# Block-compress in video memory (DXT5, 4:1): ~100 MB instead of ~400 MB for 36 sets.
+	if COMPRESS:
+		for img in albedo_images:
+			img.compress(Image.COMPRESS_S3TC)
+		for img in normal_images:
+			img.compress(Image.COMPRESS_S3TC)
 	_albedo_array = Texture2DArray.new()
 	_albedo_array.create_from_images(albedo_images)
 	_normal_array = Texture2DArray.new()

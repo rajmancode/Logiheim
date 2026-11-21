@@ -33,3 +33,13 @@ They were packed with `tools/pack_ambientcg.py` from the 1K-JPG downloads into
 | lava | lava crust in the crater | [Lava002](https://ambientcg.com/view?id=Lava002) |
 | bark | tree trunks, logs | [Bark014](https://ambientcg.com/view?id=Bark014) |
 | wood | log piles, kilns, timber props | [Wood049](https://ambientcg.com/view?id=Wood049) |
+| bog_moss | sphagnum bogs | [Moss002](https://ambientcg.com/view?id=Moss002) |
+| swamp_mud | swamp mud, very wet earth | [Ground050](https://ambientcg.com/view?id=Ground050) |
+| heath | heather moorland, bog hummocks | [Ground073](https://ambientcg.com/view?id=Ground073) |
+| dry_meadow | hay meadows, fallow fields | [Ground063](https://ambientcg.com/view?id=Ground063) |
+| tundra | stony upland grass | [Ground086](https://ambientcg.com/view?id=Ground086) |
+| alpine | flat high rocky ground | [Ground047](https://ambientcg.com/view?id=Ground047) |
+| roots | roots in the forest floor | [Ground076](https://ambientcg.com/view?id=Ground076) |
+| sedge | swamp sedge | [Grass002](https://ambientcg.com/view?id=Grass002) |
+| fen | fen grass | [Ground074](https://ambientcg.com/view?id=Ground074) |
+| reeds | reed beds around swamp pools | [ThatchedRoof001A](https://ambientcg.com/view?id=ThatchedRoof001A) |
