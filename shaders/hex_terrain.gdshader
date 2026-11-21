@@ -164,6 +164,36 @@ vec4 sample_tex(int i, vec3 p, vec3 tw, bool tri, out vec4 nrm) {
 	return alb;
 }
 
+// Rock surface detail: a Gaussian-like height field (four octaves of noise summed, so values
+// cluster round the middle with rare highs and lows, like weathered stone) with scattered
+// weathering pits (Gaussian dents round random points). q in metres.
+float rock_h(vec2 q) {
+	float h = 0.0;
+	float a = 0.5;
+	float f = 0.45;
+	for (int o = 0; o < 4; o++) {
+		h += (env_noise(q * f + vec2(float(o) * 7.3, float(o) * 3.1)) - 0.5) * a;
+		f *= 2.13;
+		a *= 0.55;
+	}
+	vec2 cq = q * 0.6;
+	vec2 ic = floor(cq);
+	float pit = 0.0;
+	for (int j = -1; j <= 1; j++) {
+		for (int i = -1; i <= 1; i++) {
+			vec2 c = ic + vec2(float(i), float(j));
+			if (env_hash(c + vec2(41.0, 9.0)) < 0.78 - 0.25 * env_noise(c * 0.13)) {
+				continue;
+			}
+			vec2 pt = c + vec2(env_hash(c + vec2(3.0, 17.0)), env_hash(c + vec2(23.0, 5.0)));
+			float r = 0.06 + 0.2 * pow(env_hash(c + vec2(13.0, 29.0)), 2.0);
+			float d = length(cq - pt);
+			pit = max(pit, exp(-(d * d) / (r * r)));
+		}
+	}
+	return h - pit * 0.35;
+}
+
 // Picks two textures from a terrain layer's family and how much of the second shows, from
 // where the pixel is: height above the sea (hr), slope (0 flat .. 1 vertical), relative
 // altitude, moisture, convexity, river bed, volcanic ground, farmland and two noises.
@@ -330,6 +360,54 @@ void fragment() {
 		albedo = mix(albedo, basalt, vb * 0.92);
 		rough = mix(rough, 0.72, vb);
 	}
+
+	// Rock: weathered detail on top of the photo textures. Gaussian-noise relief and pits bend
+	// the normals and darken the crevices; warm and cool mineral staining at a larger scale,
+	// lichen on the gentler faces and layered strata on steep ones.
+	float rockm = smoothstep(0.12, 0.55, w[5]) * (1.0 - smoothstep(0.3, 0.8, v_volcanic) * 0.6);
+	if (rockm > 0.01) {
+		vec2 rq;
+		if (abs(n.y) > 0.62) {
+			rq = p.xz;
+		} else if (abs(n.x) > abs(n.z)) {
+			rq = p.zy;
+		} else {
+			rq = p.xy;
+		}
+		float e = 0.12;
+		float h0 = rock_h(rq);
+		float hx = rock_h(rq + vec2(e, 0.0));
+		float hz = rock_h(rq + vec2(0.0, e));
+		vec2 grad = vec2(hx - h0, hz - h0) / e;
+		nrm_xy += grad * 0.5 * rockm;
+		// Crevices and pits hold shadow and grime; knobs catch the light a little.
+		// Shading comes from the relief itself; only the deepest hollows hold a little grime.
+		float cav = smoothstep(-0.45, -0.05, h0);
+		albedo *= mix(1.0, mix(0.82, 1.04, cav), rockm);
+		ao = mix(ao, ao * mix(0.55, 1.0, cav), rockm);
+		// Mineral staining: Gaussian-like variation, warm iron and cool grey.
+		float g = env_fbm(p.xz * 0.045 + vec2(17.0, 3.0)) + (env_noise(p.xz * 0.21) - 0.5) * 0.3;
+		vec3 stain = mix(vec3(0.9, 0.95, 1.04), vec3(1.1, 1.0, 0.86), smoothstep(0.3, 0.7, g));
+		albedo = mix(albedo, albedo * stain, rockm);
+		// Lichen: crusty patches on gentler, sun-facing rock.
+		float lich = smoothstep(0.62, 0.72, env_fbm(p.xz * 0.35 + vec2(5.0, 9.0))) * (1.0 - smoothstep(0.35, 0.7, slope)) * smoothstep(0.0, 0.2, h0 + 0.1);
+		float lum = dot(albedo, vec3(0.3, 0.55, 0.15));
+		vec3 lichen_col = mix(vec3(0.42, 0.44, 0.3), vec3(0.62, 0.58, 0.38), env_hash(floor(p.xz * 0.5)));
+		albedo = mix(albedo, lichen_col * (0.6 + lum), lich * 0.55 * rockm);
+		// Strata on steep faces: wavy beds with darker partings.
+		float steepr = smoothstep(0.35, 0.65, slope);
+		if (steepr > 0.0) {
+			float bed = p.y * 0.9 + (env_fbm(p.xz * 0.03) - 0.5) * 6.0;
+			float part = smoothstep(0.82, 0.97, 0.5 + 0.5 * sin(bed * 3.1416));
+			albedo *= 1.0 - part * 0.35 * steepr * rockm;
+			nrm_xy.y += part * 0.25 * steepr * rockm;
+		}
+		rough = mix(rough, clamp(rough + (0.5 - cav) * 0.3, 0.3, 1.0), rockm);
+	}
+	// All ground: a mid-scale Gaussian-like variation in tone, between the macro patches and
+	// the texture detail, so no surface looks flat-printed.
+	float mid = env_fbm(p.xz * 0.06 + vec2(31.0, 7.0)) + (env_noise(p.xz * 0.25 + vec2(2.0, 5.0)) - 0.5) * 0.25;
+	albedo *= 1.0 + (mid - 0.5) * 0.22;
 
 	// Wetlands: bogs up high (sphagnum with heather hummocks), swamps and fens lower down
 	// (sedge and fen grass with mud), reed beds ringing dark, peaty pools of standing water.

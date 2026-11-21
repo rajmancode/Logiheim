@@ -188,6 +188,9 @@ func rebuild() -> void:
 		if not paths.is_empty():
 			RiverMeshBuilder.settle(paths, surface)
 			surface.carve_channels(paths)
+		# Weathered relief on rocky ground (clear of trails, rivers and cleared ground).
+		if level.level_index <= 1:
+			surface.add_rock_relief(1.0 if level.level_index == 0 else 0.6)
 		# Resource props level their own pads, so they go in before the terrain is meshed.
 		if settings.resources_enabled and level.level_index <= 1:
 			ResourceProps.build(level, surface, hydro, root, settings.resource_prop_scale * (1.0 + 1.2 * level.level_index))

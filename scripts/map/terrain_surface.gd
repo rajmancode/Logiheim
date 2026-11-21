@@ -123,10 +123,60 @@ func ground_min(p: Vector2, r: float) -> float:
 	return h
 
 
+## Weathered relief on rocky ground: knobs and hollows from Gaussian-like noise (several
+## octaves summed) and scattered weathering pits (Gaussian dents), up to about a metre and a
+## half. Trails and their banks, river channels and cleared ground (lake shores, river banks,
+## cave ledges) are protected by a mask grown ~20 m out from them, so paths stay smooth.
+func add_rock_relief(amount := 1.0) -> void:
+	var n := nx * nz
+	var protect := PackedFloat32Array()
+	protect.resize(n)
+	for i in n:
+		protect[i] = clampf(maxf(maxf(path_mask[i] * 3.0, river_mask[i] * 3.0), float(clear_mask[i])), 0.0, 1.0)
+	for it in 4:
+		var src := protect.duplicate()
+		for z in range(1, nz - 1):
+			for x in range(1, nx - 1):
+				var i := z * nx + x
+				protect[i] = maxf(src[i], maxf(maxf(src[i - 1], src[i + 1]), maxf(src[i - nx], src[i + nx])) * 0.85)
+	var pit_cell := 24.0
+	for z in nz:
+		for x in nx:
+			var i := z * nx + x
+			var rock := weights[i * LAYERS + T.ROCK]
+			if rock < 0.15 or heights[i] < sea_y + 1.0:
+				continue
+			var r := smoothstep(0.15, 0.6, rock) * (1.0 - protect[i])
+			if r <= 0.0:
+				continue
+			var p := Vector2(x, z) * spacing
+			var g := 0.0
+			var a := 0.5
+			var f := 0.025
+			for o in 4:
+				g += (BorderNoise.snoise(p * f + Vector2(o * 5.1, o * 2.3)) - 0.5) * a
+				f *= 2.1
+				a *= 0.55
+			var pit := 0.0
+			var cq := p / pit_cell
+			var ic := Vector2i(floori(cq.x), floori(cq.y))
+			for dj in range(-1, 2):
+				for di in range(-1, 2):
+					var c := Vector2(ic.x + di, ic.y + dj)
+					var hsh := BorderNoise.snoise(c * 7.31 + Vector2(1.7, 9.2))
+					if hsh < 0.5:
+						continue
+					var pt := c + Vector2(BorderNoise.snoise(c * 3.7 + Vector2(4.0, 1.0)), BorderNoise.snoise(c * 5.3 + Vector2(8.0, 2.0)))
+					var rr := 0.22 + 0.2 * hsh
+					var d := cq.distance_to(pt)
+					pit = maxf(pit, exp(-(d * d) / (rr * rr)))
+			heights[i] += (g * 2.2 - pit * 1.4) * amount * r
+
+
 ## A level pad for a prop: the ground within r is brought to its average height there (so the
 ## prop sits flush, all of it in view), easing back to the land over `ease` metres. River
 ## channels and trail beds are left alone; trees keep off the pad. Returns the pad height.
-func level_pad(p: Vector2, r: float, ease := 6.0, min_y := -INF) -> float:
+func level_pad(p: Vector2, r: float, ease := 6.0, min_y := -INF, max_change := 1.2) -> float:
 	var y := sample_mesh(p)
 	for k in 8:
 		y += sample_mesh(p + Vector2.from_angle(TAU * k / 8.0) * r * 0.8)
@@ -140,7 +190,10 @@ func level_pad(p: Vector2, r: float, ease := 6.0, min_y := -INF) -> float:
 				continue
 			var t := 1.0 - smoothstep(r, reach, d)
 			t *= (1.0 - clampf(river_mask[i] / 0.3, 0.0, 1.0)) * (1.0 - clampf(path_mask[i] / 0.5, 0.0, 1.0))
-			heights[i] = lerpf(heights[i], y, t)
+			# Never more than ~a metre of cut or fill, so a pad on a slope is a gentle shelf,
+			# not a block with walls.
+			var target := clampf(y, heights[i] - max_change, heights[i] + max_change)
+			heights[i] = lerpf(heights[i], target, t)
 			if d < r + 2.0:
 				clear_mask[i] = 1
 	return y

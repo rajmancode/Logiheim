@@ -180,7 +180,8 @@ static func build(level: HexLevel, surface: TerrainSurface, hydro: Hydrology, pa
 							size *= PROP_BOOST * float(PROP_SIZE.get(model, 1.0))
 							# A level pad under it (built before the terrain mesh), so the
 							# whole prop stands on the ground in plain view, none of it buried.
-							y = surface.level_pad(p, pr * 0.9, 6.0, surface.sea_y + 0.35)
+							y = surface.level_pad(p, pr * 0.9, 10.0, surface.sea_y + 0.35)
+							y = minf(y, surface.ground_min(p, pr * 0.5) + 0.05)
 						basis = basis.scaled(Vector3.ONE * size)
 						_add(items, model, Transform3D(basis, Vector3(p.x, y - 0.03 * size, p.y)), custom)
 
