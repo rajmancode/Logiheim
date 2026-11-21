@@ -11,6 +11,7 @@ render_mode cull_back, diffuse_burley, specular_schlick_ggx;
 #include "res://shaders/include/environment.gdshaderinc"
 
 uniform bool glint = false;
+uniform int ore = 0;                  // metallic finish: 1 iron, 2 silver, 3 coal, 4 gold, 5 bog iron
 uniform bool bob = false;
 uniform float roughness = 0.85;
 uniform sampler2DArray albedo_array : source_color, filter_linear_mipmap_anisotropic, repeat_enable;
@@ -81,7 +82,7 @@ void fragment() {
 	float lum = dot(c, vec3(0.3, 0.55, 0.15));
 	float warm = smoothstep(0.0, 0.12, c.r - c.b);
 	float stone = 1.0 - smoothstep(0.1, 0.25, sat);
-	float woody = warm * smoothstep(0.2, 0.35, sat) * (1.0 - smoothstep(0.32, 0.5, lum)) * (1.0 - stone);
+	float woody = warm * smoothstep(0.2, 0.35, sat) * (1.0 - smoothstep(0.32, 0.5, lum)) * (1.0 - stone) * (ore > 0 ? 0.0 : 1.0);
 	float sandy = warm * smoothstep(0.45, 0.6, lum) * (1.0 - stone) * (1.0 - woody);
 	float earthy = clamp(warm * (1.0 - stone) - woody - sandy, 0.0, 1.0);
 
@@ -117,6 +118,48 @@ void fragment() {
 	col *= cloud_shadow(v_world_pos) * (1.0 - 0.25 * wetness);
 	ALBEDO = col;
 	ROUGHNESS = roughness * (1.0 - 0.4 * wetness) * mix(1.0, 0.92, woody);
+	if (ore > 0) {
+		// Veins: the painted ore colour (saturated or, for silver and coal, very bright or dark
+		// against the grey host rock) becomes metal; the rock around it carries metal flecks.
+		float vein;
+		vec3 metal;
+		float mrough;
+		if (ore == 1 || ore == 5) {
+			vein = smoothstep(0.15, 0.35, sat) * warm;
+			metal = ore == 1 ? vec3(0.36, 0.34, 0.34) : vec3(0.42, 0.3, 0.2);
+			mrough = ore == 1 ? 0.5 : 0.6;
+			// Haematite: steel-grey metal keeping the rock's grain, rust left in the cracks.
+			float rust = smoothstep(0.35, 0.65, env_noise(v_world_pos.xz * 3.0 + v_world_pos.y * 2.0));
+			vec3 ore_col = mix(metal, col, 0.3 + 0.4 * rust) * clamp(mod_col, vec3(0.6), vec3(1.4));
+			col = mix(col, ore_col, vein);
+			vein *= 0.85 - 0.5 * rust;
+		} else if (ore == 2) {
+			vein = smoothstep(0.62, 0.8, lum) * stone;
+			metal = vec3(0.92, 0.92, 0.95);
+			mrough = 0.22;
+			col = mix(col, metal, vein * 0.8);
+		} else if (ore == 3) {
+			vein = 1.0 - smoothstep(0.08, 0.22, lum);
+			metal = vec3(0.06, 0.06, 0.065);
+			mrough = 0.3;
+		} else {
+			vein = smoothstep(0.25, 0.45, sat) * warm * smoothstep(0.35, 0.55, lum);
+			metal = vec3(1.0, 0.78, 0.34);
+			mrough = 0.2;
+			col = mix(col, metal * 0.9, vein * 0.7);
+		}
+		// Flecks: tiny crystals in the host rock catching the light.
+		float fleck = smoothstep(0.86, 0.96, env_noise(v_world_pos.xz * 14.0 + v_world_pos.y * 9.0)) * (1.0 - vein);
+		float m = clamp(vein * (ore == 3 ? 0.35 : 0.75) + fleck * 0.7, 0.0, 1.0);
+		METALLIC = m;
+		ROUGHNESS = mix(ROUGHNESS, mrough, max(vein, fleck));
+		SPECULAR = mix(0.5, 0.8, m);
+		ALBEDO = col;
+		// Sun glints off the metal as the view moves.
+		vec3 vdir = normalize(CAMERA_POSITION_WORLD - v_world_pos);
+		float sp = smoothstep(0.88, 0.98, env_noise(v_world_pos.xz * 7.0 + vdir.xz * 5.0)) * max(sun_direction.y, 0.0);
+		EMISSION = (ore == 3 ? vec3(0.25) : metal) * sp * m * 1.5;
+	}
 	if (glint) {
 		// Tiny facets catching the sun: high-frequency noise that shifts with the view.
 		vec3 vdir = normalize(CAMERA_POSITION_WORLD - v_world_pos);

@@ -25,13 +25,40 @@ varying float v_speed;
 varying float v_turb;
 varying float v_width;
 varying float v_fade;
+varying vec3 v_shape_n;
+
+// The water surface's own shape (metres up), from across (u 0..1) and along (metres):
+// slightly crowned in the middle, with waves running downstream at the flow's speed and,
+// in rapids, standing waves over the rocks. Zero at the banks so the edges stay put.
+float surface_h(float u, float along, float w, float speed, float turb, float t) {
+	float edge = sin(3.14159 * clamp(u, 0.0, 1.0));
+	float crown = edge * clamp(w * 0.015, 0.01, 0.12);
+	float a = (0.025 + 0.1 * turb) * clamp(w / 5.0, 0.4, 1.5);
+	float x = u * w;
+	float run = sin(along * 0.55 - t * (1.2 + speed * 0.9) + sin(x * 0.7) * 0.8) * 0.6
+		+ sin(along * 1.35 + x * 0.9 - t * (2.0 + speed * 1.4)) * 0.3
+		+ sin(along * 0.23 - x * 0.4 - t * 0.7) * 0.4;
+	float stand = sin(along * 1.1) * sin(x * 1.3 + 1.7) * turb * 0.12 * clamp(w / 4.0, 0.3, 1.5);
+	return crown + (run * a + stand) * edge;
+}
 
 void vertex() {
-	v_world_pos = (MODEL_MATRIX * vec4(VERTEX, 1.0)).xyz;
 	v_speed = COLOR.r * 6.0;
 	v_turb = UV2.x;
 	v_width = UV2.y;
 	v_fade = COLOR.g;
+	vec3 wp = (MODEL_MATRIX * vec4(VERTEX, 1.0)).xyz;
+	float h = surface_h(UV.x, UV.y, v_width, v_speed, v_turb, TIME);
+	// Slope of the shape, for its lighting (across in metres per u, and along).
+	float du = 0.5 / max(v_width, 0.5);
+	float hu = surface_h(UV.x + du, UV.y, v_width, v_speed, v_turb, TIME);
+	float hv = surface_h(UV.x, UV.y + 0.5, v_width, v_speed, v_turb, TIME);
+	VERTEX.y += h;
+	v_world_pos = wp + vec3(0.0, h, 0.0);
+	// Tangent frame from the ribbon: across = UV.x direction is the vertex's side, roughly.
+	vec3 nb = normalize(NORMAL);
+	v_shape_n = normalize(vec3(-(hu - h) / 0.5, 1.0, -(hv - h) / 0.5));
+	v_shape_n = normalize(nb + vec3(v_shape_n.x, 0.0, v_shape_n.z));
 }
 
 // Ripple normal (xy) and a foam-pattern value pushed `shift` metres downstream.
@@ -77,15 +104,16 @@ void fragment() {
 	// rapids (about half the surface at full turbulence), nothing on calm stretches.
 	float pn = s.z * 0.5 + 0.5;
 	float edge0 = 1.0 - 0.55 * v_turb;
-	float foam = smoothstep(edge0, edge0 + 0.12, pn) * 0.85 * smoothstep(0.05, 0.25, v_turb);
+	float foam = smoothstep(edge0, edge0 + 0.12, pn) * 0.85 * smoothstep(0.3, 0.6, v_turb);
 	foam = max(foam, bank * 0.15 * v_turb * smoothstep(0.5, 0.7, pn));
 	col = mix(col, foam_color, foam);
 	col *= cloud_shadow(v_world_pos);
 
-	vec3 wn = normalize(vec3(ripple.x, 1.0, ripple.y));
+	// Lit by the water's own shape (crown and waves) plus the small ripples.
+	vec3 wn = normalize(v_shape_n + vec3(ripple.x, 0.0, ripple.y));
 	ALBEDO = col;
-	ROUGHNESS = mix(0.1, 0.6, foam);
-	SPECULAR = 0.35;
+	ROUGHNESS = mix(0.05, 0.6, foam);
+	SPECULAR = 0.5;
 	NORMAL = normalize((VIEW_MATRIX * vec4(wn, 0.0)).xyz);
 	// Soft banks: fade out where the water gets very shallow.
 	ALPHA = clamp(depth / 0.25, 0.0, 1.0) * smoothstep(0.0, 0.06, min(UV.x, 1.0 - UV.x)) + foam * 0.3;

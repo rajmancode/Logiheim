@@ -433,14 +433,16 @@ static func place(all: Array, level: HexLevel, surface: TerrainSurface, hydro: H
 			# stretch of ~30 m, not the stairs the hex terraces put in the water surface.
 			var reach_m := maxf(ws[k] * 3.0, 30.0)
 			var dir := (pts[mini(k + 1, pts.size() - 1)] - pts[maxi(k - 1, 0)]).normalized()
-			var up := source.sample_height(pts[k] - dir * reach_m * 0.5)
-			var down := source.sample_height(pts[k] + dir * reach_m * 0.5)
-			var nat_slope := maxf(up - down, 0.0) * source.height_range * settings.height_scale / reach_m
+			# (on this map's own ground, after the island has been shaped and hills lowered)
+			var up := surface.sample(pts[k] - dir * reach_m * 0.5)
+			var down := surface.sample(pts[k] + dir * reach_m * 0.5)
+			var nat_slope := maxf(up - down, 0.0) / reach_m
 			# Cascades: short drops where the water steps down a terrace.
 			var k2 := mini(k + 1, pts.size() - 1)
 			var step_drop := maxf(ys[k] - ys[k2], 0.0) / maxf(pts[k].distance_to(pts[k2]), 0.3)
 			# Terrace cascades read as rapids (up to 0.6); only real falls go fully white.
-			var turb := maxf(smoothstep(0.15, 0.6, nat_slope), 0.6 * smoothstep(0.5, 1.2, step_drop) + 0.4 * smoothstep(1.5, 3.0, step_drop))
+			# Only genuinely steep water is rough: a mountain stream is mostly clear and fast.
+			var turb := maxf(smoothstep(0.3, 0.8, nat_slope), 0.5 * smoothstep(0.8, 1.6, step_drop) + 0.5 * smoothstep(1.8, 3.0, step_drop))
 			# Water running steeply downhill (over a few points) is white too.
 			var ka := maxi(k - 2, 0)
 			var kb := mini(k + 2, pts.size() - 1)
@@ -448,7 +450,7 @@ static func place(all: Array, level: HexLevel, surface: TerrainSurface, hydro: H
 			for q in range(ka, kb):
 				run += pts[q].distance_to(pts[q + 1])
 			var water_slope := maxf(ys[ka] - ys[kb], 0.0) / maxf(run, 0.5)
-			turb = maxf(turb, smoothstep(0.1, 0.35, water_slope))
+			turb = maxf(turb, smoothstep(0.25, 0.6, water_slope))
 			path.points.append(Vector3(pts[k].x, ys[k], pts[k].y))
 			path.widths.append(ws[k])
 			path.dist.append(along)
@@ -495,6 +497,8 @@ static func settle(paths: Array[RiverPath], surface: TerrainSurface) -> void:
 # --------------------------------------------------------------------------- meshes
 
 static var _sea_level := -INF
+## Vertices across a river ribbon, minus one.
+const ACROSS := 6
 
 
 static func build(paths: Array[RiverPath], parent: Node3D, sea_y := -INF) -> void:
@@ -583,26 +587,29 @@ static func _ribbon(path: RiverPath, verts: PackedVector3Array, normals: PackedV
 		var nrm := Vector3(-t.y, 0.0, t.x).cross(along3).normalized()
 		if nrm.y < 0.0:
 			nrm = -nrm
-		verts.append(path.points[k] - side + lift)
-		verts.append(path.points[k] + side + lift)
-		for e in 2:
+		# Several vertices across, so the shader can shape the surface (a slight crown,
+		# waves running downstream, standing waves in rapids).
+		for c in ACROSS + 1:
+			var u := float(c) / ACROSS
+			verts.append(path.points[k] + side * (u * 2.0 - 1.0) + lift)
 			normals.append(nrm)
 			uv2s.append(Vector2(turb[k], path.widths[k]))
 			colors.append(Color(speed[k] / 6.0, fade[k], 0.0))
-		uvs.append(Vector2(0.0, path.dist[k]))
-		uvs.append(Vector2(1.0, path.dist[k]))
+			uvs.append(Vector2(u, path.dist[k]))
+	var row := ACROSS + 1
 	for k in n - 1:
-		var l0 := base + k * 2
-		var r0 := l0 + 1
-		var l1 := l0 + 2
-		var r1 := l0 + 3
-		# Wound so the top face points up: Godot treats clockwise (seen from the front) as
-		# front-facing, i.e. the right-hand-rule cross product points away from the viewer.
-		var cross_up := (verts[r0] - verts[l0]).cross(verts[r1] - verts[l0]).y > 0.0
-		if cross_up:
-			indices.append_array([l0, r1, r0, l0, l1, r1])
-		else:
-			indices.append_array([l0, r0, r1, l0, r1, l1])
+		for c in ACROSS:
+			var l0 := base + k * row + c
+			var r0 := l0 + 1
+			var l1 := l0 + row
+			var r1 := l1 + 1
+			# Wound so the top face points up: Godot treats clockwise (seen from the front) as
+			# front-facing, i.e. the right-hand-rule cross product points away from the viewer.
+			var cross_up := (verts[r0] - verts[l0]).cross(verts[r1] - verts[l0]).y > 0.0
+			if cross_up:
+				indices.append_array([l0, r1, r0, l0, l1, r1])
+			else:
+				indices.append_array([l0, r0, r1, l0, r1, l1])
 
 
 ## Flat water at each lake's level, built on the terrain's own (finer) grid: every vertex under

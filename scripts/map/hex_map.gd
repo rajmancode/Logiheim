@@ -98,6 +98,9 @@ func rebuild() -> void:
 			landforms = Landforms.plan_coast(surface, settings)
 			landform_plan = landforms
 		landforms.apply(surface)
+		# Coarser levels copy the coast from the finest, so shapes hold when zooming out.
+		if level.level_index > 0:
+			surface.match_coast(surfaces[0])
 		var paths: Array[RiverPath] = []
 		var hydro: Hydrology = null
 		if settings.rivers_enabled:

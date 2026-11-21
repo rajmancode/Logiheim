@@ -46,6 +46,9 @@ const COATS := {
 	"horse": [Color(1, 1, 1), Color(1, 1, 1), Color(1.12, 0.85, 0.62), Color(1.3, 1.15, 0.85), Color(1.5, 1.52, 1.55), Color(0.45, 0.4, 0.38)],
 }
 const ANIMAL_DIR := "res://assets/models/animals"
+## Metallic finish per ore prop: 1 iron (dark steel-grey haematite with rusty streaks),
+## 2 silver (bright native silver), 3 coal (glassy anthracite sheen), 4 gold, 5 bog/lake iron.
+const ORE_FINISH := {"outcrop_iron": 1, "outcrop_silver": 2, "outcrop_coal": 3, "gold_gravel": 4, "bog": 5}
 
 ## Static props (ore, quarries, kilns...) are drawn this much bigger again than animals, so a
 ## deposit reads from the strategy camera.
@@ -532,10 +535,12 @@ static func _mesh(model: String) -> Mesh:
 		push_warning("ResourceProps: missing model %s" % path)
 		_meshes[model] = null
 		return null
+	# Ores get a metallic finish: veins and streaks that shine like metal, flecks in the rock.
+	var ore: int = ORE_FINISH.get(model, 0)
 	for s in result.get_surface_count():
 		var m := result.surface_get_material(s)
 		var glint := m != null and m.resource_name == "Glint"
-		result.surface_set_material(s, _material("glint" if glint else "body"))
+		result.surface_set_material(s, _material(("glint" if glint else "body") + ("" if ore == 0 else ":ore%d" % ore)))
 	_meshes[model] = result
 	return result
 
@@ -646,7 +651,9 @@ static func _material(kind: String) -> Material:
 			mat.shader = load("res://shaders/resource_ground.gdshader")
 		_:
 			mat.shader = load("res://shaders/resource_prop.gdshader")
-			mat.set_shader_parameter("glint", kind.ends_with("glint"))
+			mat.set_shader_parameter("glint", kind.begins_with("glint"))
+			if kind.contains(":ore"):
+				mat.set_shader_parameter("ore", int(kind.get_slice(":ore", 1)))
 			mat.set_shader_parameter("albedo_array", TerrainMaterial.albedo_array())
 			mat.set_shader_parameter("normal_array", TerrainMaterial.normal_array())
 	_materials[kind] = mat

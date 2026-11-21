@@ -77,8 +77,13 @@ static func build(level: HexLevel, surface: TerrainSurface, paths: Array[RiverPa
 		if mask[i] < 0.75 or surface.river_mask[i] > 0.05:
 			continue
 		var c := Vector2((i % surface.nx) * sp, (i / surface.nx) * sp)
-		var r := Vector2(rng.randf_range(10.0, 22.0), rng.randf_range(4.0, 8.0)) * maxf(1.0, level.hex_size / 20.0)
+		# Sized to the terrain grid (a coarse level's ponds are a little bigger, not hex-sized).
+		var r := Vector2(rng.randf_range(10.0, 22.0), rng.randf_range(4.0, 8.0)) * clampf(sp / 5.0, 1.0, 2.0)
 		var clash := false
+		# Whole pond on dry land: never out over the sea or a beach.
+		for e: Vector2 in [Vector2(r.x, 0), Vector2(-r.x, 0), Vector2(0, r.y), Vector2(0, -r.y)]:
+			if surface.sample(c + e.rotated(0.0) * 1.3) < surface.sea_y + 0.8:
+				clash = true
 		for p in fp.ponds:
 			if (p[0] as Vector2).distance_to(c) < 80.0:
 				clash = true

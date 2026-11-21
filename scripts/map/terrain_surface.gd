@@ -65,6 +65,11 @@ func _init(p_level: HexLevel, source: TerrainSource, settings: HexMapSettings, g
 	sea_y = generator.sea_y()
 	_meters = source.height_range * settings.height_scale
 	spacing = level.hex_size / maxf(settings.terrain_resolution, 0.5)
+	# Coarser levels keep a reasonably fine grid (at most 5 m more per level), so coastlines
+	# and small features keep their shape when zooming out instead of turning into long
+	# straight facets.
+	if level.level_index > 0:
+		spacing = minf(spacing, 5.0 + 5.0 * level.level_index)
 	nx = int(ceil(source.world_size.x / spacing)) + 1
 	nz = int(ceil(source.world_size.y / spacing)) + 1
 	_cache_cells()
@@ -121,6 +126,39 @@ func ground_min(p: Vector2, r: float) -> float:
 		h = minf(h, sample_mesh(p + Vector2(cos(a), sin(a)) * r))
 		h = minf(h, sample_mesh(p + Vector2(cos(a), sin(a)) * r * 0.5))
 	return h
+
+
+## Coarser levels take their coast from the finest one, so the island keeps its shape when
+## zooming out: every vertex from the sea floor up to ~30 m above the sea gets the finest
+## terrain averaged over its footprint, and any footprint that is a third or more land stays
+## land (spits, bars, islets and reefs don't wash away at coarse resolution).
+func match_coast(fine: TerrainSurface) -> void:
+	var r := spacing * 0.4
+	for z in nz:
+		for x in nx:
+			var i := z * nx + x
+			var p := Vector2(x, z) * spacing
+			var acc := 0.0
+			var land := 0
+			var land_sum := 0.0
+			var sea_sum := 0.0
+			for dz in range(-1, 2):
+				for dx in range(-1, 2):
+					var h := fine.sample(p + Vector2(dx, dz) * r)
+					acc += h
+					if h > sea_y:
+						land += 1
+						land_sum += h
+					else:
+						sea_sum += h
+			var a := acc / 9.0
+			var w := 1.0 - smoothstep(12.0, 30.0, a - sea_y)
+			if w <= 0.0:
+				continue
+			# Land from the land samples, sea from the sea samples (mixing them would make a
+			# wide, half-drowned strip along every shore).
+			var target := maxf(land_sum / maxf(land, 1), sea_y + 0.4) if land >= 3 				else minf(sea_sum / maxf(9 - land, 1), sea_y - 0.6)
+			heights[i] = lerpf(heights[i], target, w)
 
 
 ## Weathered relief on rocky ground: knobs and hollows from Gaussian-like noise (several
