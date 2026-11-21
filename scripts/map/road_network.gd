@@ -23,7 +23,7 @@ var _water_grid := {}
 const STEP := 2.0
 ## Steepest a trail may climb (rise/run), and how deep it may cut or fill to manage that.
 const MAX_GRADE := 0.15
-const MAX_CUT := 8.0
+const MAX_CUT := 2.5
 ## Columns across the trail ribbon, so it follows the ground across as well as along.
 const ACROSS := 4
 
@@ -36,7 +36,9 @@ static func plan(level: HexLevel, surface: TerrainSurface, settings: HexMapSetti
 			var key := Vector2i(floori(q.x / 10.0), floori(q.y / 10.0))
 			if not rn._water_grid.has(key):
 				rn._water_grid[key] = []
-			rn._water_grid[key].append([q, path.widths[k] * 0.5])
+			var qa := path.points[maxi(k - 1, 0)]
+			var qb := path.points[mini(k + 1, path.points.size() - 1)]
+			rn._water_grid[key].append([q, path.widths[k] * 0.5, Vector2(qb.x - qa.x, qb.z - qa.z).normalized()])
 	rn.width = settings.road_width
 	if not settings.roads_enabled:
 		return rn
@@ -149,6 +151,11 @@ static func plan(level: HexLevel, surface: TerrainSurface, settings: HexMapSetti
 		wet[i] = surface.wetland_at(c)
 		volc[i] = surface.volcanic_at(c)
 	var hex_w := HexCoords.SQRT3 * level.hex_size
+	# River hexes within two hexes of an existing crossing, and hexes beside a trail.
+	var bridge_near := PackedByteArray()
+	bridge_near.resize(n)
+	var beside := PackedByteArray()
+	beside.resize(n)
 	# How steep the ground under each hex is (cross-slope matters too, not just the grade).
 	var steep := PackedFloat32Array()
 	steep.resize(n)
@@ -158,12 +165,13 @@ static func plan(level: HexLevel, surface: TerrainSurface, settings: HexMapSetti
 		# Steep ground is all but off-limits: trails go round it.
 		steep[i] = 25.0 * smoothstep(0.08, 0.3, tan_s) + (400.0 if tan_s > 0.45 else 0.0)
 	for l in links:
-		var cells := _route(level, l[0], l[1], hh, blocked, on_road, wet, volc, hex_w, steep)
+		var cells := _route(level, l[0], l[1], hh, blocked, on_road, wet, volc, hex_w, steep, bridge_near, beside)
 		if cells.size() < 2:
 			continue
 		for c in cells:
 			on_road[c] = 1
-		rn.roads.append(rn._shape(level, surface, cells))
+		_mark_near(level, cells, bridge_near, beside)
+		rn.roads.append(rn._merge(rn._shape(level, surface, cells)))
 	# Spurs: every land deposit gets a trail to its door, joining the nearest trail.
 	var spurs := 0
 	for d: Dictionary in level.deposits:
@@ -180,20 +188,36 @@ static func plan(level: HexLevel, surface: TerrainSurface, settings: HexMapSetti
 				near = true
 		if near:
 			continue
-		var cells := _route(level, c, -1, hh, blocked, on_road, wet, volc, hex_w, steep)
+		var cells := _route(level, c, -1, hh, blocked, on_road, wet, volc, hex_w, steep, bridge_near, beside)
 		if cells.size() < 2:
 			continue
 		for cc in cells:
 			on_road[cc] = 1
-		rn.roads.append(rn._shape(level, surface, cells))
+		_mark_near(level, cells, bridge_near, beside)
+		rn.roads.append(rn._merge(rn._shape(level, surface, cells)))
 		spurs += 1
 	print("RoadNetwork: %d spots, %d trails, %d spurs to deposits" % [nodes.size(), rn.roads.size() - spurs, spurs])
 	return rn
 
 
+## After a trail is laid: river hexes near its crossings, and the hexes beside it.
+static func _mark_near(level: HexLevel, cells: PackedInt32Array, bridge_near: PackedByteArray, beside: PackedByteArray) -> void:
+	for c in cells:
+		for k in 6:
+			var j := level.index_of(HexCoords.neighbor(level.coords[c], k))
+			if j >= 0:
+				beside[j] = 1
+		if level.river[c] != 1:
+			continue
+		for j in level.cell_count():
+			if level.river[j] == 1 and HexCoords.distance(level.coords[j], level.coords[c]) <= 3:
+				bridge_near[j] = 1
+
+
 ## A* over the hexes from a to b; with b = -1, to the nearest hex already on a trail.
 static func _route(level: HexLevel, a: int, b: int, hh: PackedFloat32Array, blocked: PackedByteArray,
-		on_road: PackedByteArray, wet: PackedFloat32Array, volc: PackedFloat32Array, hex_w: float, steep: PackedFloat32Array) -> PackedInt32Array:
+		on_road: PackedByteArray, wet: PackedFloat32Array, volc: PackedFloat32Array, hex_w: float, steep: PackedFloat32Array,
+		bridge_near: PackedByteArray, beside: PackedByteArray) -> PackedInt32Array:
 	var T := HexMapGenerator.Terrain
 	var n := level.cell_count()
 	var g := PackedFloat32Array()
@@ -218,7 +242,7 @@ static func _route(level: HexLevel, a: int, b: int, hh: PackedFloat32Array, bloc
 		if i == b or (b < 0 and i != a and on_road[i] == 1):
 			found = i
 			break
-		if b < 0 and g[i] > 2500.0:
+		if b < 0 and g[i] > 5000.0:
 			break
 		for k in 6:
 			var j := level.index_of(HexCoords.neighbor(level.coords[i], k))
@@ -229,6 +253,11 @@ static func _route(level: HexLevel, a: int, b: int, hh: PackedFloat32Array, bloc
 			var cost := 1.0 + 70.0 * grade * grade + (60.0 if grade > 0.15 else 0.0) + (200.0 if grade > 0.3 else 0.0) + steep[j]
 			if level.river[j] == 1:
 				cost += 25.0   # cross rivers, don't follow them
+				# One crossing per stretch of river: with a bridge already close by, use it.
+				if on_road[j] == 0 and bridge_near[j] == 1:
+					cost += 400.0
+			elif on_road[j] == 0 and beside[j] == 1:
+				cost += 3.0    # don't run alongside a trail: join it or keep away
 			match level.terrain[j]:
 				T.ROCK:
 					cost += 1.5
@@ -300,6 +329,10 @@ func _shape(level: HexLevel, surface: TerrainSurface, cells: PackedInt32Array) -
 		var c := level.cell_center(cells[k])
 		if k > 0 and k < cells.size() - 1:
 			var d := (level.cell_center(cells[k + 1]) - level.cell_center(cells[k - 1])).normalized()
+			# The same sideways wobble whichever way a trail runs, so trails sharing hexes
+			# share one line (and one bridge) instead of running side by side.
+			if d.x < 0.0 or (is_zero_approx(d.x) and d.y < 0.0):
+				d = -d
 			var side := Vector2(-d.y, d.x)
 			c += side * (BorderNoise.snoise(c * 0.05) - 0.5) * level.hex_size * 0.7
 		pts.append(c)
@@ -329,13 +362,148 @@ func _shape(level: HexLevel, surface: TerrainSurface, cells: PackedInt32Array) -
 	for k in out.size():
 		if _over_water(out[k]):
 			bridge[k] = 1
-	# Grow bridges a little so they reach dry banks.
+	# Spans of one trail only a few metres apart are one crossing (a confluence, a braided
+	# channel): bridge the gap.
+	var gap := -1
+	for q in out.size():
+		if bridge[q] == 1:
+			if gap >= 0 and q - gap <= 4:
+				for g in range(gap, q):
+					bridge[g] = 1
+			gap = -1
+		elif q > 0 and bridge[q - 1] == 1:
+			gap = q
+	# A bridge only where the trail really crosses (from one bank to the other). A trail that
+	# just brushes the water while running along a river is pushed back onto its bank.
+	var kk := 0
+	while kk < out.size():
+		if bridge[kk] == 0:
+			kk += 1
+			continue
+		var k0 := kk
+		while kk < out.size() and bridge[kk] == 1:
+			kk += 1
+		var a := out[maxi(k0 - 1, 0)]
+		var b := out[mini(kk, out.size() - 1)]
+		var e := _nearest_water((a + b) * 0.5)
+		if e.is_empty():
+			continue
+		var nrm := Vector2(-(e[2] as Vector2).y, (e[2] as Vector2).x)
+		var sa: float = (a - e[0]).dot(nrm)
+		var sb: float = (b - e[0]).dot(nrm)
+		# Crossing: opposite banks, across the flow, and not much longer than the river is wide.
+		var along_flow := absf((b - a).normalized().dot(e[2] as Vector2)) > 0.7
+		var too_long := a.distance_to(b) > float(e[1]) * 5.0 + 14.0
+		if sa * sb < 0.0 and not along_flow and not too_long:
+			continue
+		var side := 1.0 if sa + sb >= 0.0 else -1.0
+		for q in range(k0, kk):
+			var eq := _nearest_water(out[q])
+			if eq.is_empty():
+				continue
+			var nq := Vector2(-(eq[2] as Vector2).y, (eq[2] as Vector2).x) * side
+			var need := float(eq[1]) + width * 0.5 + 3.0
+			var off: float = (out[q] - eq[0]).dot(nq)
+			if off < need:
+				out[q] += nq * (need - off)
+			bridge[q] = 0
+	# Grow each bridge just until both ends stand on dry bank (a metre or two clear of the
+	# water), no further: a short crossing stays a short bridge.
 	var grown := bridge.duplicate()
 	for k in out.size():
-		if bridge[k] == 1:
-			for q in range(maxi(0, k - 3), mini(out.size(), k + 4)):
+		if bridge[k] != 1:
+			continue
+		for dirn: int in [-1, 1]:
+			var q := k + dirn
+			var steps := 0
+			while q >= 0 and q < out.size() and bridge[q] == 0 and steps < 4:
 				grown[q] = 1
+				steps += 1
+				if _river_gap(out[q]) > 1.5:
+					break
+				q += dirn
 	return {"pts": out, "bridge": grown}
+
+
+## Where a new trail runs alongside one already laid (within ~12 m), it is drawn onto the old
+## line, easing over, so shared stretches are one trail with one bridge, not two side by side.
+## Bridges are then taken from the old trail.
+func _merge(r: Dictionary) -> Dictionary:
+	var pts: PackedVector2Array = r.pts
+	var bridge: PackedByteArray = r.bridge
+	var shared := PackedByteArray()
+	shared.resize(pts.size())
+	if roads.is_empty():
+		r["shared"] = shared
+		return r
+	var grid := {}
+	for o: Dictionary in roads:
+		var op: PackedVector2Array = o.pts
+		var ob: PackedByteArray = o.bridge
+		for k in op.size():
+			var key := Vector2i(floori(op[k].x / 12.0), floori(op[k].y / 12.0))
+			if not grid.has(key):
+				grid[key] = []
+			grid[key].append([op[k], ob[k]])
+	var w := PackedFloat32Array()
+	w.resize(pts.size())
+	var near := PackedVector2Array()
+	near.resize(pts.size())
+	var nb := PackedByteArray()
+	nb.resize(pts.size())
+	for k in pts.size():
+		var key := Vector2i(floori(pts[k].x / 12.0), floori(pts[k].y / 12.0))
+		var best := INF
+		for dz in range(-1, 2):
+			for dx in range(-1, 2):
+				for e: Array in grid.get(key + Vector2i(dx, dz), []):
+					var d := pts[k].distance_to(e[0])
+					if d < best:
+						best = d
+						near[k] = e[0]
+						nb[k] = e[1]
+		w[k] = 1.0 - smoothstep(8.0, 26.0, best)
+	# Ease the pull in and out along the trail (no kinks where it starts and stops).
+	var ws := w.duplicate()
+	for k in pts.size():
+		var acc := 0.0
+		var cnt := 0
+		for q in range(maxi(0, k - 3), mini(pts.size(), k + 4)):
+			acc += w[q]
+			cnt += 1
+		ws[k] = minf(w[k], acc / cnt) if w[k] < 0.99 else w[k]
+	for k in pts.size():
+		pts[k] = pts[k].lerp(near[k], ws[k])
+		if ws[k] > 0.9:
+			bridge[k] = 0   # the old trail's bridge carries it here
+			shared[k] = 1   # and the old trail's ribbon and bed
+	return {"pts": pts, "bridge": bridge, "shared": shared}
+
+
+## Distance from p to the nearest river's edge (negative on the water), up to ~20 m.
+func _river_gap(p: Vector2) -> float:
+	var key := Vector2i(floori(p.x / 10.0), floori(p.y / 10.0))
+	var best := 20.0
+	for dz in range(-2, 3):
+		for dx in range(-2, 3):
+			for e: Array in _water_grid.get(key + Vector2i(dx, dz), []):
+				best = minf(best, p.distance_to(e[0]) - float(e[1]))
+	return best
+
+
+## The nearest river point to p ([position, half width, flow direction]), or [].
+func _nearest_water(p: Vector2) -> Array:
+	var key := Vector2i(floori(p.x / 10.0), floori(p.y / 10.0))
+	var best := INF
+	var out: Array = []
+	for dz in range(-2, 3):
+		for dx in range(-2, 3):
+			for e: Array in _water_grid.get(key + Vector2i(dx, dz), []):
+				var d := p.distance_to(e[0])
+				if d < best:
+					best = d
+					out = e
+	return out
 
 
 ## True if p is on a river's water (within its half-width).
@@ -363,6 +531,8 @@ func apply(level: HexLevel, surface: TerrainSurface) -> void:
 	want_t.resize(nv)
 	var want_y := PackedFloat32Array()
 	want_y.resize(nv)
+	var want_w := PackedFloat32Array()
+	want_w.resize(nv)
 	for r: Dictionary in roads:
 		var pts: PackedVector2Array = r.pts
 		var bridge: PackedByteArray = r.bridge
@@ -392,6 +562,30 @@ func apply(level: HexLevel, surface: TerrainSurface) -> void:
 				sm[k] = clampf(sm[k], sm[k + 1] - MAX_GRADE * ds, sm[k + 1] + MAX_GRADE * ds)
 		for k in n:
 			sm[k] = clampf(sm[k], ys[k] - MAX_CUT, ys[k] + MAX_CUT)
+		# Ease the profile where the cap kicks in and out (no kinks, no lumps).
+		var sm2 := sm.duplicate()
+		for k in n:
+			var acc := 0.0
+			var cnt := 0
+			for q in range(maxi(0, k - 4), mini(n, k + 5)):
+				acc += sm[q]
+				cnt += 1
+			sm2[k] = clampf(acc / cnt, ys[k] - MAX_CUT, ys[k] + MAX_CUT)
+		sm = sm2
+		# Fords: off the bridges, a trail never rises above the ground near a river (no
+		# embankment damming a stream); it eases down to the water's edge instead.
+		for k in n:
+			if bridge[k] == 1:
+				continue
+			var gap := _river_gap(pts[k])
+			if gap < 14.0:
+				sm[k] = minf(sm[k], lerpf(ys[k] + 0.2, sm[k], smoothstep(4.0, 14.0, gap)))
+		# Cut (-) or fill (+) at each point, kept for debugging and tests.
+		var cut := PackedFloat32Array()
+		cut.resize(n)
+		for k in n:
+			cut[k] = sm[k] - ys[k]
+		r["cut"] = cut
 		var half := width * 0.5
 		# The levelled bed must reach the nearest terrain grid vertices, or the 5 m grid would
 		# leave the trail on the old slope between them.
@@ -401,7 +595,7 @@ func apply(level: HexLevel, surface: TerrainSurface) -> void:
 			var cell := level.cell_at(p)
 			if cell >= 0:
 				level.road[cell] = 1
-			if bridge[k] == 1:
+			if bridge[k] == 1 or (r.has("shared") and (r.shared as PackedByteArray)[k] == 1):
 				continue
 			# Bank width: at least 7 m, and about 1 in 3 for deep cuts and fills.
 			var bank := 7.0 + absf(sm[k] - ys[k]) * 3.0
@@ -414,21 +608,23 @@ func apply(level: HexLevel, surface: TerrainSurface) -> void:
 				for x in range(x0, x1 + 1):
 					var i := z * surface.nx + x
 					var d := Vector2(x * surface.spacing, z * surface.spacing).distance_to(p)
-					if d > reach or surface.river_mask[i] > 0.5:
+					if d > reach or surface.river_mask[i] > 0.3:
 						continue
 					# Level across the whole width (t = 1), easing back into the ground beyond
 					# (smootherstep: no crease where the bank meets the bed or the land).
 					var u := clampf((d - flat_r) / bank, 0.0, 1.0)
-					var t := 1.0 - u * u * u * (u * (u * 6.0 - 15.0) + 10.0)
-					if t > want_t[i]:
-						want_t[i] = t
-						want_y[i] = sm[k]
+					var t := (1.0 - u * u * u * (u * (u * 6.0 - 15.0) + 10.0)) * (1.0 - surface.river_mask[i] / 0.3)
+					# Where trails meet or run close, their beds are averaged (weighted to the
+					# nearer one) instead of one overriding the other, so no steps at junctions.
+					want_t[i] = maxf(want_t[i], t)
+					want_y[i] += sm[k] * t * t * t
+					want_w[i] += t * t * t
 					surface.path_mask[i] = maxf(surface.path_mask[i], 1.0 - smoothstep(half * 0.6, half + 1.0, d))
 					if d < half + 2.0:
 						surface.clear_mask[i] = 1
 	for i in nv:
-		if want_t[i] > 0.0:
-			surface.heights[i] = lerpf(surface.heights[i], want_y[i], want_t[i])
+		if want_t[i] > 0.0 and want_w[i] > 0.0:
+			surface.heights[i] = lerpf(surface.heights[i], want_y[i] / want_w[i], want_t[i])
 	# Smooth the banks (not the bed, not river channels): two passes of a 3x3 average, weighted
 	# towards the middle of the bank where creases would show.
 	for it in 2:
@@ -457,16 +653,18 @@ func build_meshes(surface: TerrainSurface, parent: Node3D, rivers: Array = []) -
 	var indices := PackedInt32Array()
 	var bridges := MeshData.new()
 	var wood := Color(0.36, 0.24, 0.14)
+	var built: Array[Vector2] = []
 	for r: Dictionary in roads:
 		var pts: PackedVector2Array = r.pts
 		var bridge: PackedByteArray = r.bridge
+		var shared: PackedByteArray = r.get("shared", PackedByteArray())
 		var n := pts.size()
 		var along := 0.0
 		var prev := -1
 		for k in n:
 			if k > 0:
 				along += pts[k].distance_to(pts[k - 1])
-			if bridge[k] == 1:
+			if bridge[k] == 1 or (shared.size() == n and shared[k] == 1):
 				prev = -1
 				continue
 			var d := (pts[mini(k + 1, n - 1)] - pts[maxi(k - 1, 0)]).normalized()
@@ -505,6 +703,16 @@ func build_meshes(surface: TerrainSurface, parent: Node3D, rivers: Array = []) -
 			var k1 := k - 1
 			var a := pts[maxi(k0 - 1, 0)]
 			var b := pts[mini(k1 + 1, n - 1)]
+			# One bridge per crossing: another trail's bridge here already carries this one.
+			var mid := (a + b) * 0.5
+			var dup := false
+			for q in built:
+				if q.distance_to(mid) < 18.0:
+					dup = true
+					break
+			if dup:
+				continue
+			built.append(mid)
 			# Each end sits on its own bank; the middle clears the river's water.
 			var ya := surface.sample(a) + 0.15
 			var yb := surface.sample(b) + 0.15

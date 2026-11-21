@@ -59,17 +59,35 @@ void vertex() {
 	v_wave_n = vec3(0.0, 1.0, 0.0);
 	if (use_terrain) {
 		// Depth from the terrain height map: waves calm right at the shore and grow offshore.
+		// Sampled over a ~12 m footprint so breaker lines follow the shore smoothly instead of
+		// picking up every step of the terrain grid (no jagged surf).
+		float ground = -100.0;
 		vec2 tuv = wp.xz / terrain_size;
-		float ground = (tuv.x < 0.0 || tuv.y < 0.0 || tuv.x > 1.0 || tuv.y > 1.0) ? -100.0
-			: texture(terrain_height, tuv).r * terrain_range + terrain_min;
+		if (tuv.x >= 0.0 && tuv.y >= 0.0 && tuv.x <= 1.0 && tuv.y <= 1.0) {
+			vec2 o = vec2(6.0) / terrain_size;
+			float g = texture(terrain_height, tuv).r * 2.0
+				+ texture(terrain_height, tuv + vec2(o.x, 0.0)).r + texture(terrain_height, tuv - vec2(o.x, 0.0)).r
+				+ texture(terrain_height, tuv + vec2(0.0, o.y)).r + texture(terrain_height, tuv - vec2(0.0, o.y)).r;
+			ground = g / 6.0 * terrain_range + terrain_min;
+		}
 		float depth = wp.y - ground;
 		float a = swell * (0.5 + 1.3 * wind_strength) * smoothstep(0.3, 6.0, depth);
 		vec3 disp = vec3(0.0);
 		vec3 nrm = vec3(0.0, 1.0, 0.0);
 		vec2 d0 = wind_direction;
-		gerstner(wp.xz, d0, 62.0, a, 0.55, TIME, disp, nrm);
-		gerstner(wp.xz, normalize(d0 + vec2(-d0.y, d0.x) * 0.45), 37.0, a * 0.55, 0.5, TIME, disp, nrm);
-		gerstner(wp.xz, normalize(d0 - vec2(-d0.y, d0.x) * 0.6), 21.0, a * 0.3, 0.45, TIME, disp, nrm);
+		vec2 s0 = vec2(-d0.y, d0.x);
+		// Six swells from spread directions and lengths, each rising and fading in drifting
+		// patches (wave groups) so the sea never shows a regular, repeating pattern.
+		vec2 gp = wp.xz - d0 * TIME * 3.0;
+		float g1 = 0.3 + 1.4 * env_noise(gp * 0.0035 + vec2(3.1, 7.2));
+		float g2 = 0.3 + 1.4 * env_noise(gp * 0.005 + vec2(9.4, 1.3));
+		float g3 = 0.3 + 1.4 * env_noise(gp * 0.008 + vec2(5.7, 4.6));
+		gerstner(wp.xz, d0, 67.0, a * 0.75 * g1, 0.5, TIME, disp, nrm);
+		gerstner(wp.xz, normalize(d0 + s0 * 0.42), 41.0, a * 0.5 * g2, 0.5, TIME, disp, nrm);
+		gerstner(wp.xz, normalize(d0 - s0 * 0.58), 29.0, a * 0.35 * g3, 0.45, TIME, disp, nrm);
+		gerstner(wp.xz, normalize(d0 + s0 * 1.1), 19.0, a * 0.2 * g1, 0.4, TIME * 1.07, disp, nrm);
+		gerstner(wp.xz, normalize(d0 - s0 * 0.21), 13.0, a * 0.14 * g2, 0.4, TIME * 0.93, disp, nrm);
+		gerstner(wp.xz, normalize(-d0 * 0.3 + s0), 9.0, a * 0.08 * g3, 0.35, TIME * 1.11, disp, nrm);
 		// Breakers: the swell lifts as it reaches the shallows along the lines the surf foam
 		// draws, then collapses onto the beach.
 		if (surf > 0.0 && depth > -0.5 && depth < 7.0) {
@@ -78,7 +96,11 @@ void vertex() {
 				float c = fract(ph + float(k) * 0.5);
 				float front = mix(5.0, -0.2, c * c * (3.0 - 2.0 * c));
 				float bump = exp(-pow((depth - front) / 0.8, 2.0)) * (1.0 - smoothstep(0.6, 0.95, c));
-				disp.y += bump * 0.55 * surf;
+				// Breakers come in uneven along the shore: bigger here, barely there.
+				bump *= 0.3 + 1.3 * env_noise(wp.xz * 0.018 + vec2(float(k) * 3.7, TIME * 0.02));
+				// No lift in the last metre of water: the 5 m sea mesh would ride up over the
+				// sand in flat, straight-edged facets. The foam draws the swash there instead.
+				disp.y += bump * 0.55 * surf * smoothstep(0.4, 1.8, depth);
 			}
 		}
 		VERTEX += disp;
@@ -95,7 +117,11 @@ void fragment() {
 	vec2 uv2 = v_world_pos.xz * wave_scale * 2.3 - drift * 1.7 - TIME * vec2(0.001, 0.002);
 	vec3 n1 = texture(wave_normal, uv1).xyz * 2.0 - 1.0;
 	vec3 n2 = texture(wave_normal, uv2).xyz * 2.0 - 1.0;
-	vec2 ripple = (n1.xy + n2.xy) * (0.25 + 0.5 * wind_strength);
+	// A third, rotated layer and patchy strength (cat's-paws of wind) break up any tiling.
+	mat2 rot = mat2(vec2(0.8, 0.6), vec2(-0.6, 0.8));
+	vec3 n3 = texture(wave_normal, rot * v_world_pos.xz * wave_scale * 0.6 + drift * 0.6 + TIME * vec2(-0.0007, 0.0011)).xyz * 2.0 - 1.0;
+	float patch = 0.45 + 1.1 * env_noise(v_world_pos.xz * 0.006 - drift * 2.0 + vec2(TIME * 0.01, 0.0));
+	vec2 ripple = (n1.xy + n2.xy + n3.xy * 0.8) * (0.2 + 0.45 * wind_strength) * patch;
 	vec3 wn = normalize(vec3(ripple.x, 1.0, ripple.y) + vec3(v_wave_n.x, 0.0, v_wave_n.z) * 1.6);
 
 	// Water depth below this pixel, from the depth buffer.

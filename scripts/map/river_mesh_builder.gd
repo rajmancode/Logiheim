@@ -494,9 +494,13 @@ static func settle(paths: Array[RiverPath], surface: TerrainSurface) -> void:
 
 # --------------------------------------------------------------------------- meshes
 
-static func build(paths: Array[RiverPath], parent: Node3D) -> void:
+static var _sea_level := -INF
+
+
+static func build(paths: Array[RiverPath], parent: Node3D, sea_y := -INF) -> void:
 	if paths.is_empty():
 		return
+	_sea_level = sea_y
 	var verts := PackedVector3Array()
 	var normals := PackedVector3Array()
 	var uvs := PackedVector2Array()
@@ -557,9 +561,10 @@ static func _ribbon(path: RiverPath, verts: PackedVector3Array, normals: PackedV
 	var fade := PackedFloat32Array()
 	fade.resize(n)
 	fade.fill(1.0)
-	if path.to_sea:
+	# Any river ending at sea level runs into the sea (delta trunks and estuaries too).
+	if path.to_sea or path.points[n - 1].y < _sea_level + 0.15:
 		var from_end := 0.0
-		var reach := maxf(path.widths[n - 1] * 2.5, 12.0)
+		var reach := maxf(path.widths[n - 1] * 5.0, 30.0)
 		for k in range(n - 1, -1, -1):
 			if k < n - 1:
 				from_end += path.points[k].distance_to(path.points[k + 1])

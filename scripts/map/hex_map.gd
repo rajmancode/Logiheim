@@ -183,12 +183,20 @@ func rebuild() -> void:
 		root.visible = false
 		add_child(root)
 		roads.apply(level, surface)
+		# Trails are cut last: settle the rivers onto the final banks and cut their channels
+		# again, so no stretch of river ever ends up under the ground.
+		if not paths.is_empty():
+			RiverMeshBuilder.settle(paths, surface)
+			surface.carve_channels(paths)
+		# Resource props level their own pads, so they go in before the terrain is meshed.
+		if settings.resources_enabled and level.level_index <= 1:
+			ResourceProps.build(level, surface, hydro, root, settings.resource_prop_scale * (1.0 + 1.2 * level.level_index))
 		var mat := TerrainMaterial.for_level(_base_material, level, noise, sea_y)
 		mat.set_shader_parameter("flood_rise", settings.floodplain_depth + 0.9)
 		mat.set_shader_parameter("relief", maxf(level.max_top_y() - sea_y, 10.0))
 		mat.set_shader_parameter("show_grid", _show_grid)
 		TerrainMeshBuilder.build(surface, mat, root)
-		RiverMeshBuilder.build(paths, root)
+		RiverMeshBuilder.build(paths, root, sea_y)
 		volcano.build_effects(surface, root)
 		if level.level_index <= 1:
 			roads.build_meshes(surface, root, paths)
@@ -214,8 +222,6 @@ func rebuild() -> void:
 	if settings.resources_enabled:
 		for li in levels.size():
 			ResourceProps.build_ground(levels[li], surfaces[li], _level_roots[li])
-		for li in mini(2, levels.size()):
-			ResourceProps.build(levels[li], surfaces[li], hydrology[li], _level_roots[li], settings.resource_prop_scale * (1.0 + 1.2 * li))
 		_build_resource_icons()
 		_build_cave_markers()
 	if cave_plan != null and not cave_plan.systems.is_empty():

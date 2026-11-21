@@ -31,7 +31,7 @@ extends Resource
 ## coast_height at the shore to inland_height `coast_reach` metres inland - low-lying coasts,
 ## hilly heart. 1 and 1 leave the Gaea terrain as it is.
 @export_range(0.1, 1.5, 0.05) var coast_height := 0.3
-@export_range(0.5, 2.0, 0.05) var inland_height := 0.8
+@export_range(0.3, 2.0, 0.05) var inland_height := 0.5
 @export var coast_reach := 400.0
 ## Rock overhangs jutting from the steepest crests, at most one per this many metres (0 = none).
 @export var overhang_spacing := 90.0

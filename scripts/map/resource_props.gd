@@ -152,7 +152,7 @@ static func build(level: HexLevel, surface: TerrainSurface, hydro: Hydrology, pa
 					var r := s * 0.3 * rng.randf_range(0.7, 1.2)
 					_add_quad(shoals, Vector3(p.x, wy + 0.06, p.y), r)
 				_:
-					var y := _water_level(p, surface, hydro) if def[3] == "deep" else surface.ground_min(p, scale * PROP_BOOST * 1.2)
+					var y := _water_level(p, surface, hydro) if def[3] == "deep" else surface.sample_mesh(p)
 					var size := scale * rng.randf_range(0.85, 1.2)
 					var custom := Color.WHITE
 					if model.begins_with("a:"):
@@ -178,8 +178,11 @@ static func build(level: HexLevel, surface: TerrainSurface, hydro: Hydrology, pa
 					else:
 						if not model.begins_with("a:"):
 							size *= PROP_BOOST * float(PROP_SIZE.get(model, 1.0))
+							# A level pad under it (built before the terrain mesh), so the
+							# whole prop stands on the ground in plain view, none of it buried.
+							y = surface.level_pad(p, pr * 0.9, 6.0, surface.sea_y + 0.35)
 						basis = basis.scaled(Vector3.ONE * size)
-						_add(items, model, Transform3D(basis, Vector3(p.x, y - 0.05 * size, p.y)), custom)
+						_add(items, model, Transform3D(basis, Vector3(p.x, y - 0.03 * size, p.y)), custom)
 
 	_wetland_plants(surface, items, scale, level.level_index, occ)
 

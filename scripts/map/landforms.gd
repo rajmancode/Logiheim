@@ -164,6 +164,7 @@ func _coast() -> void:
 			else:
 				# Deep water right at the cliff foot.
 				_h[i] = lerpf(h, minf(h, sea_y - 3.5 - d * 0.25), 1.0 - smoothstep(10.0, 32.0, d))
+	var shaped := _h.duplicate()   # beaches and cliffs; the features below add to this
 	_shuffle(beaches)
 	_shuffle(cliffs)
 	_stacks(coast, normals, cliffs)
@@ -178,6 +179,7 @@ func _coast() -> void:
 		_try_lagoon(coast[ci], normals[ci])
 	_tombolo(land, coast, normals, beaches + cliffs)
 	_atoll(near, coast)
+	_erode(shaped)
 
 
 ## Sea stacks off the cliffs: about one per 250 m of cliff, at most 7.
@@ -243,7 +245,7 @@ func _try_spit(c: int, nv: Vector2) -> void:
 			pts.append(p)
 		if not ok:
 			continue
-		_ridge(pts, 15.0, 8.0, sea_y + 1.2, sea_y + 0.7)
+		_ridge(pts, 14.0, 9.0, sea_y + 1.0, sea_y + 0.6, 7.0, 0.0, 0.9)
 		_used.append(pts[pts.size() / 2])
 		features.append(["spit", pts[pts.size() / 2]])
 		counts["spit"] += 1
@@ -314,8 +316,8 @@ func _try_lagoon(c: int, nv: Vector2) -> void:
 	var s_in := int(steps * _rng.randf_range(0.25, 0.4))
 	if _rng.randf() < 0.5:
 		s_in = steps - 2 - s_in
-	_ridge(pts.slice(0, s_in + 1), 14.0, 12.0, sea_y + 1.1, sea_y + 0.8)
-	_ridge(pts.slice(s_in + 2), 12.0, 14.0, sea_y + 0.8, sea_y + 1.1)
+	_ridge(pts.slice(0, s_in + 1), 15.0, 11.0, sea_y + 1.0, sea_y + 0.6, 10.0)
+	_ridge(pts.slice(s_in + 2), 11.0, 15.0, sea_y + 0.6, sea_y + 1.0, 10.0)
 	_lower_disc((pts[s_in] + pts[s_in + 2]) * 0.5, 14.0, sea_y - 2.2)
 	_used.append(cp - nv * off * 0.5)
 	features.append(["lagoon", cp - nv * off * 0.5])
@@ -383,7 +385,7 @@ func _tombolo(land: PackedByteArray, coast: PackedInt32Array, normals: PackedVec
 		best_a = a
 		best_b = b
 	if best_d < INF:
-		_ridge(PackedVector2Array([best_a, (best_a + best_b) * 0.5 + (best_b - best_a).orthogonal().normalized() * _rng.randf_range(-12.0, 12.0), best_b]), 13.0, 13.0, sea_y + 0.8, sea_y + 0.8)
+		_ridge(PackedVector2Array([best_a, (best_a + best_b) * 0.5 + (best_b - best_a).orthogonal().normalized() * _rng.randf_range(-18.0, 18.0), best_b]), 9.0, 9.0, sea_y + 0.7, sea_y + 0.7, 6.0, 1.3)
 		_used.append((best_a + best_b) * 0.5)
 		features.append(["tombolo", (best_a + best_b) * 0.5])
 		counts["tombolo"] += 1
@@ -402,8 +404,8 @@ func _tombolo(land: PackedByteArray, coast: PackedInt32Array, normals: PackedVec
 		var r := _rng.randf_range(26.0, 38.0)
 		var peak := sea_y + _rng.randf_range(8.0, 15.0)
 		_mound(isle, r, peak)
-		var mid := (isle + cp) * 0.5 + (cp - isle).orthogonal().normalized() * _rng.randf_range(-15.0, 15.0)
-		_ridge(PackedVector2Array([isle, mid, cp]), 13.0, 13.0, sea_y + 0.8, sea_y + 0.8)
+		var mid := (isle + cp) * 0.5 + (cp - isle).orthogonal().normalized() * _rng.randf_range(-25.0, 25.0)
+		_ridge(PackedVector2Array([isle, mid, cp]), 9.0, 9.0, sea_y + 0.7, sea_y + 0.7, 6.0, 1.3)
 		_used.append(mid)
 		features.append(["tombolo", mid])
 		counts["tombolo"] += 1
@@ -422,7 +424,8 @@ func _atoll(near: PackedInt32Array, coast: PackedInt32Array) -> void:
 		for x in range(0, nx, step):
 			var i := z * nx + x
 			var p := Vector2(x, z) * spacing
-			if _o[i] > sea_y - 8.0 or not _inside(p, radius + 70.0) or _close(p, _used, radius + 200.0):
+			# Well clear of the map edge, where the sea floor shelves away into the open ocean.
+			if _o[i] > sea_y - 8.0 or not _inside(p, radius * 2.1 + 260.0) or _close(p, _used, radius + 200.0):
 				continue
 			if near[i] >= 0:
 				var c := coast[near[i]]
@@ -434,28 +437,41 @@ func _atoll(near: PackedInt32Array, coast: PackedInt32Array) -> void:
 	var c := cands[_rng.randi() % cands.size()]
 	var g0 := _rng.randf() * TAU
 	var gaps := [g0, g0 + PI * _rng.randf_range(0.6, 1.4)]
-	var r_out := radius * 1.15 + 80.0
-	for z in range(maxi(0, floori((c.y - r_out) / spacing)), mini(nz, ceili((c.y + r_out) / spacing))):
-		for x in range(maxi(0, floori((c.x - r_out) / spacing)), mini(nx, ceili((c.x + r_out) / spacing))):
+	# Atolls are rarely round: stretched along one axis, with a lumpy outline.
+	var axis := Vector2.from_angle(_rng.randf() * PI)
+	var stretch := _rng.randf_range(1.15, 1.5)
+	var r_out := radius * 1.35 + 90.0
+	var box := r_out * stretch
+	for z in range(maxi(0, floori((c.y - box) / spacing)), mini(nz, ceili((c.y + box) / spacing))):
+		for x in range(maxi(0, floori((c.x - box) / spacing)), mini(nx, ceili((c.x + box) / spacing))):
 			var i := z * nx + x
 			var p := Vector2(x, z) * spacing
-			var d := p.distance_to(c)
+			# Distance in the atoll's own stretched frame.
+			var v := p - c
+			var local := Vector2(v.dot(axis) / stretch, v.dot(axis.orthogonal()))
+			var d := local.length()
 			if d > r_out:
 				continue
-			var a := (p - c).angle()
+			var a := local.angle()
 			var ring := Vector2(cos(a), sin(a))
-			var rr := radius * (1.0 + 0.12 * BorderNoise.snoise(ring * 1.6 + _noff))
-			var hw := 13.0 + 5.0 * BorderNoise.snoise(ring * 2.7 + _noff * 1.3)
-			# Low sandy islets (motu) on the reef, and gaps where the sea gets in.
-			var crest := sea_y + 0.6 + 1.6 * smoothstep(0.3, 0.7, BorderNoise.snoise(ring * 4.1 + _noff * 0.7))
+			var rr := radius * (0.82 + 0.36 * BorderNoise.snoise(ring * 1.3 + _noff) + 0.12 * (BorderNoise.snoise(ring * 4.7 + _noff * 0.6) - 0.5))
+			var hw := 16.0 + 14.0 * BorderNoise.snoise(ring * 2.3 + _noff * 1.3)
+			# A reef flat just awash, with sandy islets (motu) here and there, and passes where
+			# the sea gets into the lagoon.
+			var motu := smoothstep(0.58, 0.8, BorderNoise.snoise(ring * 5.3 + _noff * 0.7))
+			var crest := sea_y - 0.5 + motu * (1.4 + 1.2 * BorderNoise.snoise(p * 0.05 + _noff))
 			for g: float in gaps:
-				crest = lerpf(sea_y - 1.4, crest, smoothstep(0.07, 0.18, absf(angle_difference(a, g))))
+				crest = lerpf(sea_y - 2.0, crest, smoothstep(0.05, 0.16, absf(angle_difference(a, g))))
 			var rd := d - rr
-			var target := crest - (rd / hw) * (rd / hw) * 1.8
+			var uu := rd / maxf(hw * (0.45 + 0.55 * (1.0 - motu * 0.5)), 4.0)
+			var target := crest - 1.6 * uu * uu
 			if rd > 0.0:
-				target = maxf(target, sea_y - 1.5 - rd * 0.3)
+				# The outer reef front drops away steeply into deep water.
+				target = maxf(target, sea_y - 1.2 - rd * 0.6)
 			else:
-				target = maxf(target, sea_y - 3.0 + 0.7 * BorderNoise.snoise(p * 0.03 + _noff))
+				# The lagoon: a few metres deep, with patch reefs.
+				var patch := smoothstep(0.7, 0.85, BorderNoise.snoise(p * 0.035 + _noff * 2.1))
+				target = maxf(target, sea_y - 4.0 + 1.0 * BorderNoise.snoise(p * 0.03 + _noff) + patch * 2.6)
 			_h[i] = maxf(_h[i], target)
 	_used.append(c)
 	features.append(["atoll", c])
@@ -785,10 +801,14 @@ func _nearest(seeds: PackedInt32Array, max_d: float) -> PackedInt32Array:
 
 
 ## A sand ridge along a polyline: crest height and half-width taper from start to end,
-## rounded in section and at the ends. Only ever raises the ground.
-func _ridge(pts: PackedVector2Array, w0: float, w1: float, c0: float, c1: float) -> void:
+## rounded in section and at the ends. Natural, not drawn with a ruler: the centre line wanders
+## (`wobble` metres), the width swells and pinches and the crest rises into low dunes and dips
+## to wash-overs. `flare` widens both ends (a tombolo's salients), `bulb` swells the far tip (a
+## spit's recurved head). Only ever raises the ground.
+func _ridge(pts: PackedVector2Array, w0: float, w1: float, c0: float, c1: float, wobble := 8.0, flare := 0.0, bulb := 0.0) -> void:
 	if pts.size() < 2:
 		return
+	pts = _wander(pts, wobble)
 	var lo := pts[0]
 	var hi := pts[0]
 	var cum := PackedFloat32Array([0.0])
@@ -797,7 +817,8 @@ func _ridge(pts: PackedVector2Array, w0: float, w1: float, c0: float, c1: float)
 		hi = hi.max(pts[k])
 		cum.append(cum[k - 1] + pts[k].distance_to(pts[k - 1]))
 	var total := maxf(cum[cum.size() - 1], 1.0)
-	var pad := maxf(w0, w1) * 2.4
+	# Big enough that the flank has dropped below any sea floor by the box edge.
+	var pad := maxf(w0, w1) * 1.4 * (1.0 + flare + bulb) * 3.8
 	for z in range(maxi(0, floori((lo.y - pad) / spacing)), mini(nz, ceili((hi.y + pad) / spacing) + 1)):
 		for x in range(maxi(0, floori((lo.x - pad) / spacing)), mini(nx, ceili((hi.x + pad) / spacing) + 1)):
 			var p := Vector2(x, z) * spacing
@@ -813,23 +834,128 @@ func _ridge(pts: PackedVector2Array, w0: float, w1: float, c0: float, c1: float)
 					best = dd
 					bu = (cum[k] + sqrt(l2) * t) / total
 			var d := sqrt(best)
-			var w := lerpf(w0, w1, bu)
-			var crest := lerpf(c0, c1, bu) + 0.25 * BorderNoise.snoise(p * 0.05 + _noff)
-			var target := crest - (d / w) * (d / w) * 1.7
+			var along := bu * total
+			var w := lerpf(w0, w1, bu) * (0.6 + 0.8 * BorderNoise.snoise(Vector2(along * 0.018, 3.3) + _noff))
+			w *= 1.0 + flare * (1.0 - sin(PI * bu)) + bulb * smoothstep(0.75, 1.0, bu)
+			var crest := lerpf(c0, c1, bu) + 0.9 * (BorderNoise.snoise(Vector2(along * 0.025, 7.1) + _noff) - 0.5) \
+				+ 0.3 * (BorderNoise.snoise(p * 0.09 + _noff) - 0.5)
+			# Section: a low rounded crest with long, gently shelving flanks.
+			var u := d / maxf(w, 3.0)
+			# (falls below the sea floor well inside the search box, so no edge shows)
+			var target := crest - 1.6 * u * u
 			var i := z * nx + x
 			if target > _h[i]:
 				_h[i] = target
 
 
-## A rounded islet: rises to `peak` at the centre, falls to the sea floor by 1.6 r.
+## Wear on everything the coast shaping changed, so nothing looks drawn:
+## - the change is domain-warped (outlines wobble and crenulate instead of tracing curves),
+## - tidal channels and wash-overs (ridged noise) cut through bars, spits, reefs and islets,
+##   now and then breaking them into pieces,
+## - steep sand faces slump to a natural angle (a few passes of slope erosion),
+## - and a little fine roughness.
+func _erode(shaped: PackedFloat32Array) -> void:
+	var n := nx * nz
+	var d := PackedFloat32Array()
+	d.resize(n)
+	var feat := PackedFloat32Array()
+	feat.resize(n)
+	var lo := Vector2i(nx, nz)
+	var hi := Vector2i(-1, -1)
+	for i in n:
+		d[i] = _h[i] - _o[i]
+		feat[i] = _h[i] - shaped[i]
+		if absf(d[i]) > 0.01:
+			lo = Vector2i(mini(lo.x, i % nx), mini(lo.y, i / nx))
+			hi = Vector2i(maxi(hi.x, i % nx), maxi(hi.y, i / nx))
+	if hi.x < 0:
+		return
+	lo = Vector2i(maxi(lo.x - 4, 1), maxi(lo.y - 4, 1))
+	hi = Vector2i(mini(hi.x + 4, nx - 2), mini(hi.y + 4, nz - 2))
+	var o1 := _noff + Vector2(13.7, 2.9)
+	var o2 := _noff + Vector2(5.3, 17.1)
+	# Warp: read the change from a point pushed about by smooth noise (two scales).
+	for z in range(lo.y, hi.y + 1):
+		for x in range(lo.x, hi.x + 1):
+			var i := z * nx + x
+			var p := Vector2(x, z) * spacing
+			var w := Vector2(BorderNoise.snoise(p * 0.012 + o1) - 0.5, BorderNoise.snoise(p * 0.012 + o2) - 0.5) * 22.0 				+ Vector2(BorderNoise.snoise(p * 0.05 + o2) - 0.5, BorderNoise.snoise(p * 0.05 + o1) - 0.5) * 7.0
+			var dw := _bilin(d, p + w)
+			var fw := _bilin(feat, p + w)
+			# Beach and cliff edits are warped gently (they follow the real coast), the built
+			# features fully.
+			var base := dw - fw
+			var keep := d[i] - feat[i]
+			_h[i] = _o[i] + lerpf(keep, base, 0.5) + fw
+			# Channels and wash-overs, only on what the features raised.
+			if fw > 0.3:
+				var ch := 1.0 - absf(BorderNoise.snoise(p * 0.022 + o1) * 2.0 - 1.0)
+				var ch2 := 1.0 - absf(BorderNoise.snoise(p * 0.06 + o2) * 2.0 - 1.0)
+				var cut := pow(ch, 8.0) * 2.6 + pow(ch2, 10.0) * 1.0
+				_h[i] -= minf(cut, fw)
+			if absf(_h[i] - _o[i]) > 0.05:
+				_h[i] += (BorderNoise.snoise(p * 0.18 + o1) - 0.5) * 0.35
+	# Slumping: sand and loose rock settle where a face is steeper than ~35 degrees.
+	var talus := spacing * 0.7
+	for it in 8:
+		var src := _h.duplicate()
+		for z in range(lo.y, hi.y + 1):
+			for x in range(lo.x, hi.x + 1):
+				var i := z * nx + x
+				# Built sand features only: cliffs stay steep.
+				if feat[i] < 0.2:
+					continue
+				for j: int in [i - 1, i + 1, i - nx, i + nx]:
+					var diff := src[i] - src[j]
+					if diff > talus:
+						var mv := (diff - talus) * 0.2
+						_h[i] -= mv
+						_h[j] += mv
+
+
+## The polyline resampled every 5 m with its points pushed sideways by smooth noise (none at
+## the ends, so it still meets the shore where it should).
+func _wander(pts: PackedVector2Array, amp: float) -> PackedVector2Array:
+	if amp <= 0.0 or pts.size() < 2:
+		return pts
+	var out := PackedVector2Array([pts[0]])
+	for k in pts.size() - 1:
+		var a := pts[k]
+		var b := pts[k + 1]
+		var steps := maxi(1, int(a.distance_to(b) / 5.0))
+		for q in range(1, steps + 1):
+			out.append(a.lerp(b, float(q) / steps))
+	var total := 0.0
+	for k in range(1, out.size()):
+		total += out[k].distance_to(out[k - 1])
+	var res := out.duplicate()
+	var along := 0.0
+	var salt := Vector2(_rng.randf() * 50.0, _rng.randf() * 50.0)
+	for k in range(1, out.size() - 1):
+		along += out[k].distance_to(out[k - 1])
+		var t := (out[k + 1] - out[k - 1]).normalized()
+		var n := Vector2(-t.y, t.x)
+		var taper := sin(PI * clampf(along / maxf(total, 1.0), 0.0, 1.0))
+		var off := (BorderNoise.snoise(Vector2(along * 0.011, 1.7) + salt) - 0.5) * 2.0 + 0.4 * (BorderNoise.snoise(Vector2(along * 0.04, 5.2) + salt) - 0.5)
+		res[k] = out[k] + n * off * amp * taper
+	return res
+
+
+## A rocky islet with a ragged outline: lobes and coves (radius varies with direction), an
+## off-centre knoll and uneven slopes, falling to the sea floor.
 func _mound(c: Vector2, r: float, peak: float) -> void:
-	var reach := r * 1.6
+	var reach := r * 3.2
+	var top := c + Vector2.from_angle(_rng.randf() * TAU) * r * 0.3
 	for z in range(maxi(0, floori((c.y - reach) / spacing)), mini(nz, ceili((c.y + reach) / spacing) + 1)):
 		for x in range(maxi(0, floori((c.x - reach) / spacing)), mini(nx, ceili((c.x + reach) / spacing) + 1)):
 			var p := Vector2(x, z) * spacing
-			var u := clampf(p.distance_to(c) / reach, 0.0, 1.0)
-			var bump := 1.0 + 0.2 * BorderNoise.snoise(p * 0.04 + _noff)
-			var target := sea_y - 2.5 + (peak - sea_y + 2.5) * pow(1.0 - u, 1.4) * bump
+			var dir := (p - c).normalized() if p != c else Vector2.RIGHT
+			var rr := r * 1.6 * (0.7 + 0.55 * BorderNoise.snoise(dir * 1.4 + _noff) + 0.25 * (BorderNoise.snoise(dir * 4.3 + _noff * 1.7) - 0.5))
+			var u := p.distance_to(top.lerp(c, clampf(p.distance_to(c) / r, 0.0, 1.0))) / maxf(rr, 4.0)
+			var bump := 1.0 + 0.35 * (BorderNoise.snoise(p * 0.06 + _noff) - 0.5)
+			var target := sea_y - 2.5 + (peak - sea_y + 2.5) * pow(maxf(1.0 - u, 0.0), 1.25) * bump
+			# Beyond its foot the islet's apron keeps falling away, below any sea floor.
+			target -= maxf(u - 1.0, 0.0) * 25.0
 			var i := z * nx + x
 			_h[i] = maxf(_h[i], target)
 

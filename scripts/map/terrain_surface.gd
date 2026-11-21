@@ -72,6 +72,7 @@ func _init(p_level: HexLevel, source: TerrainSource, settings: HexMapSettings, g
 	_compute_heights()
 	_smooth_heights(_settings.terrain_smoothing)
 	_roughen_coast()
+	_natural_seafloor()
 
 
 func index(x: int, z: int) -> int:
@@ -120,6 +121,29 @@ func ground_min(p: Vector2, r: float) -> float:
 		h = minf(h, sample_mesh(p + Vector2(cos(a), sin(a)) * r))
 		h = minf(h, sample_mesh(p + Vector2(cos(a), sin(a)) * r * 0.5))
 	return h
+
+
+## A level pad for a prop: the ground within r is brought to its average height there (so the
+## prop sits flush, all of it in view), easing back to the land over `ease` metres. River
+## channels and trail beds are left alone; trees keep off the pad. Returns the pad height.
+func level_pad(p: Vector2, r: float, ease := 6.0, min_y := -INF) -> float:
+	var y := sample_mesh(p)
+	for k in 8:
+		y += sample_mesh(p + Vector2.from_angle(TAU * k / 8.0) * r * 0.8)
+	y = maxf(y / 9.0, min_y)
+	var reach := r + ease
+	for z in range(maxi(0, floori((p.y - reach) / spacing)), mini(nz, ceili((p.y + reach) / spacing) + 1)):
+		for x in range(maxi(0, floori((p.x - reach) / spacing)), mini(nx, ceili((p.x + reach) / spacing) + 1)):
+			var i := z * nx + x
+			var d := Vector2(x, z).distance_to(p / spacing) * spacing
+			if d > reach:
+				continue
+			var t := 1.0 - smoothstep(r, reach, d)
+			t *= (1.0 - clampf(river_mask[i] / 0.3, 0.0, 1.0)) * (1.0 - clampf(path_mask[i] / 0.5, 0.0, 1.0))
+			heights[i] = lerpf(heights[i], y, t)
+			if d < r + 2.0:
+				clear_mask[i] = 1
+	return y
 
 
 ## Seat for a slab lying along the slope: the height at p of the highest plane with the
@@ -415,6 +439,106 @@ func _roughen_coast() -> void:
 			heights[i] += (n - 0.5) * 2.4 * (1.0 - smoothstep(0.0, 3.0, d))
 
 
+## The sea floor from each point's own distance to the shore, not per hex: a smooth shelf
+## that deepens offshore with gentle undulations, so shallow water never ends in hex-shaped
+## steps. Right by the shore the roughened coast is kept and eased into it.
+func _natural_seafloor() -> void:
+	var n := nx * nz
+	# Where the hex grid ends (no hex under a vertex) or the terrain grid does: the open sea.
+	var outside := PackedInt32Array()
+	for z in nz:
+		for x in nx:
+			if x == 0 or z == 0 or x == nx - 1 or z == nz - 1 or level.nearest_cell(Vector2(x, z) * spacing) < 0:
+				outside.append(z * nx + x)
+	var edge_of := _spread(outside)
+	var seed_of := PackedInt32Array()
+	seed_of.resize(n)
+	seed_of.fill(-1)
+	var q := PackedInt32Array()
+	for i in n:
+		if heights[i] > sea_y:
+			seed_of[i] = i
+			q.append(i)
+	if q.is_empty():
+		return
+	var head := 0
+	while head < q.size():
+		var i := q[head]
+		head += 1
+		var x := i % nx
+		var z := i / nx
+		var sd := seed_of[i]
+		for o: Vector2i in [Vector2i(1, 0), Vector2i(-1, 0), Vector2i(0, 1), Vector2i(0, -1), Vector2i(1, 1), Vector2i(-1, 1), Vector2i(1, -1), Vector2i(-1, -1)]:
+			var xx := x + o.x
+			var zz := z + o.y
+			if xx < 0 or zz < 0 or xx >= nx or zz >= nz:
+				continue
+			var j := zz * nx + xx
+			if seed_of[j] < 0:
+				seed_of[j] = sd
+				q.append(j)
+	for i in n:
+		if heights[i] > sea_y - 0.3:
+			continue
+		var x := i % nx
+		var z := i / nx
+		var sd := seed_of[i]
+		var d := Vector2(x - sd % nx, z - sd / nx).length() * spacing
+		var p := Vector2(x, z) * spacing
+		var und := (BorderNoise.snoise(p * 0.012 + Vector2(4.4, 8.8)) - 0.5) * 3.0 + (BorderNoise.snoise(p * 0.045 + Vector2(2.2, 1.1)) - 0.5) * 1.0
+		var depth := _settings.seabed_depth + d * _settings.seabed_slope + 6.0 * smoothstep(120.0, 400.0, d) + und * smoothstep(5.0, 40.0, d)
+		# Towards the map edge the floor shelves away into deep water, so the open sea beyond
+		# the map (no floor at all) meets it without a visible seam.
+		var eo := edge_of[i]
+		var edge := Vector2(x - eo % nx, z - eo / nx).length() * spacing if eo >= 0 else 1.0e4
+		# An irregular shelf break, not a ruled line along the map's border.
+		var wob := BorderNoise.snoise(p * 0.006 + Vector2(9.1, 3.7))
+		var shelf := edge + (BorderNoise.snoise(p * 0.02 + Vector2(1.9, 6.3)) - 0.5) * 70.0
+		depth = lerpf(maxf(depth, 32.0), depth, smoothstep(10.0, 140.0 + 160.0 * wob, shelf))
+		var target := sea_y - minf(maxf(depth, 0.6), 80.0)
+		heights[i] = lerpf(heights[i], target, smoothstep(0.0, 12.0, d))
+	# The waterline: a few gentle passes over the band either side of it round off the hex
+	# outline the coast inherits (no stair-stepped shores or inlets).
+	# (a wider kernel too: the steps to remove are a hex, ~20 m, across)
+	for it in 10:
+		var src := heights.duplicate()
+		for z in range(2, nz - 2):
+			for x in range(2, nx - 2):
+				var i := z * nx + x
+				var h := src[i]
+				if absf(h - sea_y) > 4.0:
+					continue
+				var avg := (src[i - 1] + src[i + 1] + src[i - nx] + src[i + nx]) * 0.1 					+ (src[i - nx - 1] + src[i - nx + 1] + src[i + nx - 1] + src[i + nx + 1]) * 0.075 					+ (src[i - 2] + src[i + 2] + src[i - 2 * nx] + src[i + 2 * nx]) * 0.075
+				heights[i] = lerpf(h, avg, 0.55 * (1.0 - smoothstep(2.0, 4.0, absf(h - sea_y))))
+
+
+## For every vertex, the index of a near seed vertex (breadth-first spread from the seeds).
+func _spread(seeds: PackedInt32Array) -> PackedInt32Array:
+	var n := nx * nz
+	var src := PackedInt32Array()
+	src.resize(n)
+	src.fill(-1)
+	var q := seeds.duplicate()
+	for i in seeds:
+		src[i] = i
+	var head := 0
+	while head < q.size():
+		var i := q[head]
+		head += 1
+		var x := i % nx
+		var z := i / nx
+		for o: Vector2i in [Vector2i(1, 0), Vector2i(-1, 0), Vector2i(0, 1), Vector2i(0, -1), Vector2i(1, 1), Vector2i(-1, 1), Vector2i(1, -1), Vector2i(-1, -1)]:
+			var xx := x + o.x
+			var zz := z + o.y
+			if xx < 0 or zz < 0 or xx >= nx or zz >= nz:
+				continue
+			var j := zz * nx + xx
+			if src[j] < 0:
+				src[j] = src[i]
+				q.append(j)
+	return src
+
+
 ## Rounds off the hex terraces: a few passes of a 3x3 blur over the whole grid. The coastline
 ## stays put (land never sinks below the sea, sea floor never rises out of it).
 func _smooth_heights(passes: int) -> void:
@@ -514,7 +638,10 @@ func carve_channels(paths: Array) -> void:
 			var w := path.widths[k]
 			var depth := RiverMeshBuilder.depth_for(w)
 			var bed := pt.y - depth
-			var r := maxf(w * 1.9, w * 0.5 + 6.0)
+			# Thin streams still get a channel at least a grid cell wide: the terrain is a
+			# 5 m mesh, so a narrower cut would leave its triangles over the water.
+			var cw := maxf(w, spacing * 1.6)
+			var r := maxf(cw * 1.9, cw * 0.5 + 6.0)
 			# Below a waterfall: don't carve back past its lip.
 			var guard: Array = []
 			for lip: Array in lips:
@@ -532,11 +659,11 @@ func carve_channels(paths: Array) -> void:
 					if not guard.is_empty() and (Vector2(gx * spacing, gz * spacing) - guard[1]).dot(guard[2]) < 0.0:
 						continue
 					var i := gz * nx + gx
-					var prof := 1.0 - smoothstep(w * 0.3, w * 1.5, d)
+					var prof := 1.0 - smoothstep(cw * 0.3, cw * 1.5, d)
 					if prof > 0.0:
 						heights[i] = minf(heights[i], lerpf(heights[i], bed, prof))
-					river_mask[i] = maxf(river_mask[i], 1.0 - smoothstep(w * 0.45, w * 1.2, d))
-					if d < w * 0.5 + 6.0:
+					river_mask[i] = maxf(river_mask[i], 1.0 - smoothstep(cw * 0.45, cw * 1.2, d))
+					if d < cw * 0.5 + 6.0:
 						clear_mask[i] = 1
 
 
@@ -660,6 +787,13 @@ func finish_weights() -> void:
 				_pull(base, T.SHALLOW_WATER, under * (1.0 - deep))
 				_pull(base, T.DEEP_WATER, under * deep)
 			else:
+				# Ground above the water never keeps a sea-floor texture (sand bars and spits
+				# built in sea hexes): its water layers turn to sand.
+				var wet_layers := weights[base + T.SHALLOW_WATER] + weights[base + T.DEEP_WATER]
+				if wet_layers > 0.0:
+					weights[base + T.SAND] += wet_layers
+					weights[base + T.SHALLOW_WATER] = 0.0
+					weights[base + T.DEEP_WATER] = 0.0
 				var beach := 1.0 - smoothstep(sea_y + 0.8, sea_y + 3.5, h)
 				_pull(base, T.SAND, beach * 0.85)
 			var p := Vector2(x * spacing, z * spacing)
