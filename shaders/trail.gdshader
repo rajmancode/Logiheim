@@ -22,8 +22,8 @@ void vertex() {
 void fragment() {
 	vec2 p = v_world_pos.xz;
 	float x = UV.x;
-	float rag = (env_noise(p * 0.7) - 0.5) * 0.25 + (env_noise(p * 2.5) - 0.5) * 0.12;
-	float edge = smoothstep(0.0, 0.22, x + rag) * smoothstep(1.0, 0.78, x - rag);
+	float rag = (env_noise(p * 0.7) - 0.5) * 0.1 + (env_noise(p * 2.5) - 0.5) * 0.05;
+	float edge = smoothstep(0.0, 0.16, x + rag) * smoothstep(1.0, 0.84, x - rag);
 	vec3 dirt = texture(albedo_array, vec3(p / 3.5, T_DIRT)).rgb;
 	vec3 gravel = texture(albedo_array, vec3(p / 3.0, T_GRAVEL)).rgb;
 	vec3 grass = texture(albedo_array, vec3(p / 4.0, T_GRASS)).rgb;

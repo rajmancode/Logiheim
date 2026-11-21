@@ -117,7 +117,7 @@ extends Resource
 ## A network of trails between natural settlement spots; units move faster along them.
 @export var roads_enabled := true
 ## Rough distance between settlement spots, and trail width, metres.
-@export var road_spacing := 380.0
+@export var road_spacing := 260.0
 @export var road_width := 3.5
 
 @export_group("Caves")

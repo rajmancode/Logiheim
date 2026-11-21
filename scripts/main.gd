@@ -16,6 +16,8 @@ var hovered := -1
 var selected := -1
 var show_grid := true
 var seed_edit: LineEdit
+var cave_env: Environment
+var _surface_cam := {}
 
 
 func _ready() -> void:
@@ -76,6 +78,11 @@ func _rebuild() -> void:
 func _process(_delta: float) -> void:
 	if hex_map.current_level() == null:
 		return
+	if hex_map.underground >= 0:
+		var cp := cam.position
+		cam.ground_height = hex_map.cave_floor(Vector2(cp.x, cp.z))
+		_update_hud()
+		return
 	hex_map.update_lod(cam.distance)
 	atmosphere.update_view(cam.position, cam.distance)
 	var p := cam.position
@@ -101,6 +108,11 @@ func _unhandled_input(event: InputEvent) -> void:
 		return
 	var s := hex_map.settings
 	match key.keycode:
+		KEY_C:
+			_toggle_cave()
+		KEY_ESCAPE:
+			if hex_map.underground >= 0:
+				_toggle_cave()
 		KEY_F5:
 			# A new random world from the same terrain.
 			_set_seed(randi() % 1000000)
@@ -138,6 +150,48 @@ func _unhandled_input(event: InputEvent) -> void:
 			hex_map.set_resource_icons_visible(not hex_map.resource_icons_visible())
 
 
+## Into the cave nearest the view (or the hovered cave entrance), or back out.
+func _toggle_cave() -> void:
+	if hex_map.underground >= 0:
+		hex_map.exit_cave()
+		atmosphere.underground = false
+		cam.camera.environment = null
+		for k in _surface_cam:
+			cam.set(k, _surface_cam[k])
+		cam.set("_target_distance", 260.0)
+		return
+	var si := hex_map.nearest_cave(Vector2(cam.position.x, cam.position.z), 2000.0)
+	var info := hex_map.enter_cave(si)
+	if info.is_empty():
+		return
+	for k in ["min_distance", "max_distance", "near_pitch_deg", "far_pitch_deg", "bounds", "position", "_target"]:
+		_surface_cam[k] = cam.get(k)
+	var view: Vector3 = info.view
+	var box: AABB = info.bounds
+	cam.min_distance = 6.0
+	cam.max_distance = 90.0
+	cam.near_pitch_deg = 30.0
+	cam.far_pitch_deg = 62.0
+	cam.bounds = Rect2(box.position.x, box.position.z, box.size.x, box.size.z)
+	cam.set("_target", view)
+	cam.position = view
+	cam.set("_target_distance", 40.0)
+	cam.distance = 40.0
+	atmosphere.underground = true
+	if cave_env == null:
+		cave_env = Environment.new()
+		cave_env.background_mode = Environment.BG_COLOR
+		cave_env.background_color = Color(0.01, 0.01, 0.012)
+		cave_env.ambient_light_source = Environment.AMBIENT_SOURCE_COLOR
+		cave_env.ambient_light_color = Color(0.32, 0.3, 0.28)
+		cave_env.ambient_light_energy = 0.35
+		cave_env.tonemap_mode = Environment.TONE_MAPPER_FILMIC
+		cave_env.glow_enabled = true
+		cave_env.glow_intensity = 0.6
+		cave_env.ssao_enabled = true
+	cam.camera.environment = cave_env
+
+
 func _on_level_changed(_i: int) -> void:
 	hovered = -1
 	selected = -1
@@ -148,6 +202,15 @@ func _update_hud() -> void:
 	var src := hex_map.source
 	var s := hex_map.settings
 	var lines := PackedStringArray()
+	if hex_map.underground >= 0:
+		var sy: Dictionary = hex_map.cave_plan.systems[hex_map.underground]
+		var names := PackedStringArray()
+		for k: int in sy.kinds:
+			names.append(NaturalResources.display_name(k))
+		lines.append("Cave %d%s: %s   (%d entrances)" % [hex_map.underground + 1, " (lava tube)" if sy.lava else "", ", ".join(names), sy.entrances.size()])
+		lines.append("WASD / drag: move    wheel: zoom    Q E: rotate    C or Esc: back to the surface")
+		hud.text = "\n".join(lines)
+		return
 	lines.append("%s   %d x %d m   (map %d/%d, M = next)   seed %d" % [src.name, src.world_size.x, src.world_size.y, map_index + 1, map_dirs.size(), s.seed])
 	lines.append("Level %d/%d   hex %.1f m   %d x %d = %d cells   %s" % [
 		level.level_index + 1, hex_map.levels.size(), level.hex_size, level.cols, level.rows,
@@ -159,7 +222,7 @@ func _update_hud() -> void:
 	lines.append("")
 	lines.append("WASD / arrows / middle-drag: pan    wheel: zoom    Q E / right-drag: rotate    click: select")
 	lines.append("- =: height scale    1-5: force level    0: auto LOD    G: grid    T: trees    H: hide    F5: new seed")
-	lines.append("N: pause/run day cycle    , .: time -/+ 1 h    R: weather (clear / cloudy / rain)    I: resource icons")
+	lines.append("N: pause/run day cycle    , .: time -/+ 1 h    R: weather (clear / cloudy / rain)    I: resource icons    C: explore nearest cave")
 	hud.text = "\n".join(lines)
 
 

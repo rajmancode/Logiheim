@@ -3,20 +3,36 @@
 Usage:
     python tools/make_resource_icons.py
 
-Each icon is a round badge in its group's colour with a simple white glyph, written to
-assets/icons/resources/<key>.svg. Keys match NaturalResources.INFO.
+Each icon is a badge with a simple white glyph, written to assets/icons/resources/<key>.svg.
+Keys match NaturalResources.INFO. Every group has its own shape and colour, so groups tell
+apart at a glance: core = green circle, precious = gold diamond, industry = violet rounded
+square, wildlife = orange hexagon, norse = blue shield. Badges have a dark outline, a light rim
+and a drop shadow so they stand out on any ground. cave.svg marks cave entrances.
 """
 from pathlib import Path
 
 OUT = Path(__file__).resolve().parent.parent / "assets" / "icons" / "resources"
 
 GROUP_COLORS = {
-    "core": "#3d7a3a",
-    "precious": "#b58410",
-    "industry": "#566170",
-    "wildlife": "#7a5230",
-    "norse": "#2d5b8c",
+    "core": "#2f9e44",
+    "precious": "#e0a100",
+    "industry": "#7048e8",
+    "wildlife": "#e8590c",
+    "norse": "#1971c2",
+    "cave": "#2b2522",
 }
+
+# Badge outline per group (SVG element without fill/stroke attributes).
+SHAPES = {
+    "core": '<circle cx="64" cy="64" r="54"/>',
+    "precious": '<polygon points="64,4 124,64 64,124 4,64"/>',
+    "industry": '<rect x="10" y="10" width="108" height="108" rx="20"/>',
+    "wildlife": '<polygon points="64,4 118,34 118,94 64,124 10,94 10,34"/>',
+    "norse": '<path d="M12 12 H116 V58 C116 94 92 114 64 125 C36 114 12 94 12 58 Z"/>',
+    "cave": '<polygon points="40,6 88,6 122,40 122,88 88,122 40,122 6,88 6,40"/>',
+}
+# Glyphs are drawn a little smaller on the pointier shapes so they stay inside.
+GLYPH_SCALE = {"core": 0.92, "precious": 0.72, "industry": 0.9, "wildlife": 0.85, "norse": 0.82, "cave": 0.9}
 
 W = 'fill="#ffffff"'
 WS = 'fill="none" stroke="#ffffff" stroke-width="7" stroke-linecap="round" stroke-linejoin="round"'
@@ -76,17 +92,36 @@ GLYPHS = {
 }
 
 
+def badge(group: str, glyph: str) -> str:
+    color = GROUP_COLORS[group]
+    shape = SHAPES[group]
+    sc = GLYPH_SCALE[group]
+    rim = "#ffa94d" if group == "cave" else "#f8f4ea"
+    return (
+        '<svg xmlns="http://www.w3.org/2000/svg" width="128" height="128" viewBox="0 0 128 128">'
+        # Drop shadow, dark outline, coloured face with a light rim.
+        f'<g transform="translate(64 64) scale(0.94) translate(-64 -64)">'
+        f'<g transform="translate(3 4)" fill="#000000" opacity="0.45">{shape}</g>'
+        f'<g fill="none" stroke="#0d1013" stroke-width="12" stroke-linejoin="round">{shape}</g>'
+        f'<g fill="{color}" stroke="{rim}" stroke-width="5" stroke-linejoin="round">{shape}</g>'
+        f'<g transform="translate(64 64) scale({sc}) translate(-64 -64)">{glyph}</g>'
+        '</g></svg>'
+    )
+
+
+CAVE_GLYPH = (
+    '<path fill="#e9dfd0" d="M22 104 V70 A42 42 0 0 1 106 70 V104 Z"/>'
+    '<path fill="#0b0908" d="M40 104 V74 A24 24 0 0 1 88 74 V104 Z"/>'
+    '<polygon fill="#e9dfd0" points="50,62 54,76 58,62"/><polygon fill="#e9dfd0" points="68,58 72,74 76,58"/>'
+    '<polygon fill="#ffa94d" points="60,104 64,92 68,104"/>'
+)
+
+
 def main() -> None:
     OUT.mkdir(parents=True, exist_ok=True)
     for key, (group, glyph) in GLYPHS.items():
-        color = GROUP_COLORS[group]
-        svg = (
-            '<svg xmlns="http://www.w3.org/2000/svg" width="128" height="128" viewBox="0 0 128 128">'
-            f'<circle cx="64" cy="64" r="60" fill="#10151a" opacity="0.55"/>'
-            f'<circle cx="64" cy="64" r="55" fill="{color}" stroke="#f4efe2" stroke-width="5"/>'
-            f'{glyph}</svg>'
-        )
-        (OUT / f"{key}.svg").write_text(svg, encoding="utf-8")
+        (OUT / f"{key}.svg").write_text(badge(group, glyph), encoding="utf-8")
+    (OUT / "cave.svg").write_text(badge("cave", CAVE_GLYPH), encoding="utf-8")
     print(f"wrote {len(GLYPHS)} icons to {OUT}")
 
 

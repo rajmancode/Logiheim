@@ -106,8 +106,20 @@ func describe() -> String:
 		hh, mm, "" if cycle_running else "(paused)", WEATHER_NAMES[weather], roundi(5.0 + wind_now * 60.0), compass, flooding]
 
 
+## True while exploring a cave: no sun, moon, clouds or rain down there.
+var underground := false
+
+
 func _process(delta: float) -> void:
 	_update(delta)
+	if underground:
+		sun.visible = false
+		moon.visible = false
+		_clouds.visible = false
+		_rain.visible = false
+	else:
+		_clouds.visible = true
+		_rain.visible = true
 
 
 func _update(delta: float) -> void:

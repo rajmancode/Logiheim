@@ -465,6 +465,33 @@ static func place(all: Array, level: HexLevel, surface: TerrainSurface, hydro: H
 	return paths
 
 
+## After all shaping of the ground: wherever the land just outside a river's channel has ended
+## up lower than its water (a bank cut back by the slope limit, a trail, a valley), the water
+## comes down to it, so no river ever runs above the ground beside it. Water keeps falling
+## downstream. Carve the channels again afterwards.
+static func settle(paths: Array[RiverPath], surface: TerrainSurface) -> void:
+	for path in paths:
+		var n := path.points.size()
+		for k in n:
+			var pt := path.points[k]
+			var a := path.points[maxi(k - 1, 0)]
+			var b := path.points[mini(k + 1, n - 1)]
+			var t := Vector2(b.x - a.x, b.z - a.z).normalized()
+			var side := Vector2(-t.y, t.x)
+			var c := Vector2(pt.x, pt.z)
+			var reach := path.widths[k] * 1.6 + 1.5
+			var bank := minf(surface.sample(c + side * reach), surface.sample(c - side * reach))
+			bank = maxf(bank, surface.sea_y + 0.03)
+			if bank < pt.y - 0.05:
+				pt.y = bank - 0.05
+				path.points[k] = pt
+		for k in range(1, n):
+			if path.points[k].y > path.points[k - 1].y:
+				var q := path.points[k]
+				q.y = path.points[k - 1].y
+				path.points[k] = q
+
+
 # --------------------------------------------------------------------------- meshes
 
 static func build(paths: Array[RiverPath], parent: Node3D) -> void:

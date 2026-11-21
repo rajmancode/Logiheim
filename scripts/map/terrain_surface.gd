@@ -438,6 +438,11 @@ func carve(paths: Array) -> void:
 	if paths.is_empty():
 		return
 	_carve_valleys(paths)
+	carve_channels(paths)
+
+
+## The river channels alone: bed below each path's water surface, blending into the banks.
+func carve_channels(paths: Array) -> void:
 	for path: RiverPath in paths:
 		var lips: Array = []
 		for f in path.falls:

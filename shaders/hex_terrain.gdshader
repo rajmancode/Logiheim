@@ -87,36 +87,67 @@ void vertex() {
 
 // Samples one texture: planar from above on flat ground, triplanar on slopes.
 // Returns albedo (rgb, a = height) and writes normal (xy -1..1, z = AO, w = roughness).
+// One random rotation (radians) and offset per texture-space hex cell.
+vec3 cell_rand(vec2 cell, float layer) {
+	float a = env_hash(cell + vec2(layer * 17.0, 3.0)) * 6.2832;
+	vec2 o = vec2(env_hash(cell + vec2(91.0, layer)), env_hash(cell + vec2(layer, 57.0)));
+	return vec3(a, o);
+}
+
+// Hex tiling: texture space is split into small hex cells, each showing the texture at its own
+// random rotation and offset; a pixel blends its three nearest cells (weighted by distance,
+// sharpened by the texture's own height) so the seams vanish. Normals are rotated back.
+void hex_tile(float layer, vec2 uv, out vec4 alb, out vec4 nrm) {
+	const float CELL = 0.55;   // cells per texture repeat (bigger = larger patches)
+	vec2 st = uv * CELL;
+	// Skew to a triangle grid.
+	vec2 g = vec2(st.x - st.y * 0.57735027, st.y * 1.15470054);
+	vec2 b = floor(g);
+	vec2 f = fract(g);
+	vec3 w;
+	vec2 v1;
+	vec2 v2;
+	vec2 v3;
+	float z = 1.0 - f.x - f.y;
+	if (z > 0.0) {
+		w = vec3(z, f.y, f.x);
+		v1 = b;
+		v2 = b + vec2(0.0, 1.0);
+		v3 = b + vec2(1.0, 0.0);
+	} else {
+		w = vec3(-z, 1.0 - f.y, 1.0 - f.x);
+		v1 = b + vec2(1.0, 1.0);
+		v2 = b + vec2(1.0, 0.0);
+		v3 = b + vec2(0.0, 1.0);
+	}
+	vec2 vs[3] = vec2[](v1, v2, v3);
+	vec4 a_s[3];
+	vec4 n_s[3];
+	float hsum = 0.0;
+	for (int k = 0; k < 3; k++) {
+		vec3 r = cell_rand(vs[k], layer);
+		float c = cos(r.x);
+		float sn = sin(r.x);
+		mat2 rot = mat2(vec2(c, sn), vec2(-sn, c));
+		vec2 tuv = rot * uv + r.yz;
+		a_s[k] = texture(albedo_array, vec3(tuv, layer));
+		vec4 nn = texture(normal_array, vec3(tuv, layer));
+		nn.xy = (transpose(rot) * (nn.xy * 2.0 - 1.0)) * 0.5 + 0.5;
+		n_s[k] = nn;
+	}
+	// Sharpen the blend with each sample's height so cells meet like real ground.
+	vec3 wh = w * w * w * vec3(1.0 + a_s[0].a * 2.0, 1.0 + a_s[1].a * 2.0, 1.0 + a_s[2].a * 2.0);
+	wh /= wh.x + wh.y + wh.z;
+	alb = a_s[0] * wh.x + a_s[1] * wh.y + a_s[2] * wh.z;
+	nrm = n_s[0] * wh.x + n_s[1] * wh.y + n_s[2] * wh.z;
+}
+
 vec4 sample_tex(int i, vec3 p, vec3 tw, bool tri, out vec4 nrm) {
 	float layer = float(i);
 	float sc = 1.0 / tex_size[i];
-	// Anti-tiling: a second copy of the texture, rotated ~120 degrees and shifted, takes over in
-	// large irregular patches (blended by texture height at the seams), so the repeat never
-	// lines up across a field. Its normals are rotated back to match.
-	vec2 uv = p.xz * sc;
-	float m = smoothstep(0.38, 0.62, env_noise(p.xz * 0.011 + vec2(float(i) * 3.7, float(i) * 1.3)));
-	const float RA = 2.094;
-	mat2 rot = mat2(vec2(cos(RA), sin(RA)), vec2(-sin(RA), cos(RA)));
 	vec4 ay;
 	vec4 ny;
-	if (m < 0.99) {
-		ay = texture(albedo_array, vec3(uv, layer));
-		ny = texture(normal_array, vec3(uv, layer));
-	}
-	if (m > 0.01) {
-		vec2 uv2 = rot * uv + vec2(0.37, 0.71);
-		vec4 a2 = texture(albedo_array, vec3(uv2, layer));
-		vec4 n2 = texture(normal_array, vec3(uv2, layer));
-		n2.xy = (transpose(rot) * (n2.xy * 2.0 - 1.0)) * 0.5 + 0.5;
-		if (m >= 0.99) {
-			ay = a2;
-			ny = n2;
-		} else {
-			float hm = clamp((m - 0.5) * 3.0 + (a2.a - ay.a) * 1.5 + 0.5, 0.0, 1.0);
-			ay = mix(ay, a2, hm);
-			ny = mix(ny, n2, hm);
-		}
-	}
+	hex_tile(layer, p.xz * sc, ay, ny);
 	vec4 alb = ay;
 	nrm = ny;
 	if (tri) {

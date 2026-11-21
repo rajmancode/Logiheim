@@ -21,7 +21,7 @@ static var _trail_mat: ShaderMaterial
 const STEP := 4.0
 
 
-static func plan(level: HexLevel, surface: TerrainSurface, settings: HexMapSettings) -> RoadNetwork:
+static func plan(level: HexLevel, surface: TerrainSurface, settings: HexMapSettings, destinations: Array = []) -> RoadNetwork:
 	var rn := RoadNetwork.new()
 	rn.width = settings.road_width
 	if not settings.roads_enabled:
@@ -60,6 +60,11 @@ static func plan(level: HexLevel, surface: TerrainSurface, settings: HexMapSetti
 		cands.append([score, i])
 	cands.sort_custom(func(a, b): return a[0] > b[0])
 	var nodes: Array[int] = []
+	# Destinations first (cave entrances): every one gets a trail.
+	for d: Vector2 in destinations:
+		var cell := level.cell_at(d)
+		if cell >= 0 and blocked[cell] == 0 and not nodes.has(cell):
+			nodes.append(cell)
 	for cand in cands:
 		var c := level.cell_center(cand[1])
 		var ok := true
@@ -69,7 +74,7 @@ static func plan(level: HexLevel, surface: TerrainSurface, settings: HexMapSetti
 				break
 		if ok:
 			nodes.append(cand[1])
-		if nodes.size() >= 48:
+		if nodes.size() >= 90:
 			break
 	if nodes.size() < 2:
 		return rn
@@ -103,8 +108,20 @@ static func plan(level: HexLevel, surface: TerrainSurface, settings: HexMapSetti
 			if not known and d < best:
 				best = d
 				bb = b
-		if bb >= 0 and best < settings.road_spacing * 1.7 and rng.randf() < 0.45:
+		if bb >= 0 and best < settings.road_spacing * 2.4 and rng.randf() < 0.85:
 			links.append([a, bb, best])
+		# Now and then a second, longer link for more loops and crossroads.
+		var second := -1
+		var second_d := INF
+		for b in nodes:
+			if b == a or b == bb:
+				continue
+			var d := level.cell_center(a).distance_to(level.cell_center(b))
+			if d < second_d:
+				second_d = d
+				second = b
+		if second >= 0 and second_d < settings.road_spacing * 2.6 and rng.randf() < 0.4:
+			links.append([a, second, second_d])
 	links.sort_custom(func(a, b): return a[2] < b[2])
 	# Route.
 	var on_road := PackedByteArray()

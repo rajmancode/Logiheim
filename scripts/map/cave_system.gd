@@ -150,6 +150,335 @@ func place_resources(levels: Array[HexLevel]) -> void:
 				up.deposits.append({"kind": kinds[0], "center": c, "size": 1, "cave": true})
 
 
+# --------------------------------------------------------------------------- interiors
+
+## Prop model for each cave resource.
+const CAVE_PROPS := {
+	K.IRON: "outcrop_iron", K.SILVER: "outcrop_silver", K.GEMS: "crystals",
+	K.COAL: "outcrop_coal", K.SOAPSTONE: "outcrop_soapstone",
+}
+
+
+## Where a tunnel starts just inside a mouth (matches build_meshes()).
+static func _mouth_point(surface: TerrainSurface, e: Dictionary) -> Vector3:
+	var p: Vector2 = e.p
+	var dir: Vector2 = e.dir
+	var back := p - dir * 1.0
+	return Vector3(back.x, surface.sample(p + dir * 2.0) + 2.4, back.y)
+
+
+## The explorable inside of every cave system, built under the hills (finest level only):
+## chambers joined by winding tunnels to every entrance, stalactites and stalagmites, the
+## system's resources on the chamber floors, and lights. Each system is its own hidden node;
+## HexMap.enter_cave() shows one. Walls face inwards, so from outside (the camera stays above
+## the floor, outside the rock) you see straight in, like a cutaway.
+func build_interiors(surface: TerrainSurface, parent: Node3D) -> void:
+	var rng := RandomNumberGenerator.new()
+	rng.seed = MapSeed.mix(6262)
+	for si in systems.size():
+		var sy: Dictionary = systems[si]
+		var node := Node3D.new()
+		node.name = "CaveInterior_%d" % si
+		node.visible = false
+		parent.add_child(node)
+		var e0: Dictionary = sy.entrances[0]
+		var in0 := -(e0.dir as Vector2)
+		var m0 := _mouth_point(surface, e0)
+		# Chambers, leading on into the hill.
+		var chambers: Array = []
+		var c := Vector2(m0.x, m0.z) + in0 * rng.randf_range(30.0, 42.0)
+		var y := minf(m0.y - rng.randf_range(5.0, 9.0), surface.sample(c) - 16.0)
+		var heading := in0
+		for k in rng.randi_range(2, 4):
+			var rad := Vector3(rng.randf_range(9.0, 15.0), rng.randf_range(5.0, 8.0), rng.randf_range(9.0, 15.0))
+			chambers.append({"c": Vector3(c.x, y, c.y), "r": rad, "open": []})
+			heading = heading.rotated(rng.randf_range(-1.1, 1.1))
+			c += heading * rng.randf_range(30.0, 42.0)
+			y = minf(y + rng.randf_range(-7.0, 3.0), surface.sample(c) - 16.0)
+		# Tunnels: from every mouth to the nearest chamber, and chamber to chamber.
+		var tunnels: Array = []
+		for e: Dictionary in sy.entrances:
+			var m := _mouth_point(surface, e)
+			var best := 0
+			for k in chambers.size():
+				if Vector2(m.x, m.z).distance_to(Vector2(chambers[k].c.x, chambers[k].c.z)) < Vector2(m.x, m.z).distance_to(Vector2(chambers[best].c.x, chambers[best].c.z)):
+					best = k
+			var start := m
+			var lead := Vector3(-(e.dir as Vector2).x, -0.15, -(e.dir as Vector2).y)
+			tunnels.append(_tunnel(start, lead, chambers[best], surface, rng, true))
+		for k in range(1, chambers.size()):
+			var a: Dictionary = chambers[k - 1]
+			var b: Dictionary = chambers[k]
+			var toward := ((b.c as Vector3) - (a.c as Vector3))
+			toward.y = 0.0
+			toward = toward.normalized()
+			var start: Vector3 = (a.c as Vector3) + toward * minf(a.r.x, a.r.z) * 0.8 - Vector3.UP * a.r.y * 0.25
+			a.open.append(toward)
+			tunnels.append(_tunnel(start, toward, b, surface, rng, false))
+		# Geometry.
+		var g := {"v": PackedVector3Array(), "n": PackedVector3Array(), "c": PackedColorArray(), "i": PackedInt32Array()}
+		var floor_pts := PackedVector3Array()
+		for t: Array in tunnels:
+			_tube(t[0], t[1], g)
+			for q in t[0]:
+				floor_pts.append(q - Vector3.UP * t[1] * 0.55)
+		for ch: Dictionary in chambers:
+			_chamber(ch, g)
+			floor_pts.append((ch.c as Vector3) - Vector3.UP * ch.r.y * 0.5)
+		var arrays := []
+		arrays.resize(Mesh.ARRAY_MAX)
+		arrays[Mesh.ARRAY_VERTEX] = g.v
+		arrays[Mesh.ARRAY_NORMAL] = g.n
+		arrays[Mesh.ARRAY_COLOR] = g.c
+		arrays[Mesh.ARRAY_INDEX] = g.i
+		var mesh := ArrayMesh.new()
+		mesh.add_surface_from_arrays(Mesh.PRIMITIVE_TRIANGLES, arrays)
+		var walls := MeshInstance3D.new()
+		walls.name = "Walls"
+		walls.mesh = mesh
+		walls.material_override = Vegetation._material("Rock")
+		node.add_child(walls)
+		# Stalactites and stalagmites.
+		var drips := MeshData.new()
+		for ch: Dictionary in chambers:
+			var cc: Vector3 = ch.c
+			var r: Vector3 = ch.r
+			for k in rng.randi_range(10, 18):
+				var a := rng.randf() * TAU
+				var d := rng.randf_range(0.1, 0.75)
+				var x := cc.x + cos(a) * r.x * d
+				var z := cc.z + sin(a) * r.z * d
+				var len := rng.randf_range(1.0, 3.5)
+				var w := rng.randf_range(0.25, 0.6)
+				var top := cc.y + r.y * sqrt(maxf(1.0 - d * d, 0.05)) * 0.8
+				var bottom := cc.y - r.y * 0.5
+				if rng.randf() < 0.55:
+					_cone(drips, Vector3(x, top + 0.3, z), Vector3(x, top - len, z), w)
+				else:
+					_cone(drips, Vector3(x, bottom - 0.2, z), Vector3(x, bottom + len * 0.8, z), w * 1.2)
+		var dm := MeshInstance3D.new()
+		dm.name = "Formations"
+		dm.mesh = drips.to_mesh()
+		dm.material_override = Vegetation._material("Rock")
+		node.add_child(dm)
+		# Resources on the chamber floors, and lights.
+		var items: Dictionary = {}
+		for ch: Dictionary in chambers:
+			var cc: Vector3 = ch.c
+			var r: Vector3 = ch.r
+			for kind: int in sy.kinds:
+				var model: String = CAVE_PROPS.get(kind, "")
+				if model == "":
+					continue
+				for k in rng.randi_range(1, 3):
+					var a := rng.randf() * TAU
+					var d := rng.randf_range(0.15, 0.55)
+					var pos := Vector3(cc.x + cos(a) * r.x * d, cc.y - r.y * 0.5, cc.z + sin(a) * r.z * d)
+					var size := rng.randf_range(0.8, 1.3)
+					_add(items, model, Transform3D(Basis(Vector3.UP, rng.randf() * TAU).scaled(Vector3.ONE * size), pos), Color.WHITE)
+				if kind == K.GEMS:
+					var glow := OmniLight3D.new()
+					glow.light_color = Color(0.5, 0.6, 1.0)
+					glow.light_energy = 2.0
+					glow.omni_range = maxf(r.x, r.z) * 1.2
+					glow.position = cc - Vector3.UP * r.y * 0.3
+					node.add_child(glow)
+			var torch := OmniLight3D.new()
+			torch.light_color = Color(1.0, 0.72, 0.45)
+			torch.light_energy = 3.0
+			torch.omni_range = maxf(r.x, r.z) * 2.4
+			torch.position = cc + Vector3.UP * r.y * 0.2
+			node.add_child(torch)
+		for t: Array in tunnels:
+			var path: PackedVector3Array = t[0]
+			var lamp := OmniLight3D.new()
+			lamp.light_color = Color(1.0, 0.7, 0.45)
+			lamp.light_energy = 1.6
+			lamp.omni_range = 14.0
+			lamp.position = path[path.size() / 2]
+			node.add_child(lamp)
+		for model: String in items:
+			var m := ResourceProps._mesh(model)
+			if m == null:
+				continue
+			var data: Array = items[model]
+			var mm := MultiMesh.new()
+			mm.transform_format = MultiMesh.TRANSFORM_3D
+			mm.use_custom_data = true
+			mm.mesh = m
+			mm.instance_count = data[0].size()
+			for j in data[0].size():
+				mm.set_instance_transform(j, data[0][j])
+				mm.set_instance_custom_data(j, data[1][j])
+			var mmi := MultiMeshInstance3D.new()
+			mmi.multimesh = mm
+			node.add_child(mmi)
+		var box := AABB((chambers[0].c as Vector3), Vector3.ZERO)
+		for q in floor_pts:
+			box = box.expand(q)
+		sy["interior"] = node
+		sy["floor"] = floor_pts
+		sy["view"] = (chambers[0].c as Vector3) - Vector3.UP * chambers[0].r.y * 0.5
+		sy["bounds"] = box.grow(15.0)
+
+
+## A winding tunnel from `start` (heading `lead`) into chamber `to`; returns [path, radius].
+func _tunnel(start: Vector3, lead: Vector3, to: Dictionary, surface: TerrainSurface, rng: RandomNumberGenerator, from_mouth: bool) -> Array:
+	var cc: Vector3 = to.c
+	var toward := start - cc
+	toward.y = 0.0
+	toward = toward.normalized()
+	var end: Vector3 = cc + toward * minf(to.r.x, to.r.z) * 0.8 - Vector3.UP * to.r.y * 0.25
+	to.open.append(toward)
+	var radius := rng.randf_range(2.6, 3.6)
+	var a := start + lead.normalized() * 6.0
+	var mid := a.lerp(end, 0.5) + Vector3(rng.randf_range(-8.0, 8.0), rng.randf_range(-2.0, 2.0), rng.randf_range(-8.0, 8.0))
+	var ctrl := [start, a, mid, end]
+	var path := PackedVector3Array()
+	var total := 0.0
+	for k in ctrl.size() - 1:
+		total += (ctrl[k] as Vector3).distance_to(ctrl[k + 1])
+	var steps := maxi(8, int(total / 2.0))
+	for k in steps + 1:
+		var t := float(k) / steps * (ctrl.size() - 1)
+		var i := mini(int(t), ctrl.size() - 2)
+		var f := t - i
+		var p0: Vector3 = ctrl[maxi(i - 1, 0)]
+		var p1: Vector3 = ctrl[i]
+		var p2: Vector3 = ctrl[i + 1]
+		var p3: Vector3 = ctrl[mini(i + 2, ctrl.size() - 1)]
+		var q := 0.5 * ((2.0 * p1) + (-p0 + p2) * f + (2.0 * p0 - 5.0 * p1 + 4.0 * p2 - p3) * f * f + (-p0 + 3.0 * p1 - 3.0 * p2 + p3) * f * f * f)
+		# Stay inside the hill (except right at the mouth).
+		if not from_mouth or k * 2.0 > 6.0:
+			q.y = minf(q.y, surface.sample(Vector2(q.x, q.z)) - radius - 2.0)
+		path.append(q)
+	return [path, radius]
+
+
+## A tube along `path`, walls facing inwards, a flat floor, a lumpy rock surface.
+static func _tube(path: PackedVector3Array, radius: float, g: Dictionary) -> void:
+	const SIDES := 14
+	var base: int = (g.v as PackedVector3Array).size()
+	var n := path.size()
+	for k in n:
+		var t := (path[mini(k + 1, n - 1)] - path[maxi(k - 1, 0)]).normalized()
+		var side := t.cross(Vector3.UP)
+		side = side.normalized() if side.length() > 0.01 else Vector3.RIGHT
+		var up := side.cross(t).normalized()
+		var r := radius * (0.85 + 0.3 * BorderNoise.snoise(Vector2(k * 0.25, radius * 3.0)))
+		var floor_y := path[k].y - r * 0.55
+		for j in SIDES:
+			var a := TAU * j / SIDES
+			var o := side * cos(a) * r * 1.15 + up * sin(a) * r * 0.9
+			var bump := (BorderNoise.snoise(Vector2(path[k].x + path[k].z, path[k].y) * 0.3 + Vector2(j * 1.7, 0.0)) - 0.5)
+			var v := path[k] + o + o.normalized() * bump * r * 0.35
+			var nrm := -o.normalized()
+			if v.y < floor_y:
+				v.y = floor_y + bump * 0.08
+				nrm = Vector3.UP
+			g.v.append(v)
+			g.n.append(nrm)
+			var ao := clampf(0.6 + bump * 0.8, 0.2, 1.0)
+			g.c.append(Color(ao, ao, ao))
+	for k in n - 1:
+		for j in SIDES:
+			var a := base + k * SIDES + j
+			var b := base + k * SIDES + (j + 1) % SIDES
+			_quad(g, a, b, b + SIDES, a + SIDES)
+
+
+## A chamber: a lumpy, flattened sphere seen from inside, with holes where tunnels come in.
+static func _chamber(ch: Dictionary, g: Dictionary) -> void:
+	const LAT := 12
+	const LON := 22
+	var c: Vector3 = ch.c
+	var r: Vector3 = ch.r
+	var base: int = (g.v as PackedVector3Array).size()
+	var floor_y := c.y - r.y * 0.5
+	for i in LAT + 1:
+		var th := PI * i / LAT
+		for j in LON + 1:
+			var ph := TAU * j / LON
+			var d := Vector3(sin(th) * cos(ph), cos(th), sin(th) * sin(ph))
+			var noise := BorderNoise.snoise(Vector2(ph * 2.5 + c.x * 0.01, th * 3.0 + c.z * 0.01)) - 0.5
+			var v := c + Vector3(d.x * r.x, d.y * r.y, d.z * r.z) * (1.0 + noise * 0.35)
+			var nrm := -(v - c).normalized()
+			if v.y < floor_y:
+				v.y = floor_y + noise * 0.25
+				nrm = Vector3.UP
+			g.v.append(v)
+			g.n.append(nrm)
+			var ao := clampf(0.65 + noise, 0.2, 1.0)
+			g.c.append(Color(ao, ao, ao))
+	var opens: Array = ch.open
+	for i in LAT:
+		for j in LON:
+			var a := base + i * (LON + 1) + j
+			var b := a + 1
+			var cc := a + LON + 1
+			var dd := cc + 1
+			# Leave an opening where a tunnel comes in.
+			var mid: Vector3 = ((g.v[a] + g.v[dd]) * 0.5 - c)
+			var flat := Vector3(mid.x, 0.0, mid.z).normalized()
+			var hole := false
+			for o: Vector3 in opens:
+				if flat.dot(o) > 0.93 and mid.y < r.y * 0.25 and mid.y > -r.y * 0.38:
+					hole = true
+			if not hole:
+				_quad(g, a, b, dd, cc)
+
+
+## Two triangles a-b-c and a-c-d, each wound on its own so it faces along its stored normals
+## (inwards) - the flattened floor folds some quads, so one winding per quad isn't enough.
+static func _quad(g: Dictionary, a: int, b: int, c: int, d: int) -> void:
+	_tri(g, a, b, c)
+	_tri(g, a, c, d)
+
+
+static func _tri(g: Dictionary, a: int, b: int, c: int) -> void:
+	var va: Vector3 = g.v[a]
+	var vb: Vector3 = g.v[b]
+	var vc: Vector3 = g.v[c]
+	var cr := (vb - va).cross(vc - va)
+	if cr.length_squared() < 1e-8:
+		return
+	var nrm: Vector3 = (g.n[a] as Vector3) + (g.n[b] as Vector3) + (g.n[c] as Vector3)
+	# Godot draws clockwise faces: the cross product must point away from the viewer.
+	if cr.dot(nrm) < 0.0:
+		g.i.append_array([a, b, c])
+	else:
+		g.i.append_array([a, c, b])
+
+
+## A cone (stalactite or stalagmite) from a wide base to a tip.
+static func _cone(data: MeshData, base: Vector3, tip: Vector3, w: float) -> void:
+	const SIDES := 7
+	var axis := (tip - base).normalized()
+	var side := axis.cross(Vector3.FORWARD)
+	side = side.normalized() if side.length() > 0.01 else Vector3.RIGHT
+	var up := side.cross(axis).normalized()
+	for k in SIDES:
+		var a0 := TAU * k / SIDES
+		var a1 := TAU * (k + 1) / SIDES
+		var p0 := base + (side * cos(a0) + up * sin(a0)) * w
+		var p1 := base + (side * cos(a1) + up * sin(a1)) * w
+		var nrm := ((p0 + p1) * 0.5 - base).normalized()
+		data.tri(p0, p1, tip, Vector2.ZERO, Vector2.ZERO, Vector2.ZERO, nrm, Vector2.ZERO, Color(0.75, 0.75, 0.75))
+
+
+## Floor height of the cave nearest to world point p (for the camera while exploring).
+func floor_at(si: int, p: Vector2) -> float:
+	var pts: PackedVector3Array = systems[si].get("floor", PackedVector3Array())
+	var best := INF
+	var y := 0.0
+	for q in pts:
+		var d := Vector2(q.x, q.z).distance_squared_to(p)
+		if d < best:
+			best = d
+			y = q.y
+	return y
+
+
 ## The cave mouths: a dark recessed arch, a frame of rock slabs, fallen stones.
 func build_meshes(surface: TerrainSurface, parent: Node3D) -> void:
 	if systems.is_empty():

@@ -40,6 +40,9 @@ var fjord_plan: FjordMaker
 var volcano_plan: VolcanoMaker
 var road_plan: RoadNetwork
 var cave_plan: CaveSystem
+## Cave being explored (-1 = on the surface), and the node holding the cave interiors.
+var underground := -1
+var _cave_root: Node3D
 
 
 ## Loads map.json from map_dir and builds the map. Returns false if loading failed.
@@ -114,13 +117,25 @@ func rebuild() -> void:
 			paths = RiverMeshBuilder.place(courses, level, surface, hydro, noise, settings, source)
 			surface.mark_lakes(hydro)
 			surface.carve(paths)
+		# Caves (planned on the finest level) come first so trails can lead to them.
+		if level.level_index == 0:
+			caves = CaveSystem.plan(level, surface, settings)
+			cave_plan = caves
 		# Trails: planned on the finest level once rivers and lakes are known.
 		if level.level_index == 0:
-			roads = RoadNetwork.plan(level, surface, settings)
+			var dests: Array = []
+			for sy: Dictionary in caves.systems:
+				for e: Dictionary in sy.entrances:
+					dests.append((e.p as Vector2) + (e.dir as Vector2) * 12.0)
+			roads = RoadNetwork.plan(level, surface, settings, dests)
 			road_plan = roads
 		roads.apply(level, surface)
 		# No near-vertical walls: cap the slope once all shaping is done.
 		surface.limit_slopes(settings.max_slope, paths)
+		# Rivers never run above the ground beside them: settle the water onto the final banks.
+		if not paths.is_empty():
+			RiverMeshBuilder.settle(paths, surface)
+			surface.carve_channels(paths)
 		# Lakes from the final ground: shaping since the first pass (valleys, trails, the slope
 		# limit) may have lowered a shore, so the water level is worked out again here; a lake
 		# can then never stand higher than the ground that holds it.
@@ -128,10 +143,7 @@ func rebuild() -> void:
 			hydro = Hydrology.from_surface(surface, 2 if level.level_index == 0 else 1, settings, source)
 			for i in level.cell_count():
 				level.lake[i] = 1 if hydro.lake_at(level.cell_center(i)) >= 0 else 0
-		# Caves: planned on the finished finest terrain, cut into every level.
-		if level.level_index == 0:
-			caves = CaveSystem.plan(level, surface, settings)
-			cave_plan = caves
+		# Cave mouths: a ledge cut into the finished ground on every level.
 		caves.apply(level, surface)
 		var fp := Floodplain.build(level, surface, paths, settings)
 		surface.finish_weights()
@@ -175,6 +187,12 @@ func rebuild() -> void:
 		for li in mini(2, levels.size()):
 			ResourceProps.build(levels[li], surfaces[li], hydrology[li], _level_roots[li], settings.resource_prop_scale * (1.0 + 1.2 * li))
 		_build_resource_icons()
+		_build_cave_markers()
+	if cave_plan != null and not cave_plan.systems.is_empty():
+		_cave_root = Node3D.new()
+		_cave_root.name = "CaveInteriors"
+		add_child(_cave_root)
+		cave_plan.build_interiors(surfaces[0], _cave_root)
 	_build_water()
 	print("HexMap: built %d levels for '%s' in %d ms" % [levels.size(), source.name, Time.get_ticks_msec() - t0])
 
@@ -184,6 +202,12 @@ func rebuild() -> void:
 
 
 func _clear() -> void:
+	underground = -1
+	if _cave_root != null:
+		_cave_root.queue_free()
+		_cave_root = null
+	if _water != null:
+		_water.visible = true
 	for root in _level_roots:
 		root.queue_free()
 	_level_roots.clear()
@@ -242,9 +266,60 @@ func current_surface() -> TerrainSurface:
 	return surfaces[active_level] if active_level >= 0 and active_level < surfaces.size() else null
 
 
+## The cave system whose entrance is nearest to world point p (within max_dist), or -1.
+func nearest_cave(p: Vector2, max_dist := 600.0) -> int:
+	if cave_plan == null:
+		return -1
+	var best := -1
+	var best_d := max_dist
+	for si in cave_plan.systems.size():
+		for e: Dictionary in cave_plan.systems[si].entrances:
+			var d := (e.p as Vector2).distance_to(p)
+			if d < best_d:
+				best_d = d
+				best = si
+	return best
+
+
+## Goes underground into cave system si: hides the surface world and shows the cave inside.
+## Returns {"view": Vector3, "bounds": AABB} for the camera.
+func enter_cave(si: int) -> Dictionary:
+	if cave_plan == null or si < 0 or si >= cave_plan.systems.size():
+		return {}
+	var sy: Dictionary = cave_plan.systems[si]
+	if not sy.has("interior"):
+		return {}
+	underground = si
+	for root in _level_roots:
+		root.visible = false
+	if _water != null:
+		_water.visible = false
+	for n in _cave_root.get_children():
+		n.visible = n == sy.interior
+	return {"view": sy.view, "bounds": sy.bounds}
+
+
+## Back to the surface.
+func exit_cave() -> void:
+	if underground < 0:
+		return
+	underground = -1
+	for n in _cave_root.get_children():
+		n.visible = false
+	if _water != null:
+		_water.visible = true
+	for k in _level_roots.size():
+		_level_roots[k].visible = k == active_level
+
+
+## Cave floor height under p while exploring.
+func cave_floor(p: Vector2) -> float:
+	return cave_plan.floor_at(underground, p) if underground >= 0 else 0.0
+
+
 func set_level(i: int) -> void:
 	i = clampi(i, 0, levels.size() - 1)
-	if i == active_level:
+	if i == active_level or underground >= 0:
 		return
 	active_level = i
 	for k in _level_roots.size():
@@ -258,7 +333,7 @@ func set_level(i: int) -> void:
 
 ## Picks the coarsest level whose hexes are still big enough on screen, with a little hysteresis.
 func update_lod(camera_distance: float) -> void:
-	if not auto_lod or levels.is_empty():
+	if not auto_lod or levels.is_empty() or underground >= 0:
 		return
 	var want := 0
 	for i in range(1, levels.size()):
@@ -284,6 +359,49 @@ func set_highlight(kind: String, cell: int) -> void:
 		_lake_materials[active_level].set_shader_parameter(param, value)
 	if _water_material != null:
 		_water_material.set_shader_parameter(param, value)
+
+
+## Cave entrances: always marked (not part of the I overlay) on every level, at the mouth
+## itself, with a label.
+func _build_cave_markers() -> void:
+	if cave_plan == null or cave_plan.systems.is_empty():
+		return
+	var tex: Texture2D = load("res://assets/icons/resources/cave.svg") if ResourceLoader.exists("res://assets/icons/resources/cave.svg") else null
+	for li in levels.size():
+		var root := Node3D.new()
+		root.name = "CaveMarkers"
+		_level_roots[li].add_child(root)
+		var hs := levels[li].hex_size
+		for si in cave_plan.systems.size():
+			for e: Dictionary in cave_plan.systems[si].entrances:
+				var p: Vector2 = e.p
+				var pos := Vector3(p.x, surfaces[li].sample(p) + 6.0 + hs * 0.15, p.y)
+				if tex != null:
+					var sp := Sprite3D.new()
+					sp.texture = tex
+					sp.billboard = BaseMaterial3D.BILLBOARD_ENABLED
+					sp.fixed_size = true
+					sp.pixel_size = 0.00045
+					sp.no_depth_test = true
+					sp.shaded = false
+					sp.render_priority = 12
+					sp.position = pos
+					sp.visibility_range_end = hs * 60.0
+					root.add_child(sp)
+				var lb := Label3D.new()
+				lb.text = "Cave %d" % (si + 1)
+				lb.billboard = BaseMaterial3D.BILLBOARD_ENABLED
+				lb.fixed_size = true
+				lb.pixel_size = 0.0003
+				lb.font_size = 34
+				lb.outline_size = 10
+				lb.modulate = Color(1.0, 0.8, 0.5)
+				lb.no_depth_test = true
+				lb.render_priority = 13
+				lb.offset = Vector2(0, -95)
+				lb.position = pos
+				lb.visibility_range_end = hs * 60.0
+				root.add_child(lb)
 
 
 ## Resource icons: one badge per resource hex on each level, always facing the camera at a
@@ -328,7 +446,7 @@ func _build_resource_icons() -> void:
 			sprite.fixed_size = true
 			# The deposit's centre gets the full badge; its other hexes a small, faint one so
 			# you can see how far it spreads.
-			sprite.pixel_size = 0.00036 if is_center else 0.00016
+			sprite.pixel_size = 0.00042 if is_center else 0.0002
 			sprite.modulate = Color(1, 1, 1, 1.0 if is_center else 0.6)
 			sprite.no_depth_test = true
 			sprite.shaded = false
