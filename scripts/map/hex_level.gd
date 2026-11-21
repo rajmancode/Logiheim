@@ -30,6 +30,7 @@ var lake := PackedByteArray()           ## 1 if the hex centre is under a lake
 var floodplain := PackedByteArray()     ## 1 if the hex is on a river floodplain (floods in rain)
 var resource := PackedByteArray()       ## NaturalResources.Kind (0 = none)
 var resource_amount := PackedByteArray() ## 1 small .. 3 rich
+var road := PackedByteArray()          ## 1 if a trail runs through this cell
 var deposit := PackedInt32Array()       ## index into `deposits`, -1 if none
 ## Resource deposits on this level: {kind, center (cell index), size (finest hexes)}.
 var deposits: Array = []
@@ -58,8 +59,32 @@ func allocate() -> void:
 	resource_amount.resize(n)
 	deposit.resize(n)
 	deposit.fill(-1)
+	road.resize(n)
 	for i in n:
 		children[i] = []
+
+
+## Relative cost for a unit to enter cell i (1 = open ground). Trails halve it; rough,
+## steep, snowy and wet ground costs more; water can't be entered on foot.
+func move_cost(i: int) -> float:
+	var T := HexMapGenerator.Terrain
+	var t := terrain[i]
+	if HexMapGenerator.is_water(t) or lake[i] == 1:
+		return INF
+	var c := 1.0
+	match t:
+		T.FOREST:
+			c = 1.5
+		T.ROCK:
+			c = 2.0
+		T.SNOW:
+			c = 2.5
+	if river[i] == 1:
+		c += 1.0
+	c *= 1.0 + clampf(slope[i], 0.0, 2.0)
+	if road.size() == terrain.size() and road[i] == 1:
+		c = minf(c, 1.0) * 0.5
+	return c
 
 
 func cell_count() -> int:

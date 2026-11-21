@@ -20,6 +20,11 @@ extends Resource
 @export_range(0.9, 2.0, 0.05) var step_softness := 1.5
 ## Blur passes over the finished terrain: rounds off terrace edges (0 = off).
 @export_range(0, 8) var terrain_smoothing := 3
+## Steepest the ground may be (rise/run; 1.25 is about 51 degrees). Steeper ground is cut back
+## from the top. Waterfall faces are exempt. 0 = no limit.
+@export_range(0.0, 3.0, 0.05) var max_slope := 1.25
+## Rock overhangs jutting from the steepest crests, at most one per this many metres (0 = none).
+@export var overhang_spacing := 90.0
 ## How much of the real Gaea relief shows inside each hex (0 = flat plateaus).
 @export_range(0.0, 1.5, 0.05) var terrain_detail := 0.5
 ## Sea floor depth in metres right off the coast, and how much it deepens per metre offshore.
@@ -103,6 +108,13 @@ extends Resource
 ## Width at the mouth (narrows towards the head) and depth below the sea, metres.
 @export var fjord_width := 80.0
 @export var fjord_depth := 22.0
+
+@export_group("Trails")
+## A network of trails between natural settlement spots; units move faster along them.
+@export var roads_enabled := true
+## Rough distance between settlement spots, and trail width, metres.
+@export var road_spacing := 380.0
+@export var road_width := 3.5
 
 @export_group("Wetlands")
 ## How much bog, swamp and fen forms on flat, damp ground (0 = none).

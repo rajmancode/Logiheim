@@ -31,7 +31,7 @@ static func build(surface: TerrainSurface, settings: HexMapSettings, parent: Nod
 				var g := surface.weight_at(p, T.GRASS) + 0.45 * surface.weight_at(p, T.FOREST) + 0.3 * surface.weight_at(p, T.DIRT)
 				if rng.randf() > g * 1.3:
 					continue
-				if surface.river_at(p) > 0.25:
+				if surface.river_at(p) > 0.25 or surface.path_at(p) > 0.4:
 					continue
 				var y := surface.sample(p)
 				if y < surface.sea_y + 0.8:

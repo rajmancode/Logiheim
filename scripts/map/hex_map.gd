@@ -38,6 +38,7 @@ var _icon_roots: Array[Node3D] = []
 ## Fjords cut into this map (for tools and debugging).
 var fjord_plan: FjordMaker
 var volcano_plan: VolcanoMaker
+var road_plan: RoadNetwork
 
 
 ## Loads map.json from map_dir and builds the map. Returns false if loading failed.
@@ -67,6 +68,7 @@ func rebuild() -> void:
 	var lakes: LakeMaker = null
 	var fjords: FjordMaker = null
 	var volcano: VolcanoMaker = null
+	var roads: RoadNetwork = null
 	sea_y = gen.sea_y()
 	for level in levels:
 		var t1 := Time.get_ticks_msec()
@@ -109,6 +111,13 @@ func rebuild() -> void:
 			paths = RiverMeshBuilder.place(courses, level, surface, hydro, noise, settings, source)
 			surface.mark_lakes(hydro)
 			surface.carve(paths)
+		# Trails: planned on the finest level once rivers and lakes are known.
+		if level.level_index == 0:
+			roads = RoadNetwork.plan(level, surface, settings)
+			road_plan = roads
+		roads.apply(level, surface)
+		# No near-vertical walls: cap the slope once all shaping is done.
+		surface.limit_slopes(settings.max_slope, paths)
 		var fp := Floodplain.build(level, surface, paths, settings)
 		surface.finish_weights()
 		var mat := TerrainMaterial.for_level(_base_material, level, noise, sea_y)
@@ -118,6 +127,9 @@ func rebuild() -> void:
 		TerrainMeshBuilder.build(surface, mat, root)
 		RiverMeshBuilder.build(paths, root)
 		volcano.build_effects(surface, root)
+		if level.level_index <= 1:
+			roads.build_meshes(surface, root)
+			RockFeatures.build(level, surface, settings, root)
 		if level.level_index <= 1:
 			RiverMeshBuilder.build_falls(paths, root)
 		var lake_mat := RiverMeshBuilder.lake_material(_get_wave_normal())

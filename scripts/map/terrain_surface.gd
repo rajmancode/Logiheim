@@ -38,6 +38,8 @@ var convexity := PackedFloat32Array()
 ## 0..1 wetland: bogs (uplands, blanket bog on high flats) and swamps/fens (lowland flats by
 ## rivers and lakes, and hollows that hold water but are too small for a lake).
 var wetland := PackedFloat32Array()
+## 0..1 under a trail (keeps grass off it).
+var path_mask := PackedFloat32Array()
 ## Depth (m) water would pool to in small hollows that aren't lakes; feeds wetland.
 var hollow := PackedFloat32Array()
 ## 0..1 volcanic ground (basalt and ash): the cone of a volcano and its old lava flows.
@@ -108,6 +110,12 @@ func keep_clear(p: Vector2) -> bool:
 	var x := clampi(roundi(p.x / spacing), 0, nx - 1)
 	var z := clampi(roundi(p.y / spacing), 0, nz - 1)
 	return clear_mask[z * nx + x] == 1
+
+
+func path_at(p: Vector2) -> float:
+	var x := clampi(roundi(p.x / spacing), 0, nx - 1)
+	var z := clampi(roundi(p.y / spacing), 0, nz - 1)
+	return path_mask[z * nx + x]
 
 
 func wetland_at(p: Vector2) -> float:
@@ -201,6 +209,8 @@ func _compute_heights() -> void:
 	flood_y.fill(0.0)
 	volcanic.resize(nx * nz)
 	volcanic.fill(0.0)
+	path_mask.resize(nx * nz)
+	path_mask.fill(0.0)
 	var radius := _settings.step_softness * level.hex_size
 	var inv_r2 := 1.0 / (radius * radius)
 	var detail := _settings.terrain_detail * _meters
@@ -268,6 +278,58 @@ func _compute_heights() -> void:
 	for z in nz:
 		_sink_edge(0, z)
 		_sink_edge(nx - 1, z)
+
+
+## Caps how steep the ground may be (rise/run, e.g. 1.25 is about 51 degrees): anything steeper
+## is cut back from the top, like a cliff crumbling to its angle of repose. Only lowers (never
+## raises) ground, so it makes no new hollows and never lifts a river bed. Only the ground
+## right around a waterfall is left alone, so falls keep their face. Two forward/backward
+## min-plus sweeps over the grid (8 neighbours), which settles even long walls in one go.
+func limit_slopes(max_slope: float, paths: Array = []) -> void:
+	if max_slope <= 0.0:
+		return
+	var d1 := max_slope * spacing
+	var d2 := d1 * 1.41421
+	var keep := PackedByteArray()
+	keep.resize(nx * nz)
+	for path: RiverPath in paths:
+		for f in path.falls:
+			for q in [f, mini(f + 1, path.points.size() - 1)]:
+				var c := path.points[q]
+				var r := path.widths[q] * 1.6 + 6.0
+				var x0 := maxi(0, floori((c.x - r) / spacing))
+				var x1 := mini(nx - 1, ceili((c.x + r) / spacing))
+				var z0 := maxi(0, floori((c.z - r) / spacing))
+				var z1 := mini(nz - 1, ceili((c.z + r) / spacing))
+				for z in range(z0, z1 + 1):
+					for x in range(x0, x1 + 1):
+						if Vector2(x * spacing - c.x, z * spacing - c.z).length() < r:
+							keep[z * nx + x] = 1
+	for it in 2:
+		for dir in 2:
+			var s := -1 if dir == 0 else 1
+			var zr := range(nz) if dir == 0 else range(nz - 1, -1, -1)
+			var xr := range(nx) if dir == 0 else range(nx - 1, -1, -1)
+			for z: int in zr:
+				var zp := z + s
+				var has_z := zp >= 0 and zp < nz
+				for x: int in xr:
+					var i := z * nx + x
+					if keep[i] == 1:
+						continue
+					var h := heights[i]
+					var xp := x + s
+					var xm := x - s
+					if xp >= 0 and xp < nx:
+						h = minf(h, heights[i + s] + d1)
+					if has_z:
+						var r := zp * nx
+						h = minf(h, heights[r + x] + d1)
+						if xp >= 0 and xp < nx:
+							h = minf(h, heights[r + xp] + d2)
+						if xm >= 0 and xm < nx:
+							h = minf(h, heights[r + xm] + d2)
+					heights[i] = h
 
 
 ## Low, flat coasts (sand bars, beaches) would trace the hex outlines where the sea meets

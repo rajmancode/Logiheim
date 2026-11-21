@@ -172,6 +172,9 @@ func _describe(label: String, level: HexLevel, i: int) -> String:
 		text += ", river %.0f m wide" % level.river_width[i]
 	if level.lake[i] == 1:
 		text += ", lake"
+	if level.road.size() > i and level.road[i] == 1:
+		text += ", trail"
+	text += ", move cost %.1f" % level.move_cost(i)
 	if level.floodplain[i] == 1:
 		text += ", floodplain" + (" (flooded)" if atmosphere.flood > 0.5 else "")
 	if level.resource[i] != 0:
