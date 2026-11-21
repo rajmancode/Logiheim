@@ -77,7 +77,7 @@ static func courses(hydro: Hydrology, settings: HexMapSettings) -> Array:
 		for c in cells:
 			pts.append(hydro.cell_pos(c))
 			areas.append(hydro.area[c] if hydro.land(c) else hydro.area[cells[maxi(0, cells.size() - 2)]])
-		var smooth := _smooth(_relax(pts, 6), areas, 3)
+		var smooth := _smooth(_relax(pts, 3), areas, 3)
 		var course := _meander(smooth[0], smooth[1], hydro, settings)
 		out.append({"pts": course[0], "areas": course[1], "to_sea": seg.to_sea, "delta": false,
 			"joins": not seg.to_sea and hydro.parent[cells[cells.size() - 1]] >= 0})
@@ -197,8 +197,9 @@ static func _smooth(pts: PackedVector2Array, areas: PackedFloat32Array, iteratio
 	return [p, a]
 
 
-## Resamples a course and makes it wind on flat ground: sideways sine offsets about 12 widths
-## long (the natural meander wavelength), fading out on slopes and near both ends.
+## Resamples a course and makes it wind: sideways sine offsets about 12 widths long (the
+## natural meander wavelength) on flat ground, plus a slower, irregular wander everywhere so no
+## stretch runs ruler-straight. Both fade out near the ends (sources, junctions, mouths).
 static func _meander(pts: PackedVector2Array, areas: PackedFloat32Array, hydro: Hydrology, settings: HexMapSettings) -> Array:
 	var total := 0.0
 	for k in pts.size() - 1:
@@ -232,13 +233,18 @@ static func _meander(pts: PackedVector2Array, areas: PackedFloat32Array, hydro: 
 		var wavelength := 12.0 * w * (0.8 + 0.4 * BorderNoise.value_noise(p * 0.004))
 		phase += step * TAU / wavelength
 		var amp := w * 1.3 * settings.river_meander * flat * taper
-		out_p.append(p + side * sin(phase) * amp)
+		var seed_v := float(hash(pts[0]) % 997)
+		var wander := (BorderNoise.value_noise(Vector2(along * 0.011, seed_v)) - 0.5) * 2.0 			+ (BorderNoise.value_noise(Vector2(along * 0.032, seed_v + 31.0)) - 0.5) * 0.8
+		var w_taper := smoothstep(0.0, 40.0, along) * smoothstep(0.0, 40.0, total - along)
+		var w_amp := maxf(w * 1.5, 9.0) * settings.river_meander * w_taper * (1.0 - 0.4 * flat)
+		out_p.append(p + side * (sin(phase) * amp + wander * w_amp))
 		out_a.append(a)
 		step = clampf(w * 0.5, 1.0, hydro.spacing * 0.5)
 		along += step
 	out_p.append(pts[pts.size() - 1])
 	out_a.append(areas[areas.size() - 1])
-	return [out_p, out_a]
+	# Iron out the small kinks where the sideways direction turns at a corner.
+	return [_relax(out_p, 2), out_a]
 
 
 ## Moves the end of every tributary onto the nearest point of the river it flows into.
@@ -308,19 +314,62 @@ static func place(all: Array, level: HexLevel, surface: TerrainSurface, hydro: H
 			prev_y = y
 			ys[k] = y
 			ws[k] = w
+		# Waterfalls: where the ground drops sharply, the whole drop is gathered into one fall
+		# (level water above, a sheer drop, level water below) instead of a steep ramp.
+		var falls := PackedInt32Array()
+		var seg_id := PackedInt32Array()
+		seg_id.resize(n)
+		if settings.waterfall_min_drop > 0.0:
+			var last_fall := -INF
+			var along_k := PackedFloat32Array([0.0])
+			for q in range(1, n):
+				along_k.append(along_k[q - 1] + pts[q].distance_to(pts[q - 1]))
+			var k := 0
+			while k < n - 1:
+				var j := k + 1
+				var span := pts[k].distance_to(pts[j])
+				while j < n - 1 and span < 15.0:
+					span += pts[j].distance_to(pts[j + 1])
+					j += 1
+				var drop := ys[k] - ys[j]
+				if drop >= settings.waterfall_min_drop and drop / maxf(span, 1.0) >= 0.55 and k > 2 						and along_k[k] - last_fall > 150.0:
+					last_fall = along_k[k]
+					# The lip is where the single steepest step was.
+					var lip := k
+					var steepest := -1.0
+					for q in range(k, j):
+						var st := (ys[q] - ys[q + 1]) / maxf(pts[q].distance_to(pts[q + 1]), 0.1)
+						if st > steepest:
+							steepest = st
+							lip = q
+					# (Only ever lowered: the channel is carved down to it, never left floating.)
+					for q in range(k, lip + 1):
+						ys[q] = ys[lip]
+					for q in range(lip + 1, j + 1):
+						ys[q] = ys[j]
+					falls.append(lip)
+					k = j
+				else:
+					k += 1
+			var sid := 0
+			for q in n:
+				seg_id[q] = sid
+				if falls.has(q):
+					sid += 1
 		# Smooth the water surface along the river so it slopes evenly instead of tilting in
-		# steps between terraces, then keep it falling downstream.
+		# steps between terraces (never across a waterfall), then keep it falling downstream.
 		var sm_y := ys.duplicate()
 		for k in range(1, n - 1):
 			var acc := 0.0
 			var cnt := 0
 			for q in range(maxi(0, k - 5), mini(n, k + 6)):
-				acc += ys[q]
-				cnt += 1
+				if seg_id[q] == seg_id[k]:
+					acc += ys[q]
+					cnt += 1
 			sm_y[k] = acc / cnt
 		for k in range(1, n):
 			sm_y[k] = maxf(minf(sm_y[k], sm_y[k - 1]), surface.sea_y + 0.03)
-		placed.append([pts, sm_y, ws])
+		placed.append([pts, sm_y, ws, falls])
 
 	# Pass 2: tributaries meet the main river at its water level.
 	for i in all.size():
@@ -355,11 +404,13 @@ static func place(all: Array, level: HexLevel, surface: TerrainSurface, hydro: H
 			# (Any river: a meander can swing a little past the shoreline too.)
 			if k > 0 and surface.sample(pts[k]) < surface.sea_y - 0.4:
 				if path != null and path.points.size() >= 2:
+					var last_y := path.points[path.points.size() - 1].y
 					path.points.append(Vector3(pts[k].x, surface.sea_y + 0.03, pts[k].y))
 					path.widths.append(ws[k])
 					path.dist.append(along)
 					path.speeds.append(path.speeds[path.speeds.size() - 1])
-					path.turbulence.append(0.0)
+					# A river spilling off a cliff into the sea stays white all the way down.
+					path.turbulence.append(1.0 if last_y - surface.sea_y > 1.5 else 0.0)
 					paths.append(path)
 				path = null
 				break
@@ -384,11 +435,21 @@ static func place(all: Array, level: HexLevel, surface: TerrainSurface, hydro: H
 			var step_drop := maxf(ys[k] - ys[k2], 0.0) / maxf(pts[k].distance_to(pts[k2]), 0.3)
 			# Terrace cascades read as rapids (up to 0.6); only real falls go fully white.
 			var turb := maxf(smoothstep(0.15, 0.6, nat_slope), 0.6 * smoothstep(0.5, 1.2, step_drop) + 0.4 * smoothstep(1.5, 3.0, step_drop))
+			# Water running steeply downhill (over a few points) is white too.
+			var ka := maxi(k - 2, 0)
+			var kb := mini(k + 2, pts.size() - 1)
+			var run := 0.0
+			for q in range(ka, kb):
+				run += pts[q].distance_to(pts[q + 1])
+			var water_slope := maxf(ys[ka] - ys[kb], 0.0) / maxf(run, 0.5)
+			turb = maxf(turb, smoothstep(0.1, 0.35, water_slope))
 			path.points.append(Vector3(pts[k].x, ys[k], pts[k].y))
 			path.widths.append(ws[k])
 			path.dist.append(along)
 			path.speeds.append(clampf(sqrt(maxf(nat_slope, step_drop * 0.5)) * 9.0, 0.35, 6.0))
 			path.turbulence.append(turb)
+			if (placed[i][3] as PackedInt32Array).has(k):
+				path.falls.append(path.points.size() - 1)
 			var cell := noise.cell_at(level, pts[k])
 			if cell >= 0 and not HexMapGenerator.is_water(level.terrain[cell]):
 				level.river[cell] = 1
@@ -453,6 +514,11 @@ static func _ribbon(path: RiverPath, verts: PackedVector3Array, normals: PackedV
 			cnt += 1
 		turb[k] = t_sum / cnt
 		speed[k] = s_sum / cnt
+	# Waterfalls stay white from the lip to the plunge pool and a little beyond.
+	for f in path.falls:
+		for q in range(f, mini(f + 3, n)):
+			turb[q] = maxf(turb[q], 1.0 if q <= f + 1 else 0.8)
+			speed[q] = maxf(speed[q], 5.0)
 	var base := verts.size()
 	for k in n:
 		var a := path.points[maxi(k - 1, 0)]
@@ -604,3 +670,92 @@ static func build_lakes(hydro: Hydrology, surface: TerrainSurface, material: Mat
 
 static func _hcell(hydro: Hydrology, x: float, z: float) -> int:
 	return clampi(roundi(z / hydro.spacing), 0, hydro.nz - 1) * hydro.nx + clampi(roundi(x / hydro.spacing), 0, hydro.nx - 1)
+
+
+# --------------------------------------------------------------------------- waterfalls
+
+static var _mist_mesh: QuadMesh
+
+
+## Spray at the foot of every waterfall: soft white puffs drifting up and out of the plunge
+## pool (the falling water itself is the river ribbon, which runs sheer and white there).
+static func build_falls(paths: Array[RiverPath], parent: Node3D) -> void:
+	for path in paths:
+		for f in path.falls:
+			if f + 1 >= path.points.size():
+				continue
+			var top := path.points[f]
+			var foot := path.points[f + 1]
+			var drop := top.y - foot.y
+			if drop < 2.0:
+				continue
+			var w := path.widths[f + 1]
+			var dir := Vector3(foot.x - top.x, 0.0, foot.z - top.z).normalized()
+			var mist := GPUParticles3D.new()
+			mist.name = "WaterfallMist"
+			mist.amount = clampi(int(8 + drop * 2.0 + w), 12, 48)
+			mist.lifetime = 3.0
+			mist.preprocess = 3.0
+			mist.position = foot + dir * w * 0.3 + Vector3(0, 0.3, 0)
+			mist.visibility_range_end = 900.0
+			mist.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+			var pm := ParticleProcessMaterial.new()
+			pm.emission_shape = ParticleProcessMaterial.EMISSION_SHAPE_BOX
+			pm.emission_box_extents = Vector3(w * 0.5, 0.3, w * 0.3)
+			pm.direction = Vector3(dir.x * 0.6, 1.0, dir.z * 0.6)
+			pm.spread = 35.0
+			pm.initial_velocity_min = 0.6 + drop * 0.08
+			pm.initial_velocity_max = 1.4 + drop * 0.15
+			pm.gravity = Vector3(0, -0.2, 0)
+			pm.damping_min = 0.3
+			pm.damping_max = 0.6
+			var sz := clampf(w * 0.35 + drop * 0.12, 1.5, 8.0)
+			pm.scale_min = sz * 0.7
+			pm.scale_max = sz * 1.3
+			var curve := Curve.new()
+			curve.add_point(Vector2(0.0, 0.4))
+			curve.add_point(Vector2(1.0, 1.0))
+			var ct := CurveTexture.new()
+			ct.curve = curve
+			pm.scale_curve = ct
+			var grad := Gradient.new()
+			grad.set_color(0, Color(1, 1, 1, 0.0))
+			grad.set_color(1, Color(1, 1, 1, 0.0))
+			grad.add_point(0.15, Color(1, 1, 1, 0.55))
+			grad.add_point(0.6, Color(1, 1, 1, 0.3))
+			var gt := GradientTexture1D.new()
+			gt.gradient = grad
+			pm.color_ramp = gt
+			mist.process_material = pm
+			mist.draw_pass_1 = _mist_quad()
+			mist.visibility_aabb = AABB(Vector3(-w - 10, -2, -w - 10), Vector3(w * 2 + 20, drop + 14, w * 2 + 20))
+			parent.add_child(mist)
+
+
+static func _mist_quad() -> QuadMesh:
+	if _mist_mesh != null:
+		return _mist_mesh
+	var tex := GradientTexture2D.new()
+	tex.fill = GradientTexture2D.FILL_RADIAL
+	tex.fill_from = Vector2(0.5, 0.5)
+	tex.fill_to = Vector2(1.0, 0.5)
+	var g := Gradient.new()
+	g.set_color(0, Color(1, 1, 1, 1))
+	g.set_color(1, Color(1, 1, 1, 0))
+	tex.gradient = g
+	tex.width = 64
+	tex.height = 64
+	var mat := StandardMaterial3D.new()
+	mat.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
+	mat.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+	mat.billboard_mode = BaseMaterial3D.BILLBOARD_PARTICLES
+	mat.vertex_color_use_as_albedo = true
+	mat.albedo_texture = tex
+	mat.albedo_color = Color(0.92, 0.95, 1.0, 0.8)
+	mat.depth_draw_mode = BaseMaterial3D.DEPTH_DRAW_DISABLED
+	mat.proximity_fade_enabled = true
+	mat.proximity_fade_distance = 1.5
+	_mist_mesh = QuadMesh.new()
+	_mist_mesh.size = Vector2(1, 1)
+	_mist_mesh.material = mat
+	return _mist_mesh

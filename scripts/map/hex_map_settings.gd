@@ -78,6 +78,13 @@ extends Resource
 ## above the sea is one step_height up).
 @export var delta_height := 8.0
 @export_range(2, 6) var delta_max_branches := 4
+## Where the ground under a river drops at least this many metres, cliff-steep, within ~15 m,
+## the drop is gathered into one waterfall (0 = no waterfalls). Falls are kept 150 m apart.
+@export var waterfall_min_drop := 8.0
+## Valleys: rivers cut the land around them down to a floor just above the water, with walls
+## rising this steeply (rise/run) up to the surrounding ground, within valley_reach metres.
+@export var valley_slope := 0.4
+@export var valley_reach := 220.0
 ## Hollows at least this big and deep fill up as lakes.
 @export var lake_min_area := 8000.0
 @export var lake_min_depth := 2.0
@@ -86,6 +93,16 @@ extends Resource
 @export_range(0, 12) var lake_count := 3
 ## Rough size of each generated lake, m^2 (tarns are half this).
 @export var lake_target_area := 40000.0
+
+@export_group("Fjords")
+## Long, steep-sided sea inlets cut along rivers that reach the sea through high ground.
+@export_range(0, 8) var fjord_count := 2
+## Banks must stand at least this high (m above the sea) on average for a fjord.
+@export var fjord_min_relief := 18.0
+@export var fjord_length := 650.0
+## Width at the mouth (narrows towards the head) and depth below the sea, metres.
+@export var fjord_width := 80.0
+@export var fjord_depth := 22.0
 
 @export_group("Floodplains")
 @export var floodplains_enabled := true

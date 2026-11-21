@@ -49,19 +49,36 @@ static func plan(hydro: Hydrology, source: TerrainSource, settings: HexMapSettin
 func apply(surface: TerrainSurface) -> void:
 	if lake_count == 0:
 		return
-	# The plan grid is coarse (10 m), so its cells would show as a stepped, square shoreline.
-	# Each vertex instead samples the plan at a noise-warped point, averaged over a small ring,
-	# which rounds the corners off and gives the shore natural bays and points.
-	var r := spacing * 1.4
-	var ring := [Vector2.ZERO, Vector2(r, 0), Vector2(-r, 0), Vector2(0, r), Vector2(0, -r),
-		Vector2(r, r) * 0.7, Vector2(-r, r) * 0.7, Vector2(r, -r) * 0.7, Vector2(-r, -r) * 0.7]
+	# The plan grid is coarse (10 m), so its cells would make a stepped, square shoreline.
+	# Instead the lake mask is blurred on the plan grid and the shore is where the blurred mask
+	# crosses one half: a smooth curve with rounded bays. A gentle noise warp keeps it from
+	# looking machine-made.
+	var n := nx * nz
+	var soft := PackedFloat32Array()
+	soft.resize(n)
+	var lvl := water.duplicate()
+	var sd := shore_dist.duplicate()
+	for c in n:
+		soft[c] = 1.0 if water[c] > NONE else 0.0
+	for it in 4:
+		soft = _blur(soft)
+		# Water level and shore distance spread outwards so the blurred shore can use them.
+		var nl := lvl.duplicate()
+		for c in n:
+			if lvl[c] > NONE:
+				continue
+			for m in _neighbors8(c):
+				if lvl[m] > NONE and lvl[m] > nl[c]:
+					nl[c] = lvl[m]
+					sd[c] = 0.0
+		lvl = nl
 	# Dams become moraines: the crest falls away on both sides at a natural slope instead of
 	# ending in a wall (a cone field spread out from every dam cell, two chamfer sweeps).
 	var top := _dam_cones(0.55)
-	# Only vertices near a planned lake or dam need the full sampling.
+	# Only vertices near a planned lake or dam need any work.
 	var near := PackedByteArray()
-	near.resize(nx * nz)
-	for c in nx * nz:
+	near.resize(n)
+	for c in n:
 		if water[c] > NONE or dam[c] > NONE:
 			var cx := c % nx
 			var cz := c / nx
@@ -78,24 +95,33 @@ func apply(surface: TerrainSurface) -> void:
 			if near[clampi(roundi(p.y / spacing), 0, nz - 1) * nx + clampi(roundi(p.x / spacing), 0, nx - 1)] == 0:
 				continue
 			var h := surface.heights[i]
-			var warp := Vector2(BorderNoise.value_noise(p * 0.018 + Vector2(4.2, 1.1)) - 0.5,
-				BorderNoise.value_noise(p * 0.018 + Vector2(9.7, 6.3)) - 0.5) * spacing * 2.4
-			var lake_w := 0.0
-			var level := NONE
-			var dist := 0.0
-			for o: Vector2 in ring:
-				var s := _sample(p + warp + o)
-				lake_w += s.x
-				dist += s.z * s.x
-				level = maxf(level, s.y)
-			lake_w /= ring.size()
+			var warp := Vector2(BorderNoise.value_noise(p * 0.012 + Vector2(4.2, 1.1)) - 0.5,
+				BorderNoise.value_noise(p * 0.012 + Vector2(9.7, 6.3)) - 0.5) * spacing * 1.6
+			var q := p + warp
+			var lake_w := smoothstep(0.3, 0.7, _bilinear(soft, q))
+			var level := _nearest(lvl, q)
 			if lake_w > 0.0 and level > NONE:
-				dist /= maxf(lake_w * ring.size(), 1e-4)
+				var dist := maxf(_bilinear(sd, q), 0.0)
 				var bed := level - minf(1.0 + dist * 0.09, 30.0)
-				h = minf(h, lerpf(h, bed, smoothstep(0.3, 0.7, lake_w)))
+				h = minf(h, lerpf(h, bed, lake_w))
 			# The dam slope fades out across the shore band (no step where the lake begins).
-			h = maxf(h, _bilinear(top, p + warp * 0.3) - smoothstep(0.15, 0.6, lake_w) * 25.0)
+			h = maxf(h, _bilinear(top, p + warp * 0.3) - smoothstep(0.0, 0.5, lake_w) * 25.0)
 			surface.heights[i] = h
+
+
+## One pass of a 3x3 binomial blur on the plan grid.
+func _blur(src: PackedFloat32Array) -> PackedFloat32Array:
+	var out := src.duplicate()
+	for z in range(1, nz - 1):
+		for x in range(1, nx - 1):
+			var c := z * nx + x
+			out[c] = (src[c] * 4.0 + (src[c - 1] + src[c + 1] + src[c - nx] + src[c + nx]) * 2.0
+				+ src[c - nx - 1] + src[c - nx + 1] + src[c + nx - 1] + src[c + nx + 1]) / 16.0
+	return out
+
+
+func _nearest(arr: PackedFloat32Array, p: Vector2) -> float:
+	return arr[clampi(roundi(p.y / spacing), 0, nz - 1) * nx + clampi(roundi(p.x / spacing), 0, nx - 1)]
 
 
 ## Bilinear plan sample at p: (lake weight, highest water level, shore distance, dam weight).

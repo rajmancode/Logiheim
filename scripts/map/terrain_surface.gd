@@ -307,15 +307,33 @@ func mark_lakes(hydro: Hydrology) -> void:
 				clear_mask[z * nx + x] = 1
 
 
-## Cuts river channels: the bed sits below each path's water surface and blends into the banks.
+## Cuts river valleys and channels. Valleys first: around every river the land is brought
+## down to a floor just above the water of the nearest stretch of river, with walls rising at
+## `valley_slope` to the untouched ground (`valley_reach`). Then the channel itself: the bed
+## sits below each path's water surface and blends into the banks; at a waterfall the lip is
+## kept (nothing below the fall is carved back past it).
 func carve(paths: Array) -> void:
+	if paths.is_empty():
+		return
+	_carve_valleys(paths)
 	for path: RiverPath in paths:
+		var lips: Array = []
+		for f in path.falls:
+			if f + 1 < path.points.size():
+				var a := path.points[f]
+				var b := path.points[f + 1]
+				lips.append([f, Vector2(a.x, a.z), Vector2(b.x - a.x, b.z - a.z).normalized()])
 		for k in path.points.size():
 			var pt := path.points[k]
 			var w := path.widths[k]
 			var depth := RiverMeshBuilder.depth_for(w)
 			var bed := pt.y - depth
 			var r := maxf(w * 1.9, w * 0.5 + 6.0)
+			# Below a waterfall: don't carve back past its lip.
+			var guard: Array = []
+			for lip: Array in lips:
+				if lip[0] < k and Vector2(pt.x, pt.z).distance_to(lip[1]) < r + 3.0:
+					guard = lip
 			var x0 := maxi(0, floori((pt.x - r) / spacing))
 			var x1 := mini(nx - 1, ceili((pt.x + r) / spacing))
 			var z0 := maxi(0, floori((pt.z - r) / spacing))
@@ -325,6 +343,8 @@ func carve(paths: Array) -> void:
 					var d := Vector2(gx * spacing - pt.x, gz * spacing - pt.z).length()
 					if d >= r:
 						continue
+					if not guard.is_empty() and (Vector2(gx * spacing, gz * spacing) - guard[1]).dot(guard[2]) < 0.0:
+						continue
 					var i := gz * nx + gx
 					var prof := 1.0 - smoothstep(w * 0.3, w * 1.5, d)
 					if prof > 0.0:
@@ -332,6 +352,99 @@ func carve(paths: Array) -> void:
 					river_mask[i] = maxf(river_mask[i], 1.0 - smoothstep(w * 0.45, w * 1.2, d))
 					if d < w * 0.5 + 6.0:
 						clear_mask[i] = 1
+
+
+## Valley walls from a nearest-river field on a coarse grid (two-pass vector chamfer: every
+## cell learns which river point is closest, and that point's water level and width).
+func _carve_valleys(paths: Array) -> void:
+	var slope := _settings.valley_slope
+	var reach := _settings.valley_reach
+	if slope <= 0.0 or reach <= 0.0:
+		return
+	var gs := spacing * 2.0
+	var gnx := int(ceil((nx - 1) * spacing / gs)) + 1
+	var gnz := int(ceil((nz - 1) * spacing / gs)) + 1
+	var n := gnx * gnz
+	var seed_p := PackedVector2Array()
+	seed_p.resize(n)
+	var seed_y := PackedFloat32Array()
+	seed_y.resize(n)
+	var seed_w := PackedFloat32Array()
+	seed_w.resize(n)
+	var dist := PackedFloat32Array()
+	dist.resize(n)
+	dist.fill(INF)
+	for path: RiverPath in paths:
+		for k in path.points.size():
+			var pt := path.points[k]
+			var p := Vector2(pt.x, pt.z)
+			var cx := roundi(p.x / gs)
+			var cz := roundi(p.y / gs)
+			for dz in range(-1, 2):
+				for dx in range(-1, 2):
+					var x := cx + dx
+					var z := cz + dz
+					if x < 0 or z < 0 or x >= gnx or z >= gnz:
+						continue
+					var c := z * gnx + x
+					var d := p.distance_to(Vector2(x * gs, z * gs))
+					if d < dist[c]:
+						dist[c] = d
+						seed_p[c] = p
+						seed_y[c] = pt.y
+						seed_w[c] = path.widths[k]
+	for it in 2:
+		var s := -1 if it == 0 else 1
+		var zr := range(gnz) if it == 0 else range(gnz - 1, -1, -1)
+		var xr := range(gnx) if it == 0 else range(gnx - 1, -1, -1)
+		for z: int in zr:
+			for x: int in xr:
+				var c := z * gnx + x
+				var here := Vector2(x * gs, z * gs)
+				for o: Vector2i in [Vector2i(s, 0), Vector2i(0, s), Vector2i(s, s), Vector2i(-s, s)]:
+					var xx := x + o.x
+					var zz := z + o.y
+					if xx < 0 or zz < 0 or xx >= gnx or zz >= gnz:
+						continue
+					var m := zz * gnx + xx
+					if dist[m] == INF:
+						continue
+					var d := here.distance_to(seed_p[m])
+					if d < dist[c]:
+						dist[c] = d
+						seed_p[c] = seed_p[m]
+						seed_y[c] = seed_y[m]
+						seed_w[c] = seed_w[m]
+	var target := PackedFloat32Array()
+	target.resize(n)
+	for c in n:
+		if dist[c] > reach:
+			target[c] = 1.0e5
+			continue
+		var here := Vector2((c % gnx) * gs, (c / gnx) * gs)
+		var fw := seed_w[c] * 0.8 + 3.0
+		var rag := (BorderNoise.value_noise(here * 0.03 + Vector2(5.5, 2.2)) - 0.5) * 5.0 * smoothstep(fw, fw + 40.0, dist[c])
+		target[c] = seed_y[c] + 1.5 + slope * maxf(dist[c] - fw, 0.0) + rag
+	# Soften the seams where two rivers' valleys meet.
+	for it in 2:
+		var src := target.duplicate()
+		for z in range(1, gnz - 1):
+			for x in range(1, gnx - 1):
+				var c := z * gnx + x
+				target[c] = minf(src[c], (src[c] * 4.0 + src[c - 1] + src[c + 1] + src[c - gnx] + src[c + gnx]) / 8.0)
+	for z in nz:
+		for x in nx:
+			var fx := clampf(x * spacing / gs, 0.0, gnx - 1.001)
+			var fz := clampf(z * spacing / gs, 0.0, gnz - 1.001)
+			var x0 := int(fx)
+			var z0 := int(fz)
+			var tx := fx - x0
+			var tz := fz - z0
+			var c := z0 * gnx + x0
+			var t := lerpf(lerpf(target[c], target[c + 1], tx), lerpf(target[c + gnx], target[c + gnx + 1], tx), tz)
+			var i := z * nx + x
+			if t < heights[i] and heights[i] > sea_y:
+				heights[i] = maxf(t, sea_y + 0.6)
 
 
 ## Final terrain weights: hex terrain blend adjusted for sea floor, beaches, cliffs and banks.
@@ -375,7 +488,23 @@ func finish_weights() -> void:
 				# Worn, dry patches in open grassland.
 				var grassy := weights[base + T.GRASS]
 				_pull(base, T.DIRT, grassy * smoothstep(0.72, 0.85, n2) * 0.45)
-			_pull(base, T.ROCK, smoothstep(cliff * 0.75, cliff * 1.35, slope))
+			_pull(base, T.ROCK, smoothstep(cliff * 0.65, cliff * 1.25, slope))
+			if under <= 0.0:
+				var rel := clampf((h - sea_y) / relief, 0.0, 1.0)
+				# Ridges and crests: convex ground sheds its soil and shows bare rock.
+				var x2a := maxi(x - 2, 0)
+				var x2b := mini(x + 2, nx - 1)
+				var z2a := maxi(z - 2, 0)
+				var z2b := mini(z + 2, nz - 1)
+				var around := (heights[z * nx + x2a] + heights[z * nx + x2b] + heights[z2a * nx + x] + heights[z2b * nx + x]) * 0.25
+				var convex := h - around
+				_pull(base, T.ROCK, smoothstep(1.2, 3.5, convex) * (0.3 + 0.7 * smoothstep(0.2, 0.55, rel)) * 0.8)
+				# High ground: broken, rocky patches between the grass and snow.
+				_pull(base, T.ROCK, smoothstep(0.5, 0.8, rel) * smoothstep(0.55, 0.75, n1) * 0.7)
+				# Sea cliffs: steep coasts are bare rock down to the water.
+				_pull(base, T.ROCK, smoothstep(cliff * 0.35, cliff * 0.7, slope) * (1.0 - smoothstep(sea_y + 4.0, sea_y + 30.0, h)) * 0.85)
+				# Outcrops poking through the grass on moderate slopes.
+				_pull(base, T.ROCK, smoothstep(0.18, 0.4, slope) * smoothstep(0.8, 0.9, n2) * 0.8)
 			var bank := river_mask[vi]
 			var low := 1.0 - smoothstep(sea_y + 6.0, sea_y + relief * 0.25, h)
 			if bank > 0.0 and under < 0.5:

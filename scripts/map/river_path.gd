@@ -14,3 +14,5 @@ var speeds := PackedFloat32Array()
 ## 0 calm .. 1 white water (rapids, falls).
 var turbulence := PackedFloat32Array()
 var to_sea := false
+## Indices of points where a waterfall starts (the fall runs to the next point).
+var falls := PackedInt32Array()

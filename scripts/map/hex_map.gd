@@ -35,6 +35,8 @@ var _lake_materials: Array[ShaderMaterial] = []
 var _show_grid := true
 var _show_icons := true
 var _icon_roots: Array[Node3D] = []
+## Fjords cut into this map (for tools and debugging).
+var fjord_plan: FjordMaker
 
 
 ## Loads map.json from map_dir and builds the map. Returns false if loading failed.
@@ -62,6 +64,7 @@ func rebuild() -> void:
 	levels = gen.build_levels()
 	var courses: Array = []
 	var lakes: LakeMaker = null
+	var fjords: FjordMaker = null
 	sea_y = gen.sea_y()
 	for level in levels:
 		var t1 := Time.get_ticks_msec()
@@ -78,9 +81,18 @@ func rebuild() -> void:
 			# courses themselves come from the finest level so every level agrees.
 			var stride := 2 if level.level_index == 0 else 1
 			if level.level_index == 0:
-				# Plan extra lakes on the finest terrain, then shape every level to hold them.
+				# Plan fjords and extra lakes on the finest terrain, then shape every level.
 				hydro = Hydrology.from_surface(surface, stride, settings, source)
+				fjords = FjordMaker.plan(hydro, settings)
+				if fjords.count() > 0:
+					fjords.apply(surface)
+					hydro = Hydrology.from_surface(surface, stride, settings, source)
 				lakes = LakeMaker.plan(hydro, source, settings)
+				fjord_plan = fjords
+			elif fjords != null:
+				fjords.apply(surface)
+			if fjords != null:
+				fjords.mark_level(level, surface)
 			if lakes != null:
 				lakes.apply(surface)
 			hydro = Hydrology.from_surface(surface, stride, settings, source)
@@ -96,6 +108,8 @@ func rebuild() -> void:
 		mat.set_shader_parameter("show_grid", _show_grid)
 		TerrainMeshBuilder.build(surface, mat, root)
 		RiverMeshBuilder.build(paths, root)
+		if level.level_index <= 1:
+			RiverMeshBuilder.build_falls(paths, root)
 		var lake_mat := RiverMeshBuilder.lake_material(_get_wave_normal())
 		TerrainMaterial.set_grid(lake_mat, level, noise)
 		lake_mat.set_shader_parameter("show_grid", _show_grid)
