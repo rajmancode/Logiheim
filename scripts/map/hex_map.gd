@@ -76,12 +76,11 @@ func rebuild() -> void:
 	var roads: RoadNetwork = null
 	var caves: CaveSystem = null
 	sea_y = gen.sea_y()
+	# Phase 1, every level: shape the ground (volcano, fjords, lakes, rivers, caves, slope limit)
+	# and work out where the water is. Nothing is meshed yet.
+	var recs: Array = []
 	for level in levels:
 		var t1 := Time.get_ticks_msec()
-		var root := Node3D.new()
-		root.name = "Level%d" % level.level_index
-		root.visible = false
-		add_child(root)
 		var noise := BorderNoise.new(level.hex_size, settings.border_noise)
 		var surface := TerrainSurface.new(level, source, settings, gen)
 		# Volcanoes first: everything after (rivers, lakes, fjords) works on the land with them.
@@ -117,28 +116,18 @@ func rebuild() -> void:
 			paths = RiverMeshBuilder.place(courses, level, surface, hydro, noise, settings, source)
 			surface.mark_lakes(hydro)
 			surface.carve(paths)
-		# Caves (planned on the finest level) come first so trails can lead to them.
 		if level.level_index == 0:
 			caves = CaveSystem.plan(level, surface, settings)
 			cave_plan = caves
-		# Trails: planned on the finest level once rivers and lakes are known.
-		if level.level_index == 0:
-			var dests: Array = []
-			for sy: Dictionary in caves.systems:
-				for e: Dictionary in sy.entrances:
-					dests.append((e.p as Vector2) + (e.dir as Vector2) * 12.0)
-			roads = RoadNetwork.plan(level, surface, settings, dests)
-			road_plan = roads
-		roads.apply(level, surface)
 		# No near-vertical walls: cap the slope once all shaping is done.
 		surface.limit_slopes(settings.max_slope, paths)
 		# Rivers never run above the ground beside them: settle the water onto the final banks.
 		if not paths.is_empty():
 			RiverMeshBuilder.settle(paths, surface)
 			surface.carve_channels(paths)
-		# Lakes from the final ground: shaping since the first pass (valleys, trails, the slope
-		# limit) may have lowered a shore, so the water level is worked out again here; a lake
-		# can then never stand higher than the ground that holds it.
+		# Lakes from the final ground: shaping since the first pass (valleys, the slope limit)
+		# may have lowered a shore, so the water level is worked out again here; a lake can
+		# then never stand higher than the ground that holds it.
 		if hydro != null:
 			hydro = Hydrology.from_surface(surface, 2 if level.level_index == 0 else 1, settings, source)
 			for i in level.cell_count():
@@ -147,6 +136,38 @@ func rebuild() -> void:
 		caves.apply(level, surface)
 		var fp := Floodplain.build(level, surface, paths, settings)
 		surface.finish_weights()
+		surfaces.append(surface)
+		river_paths.append(paths)
+		hydrology.append(hydro)
+		_noises.append(noise)
+		recs.append({"level": level, "surface": surface, "paths": paths, "hydro": hydro, "fp": fp, "noise": noise})
+		print("HexMap: level %d (%.0f m hexes, %d x %d terrain) shaped in %d ms" % [
+			level.level_index, level.hex_size, surface.nx, surface.nz, Time.get_ticks_msec() - t1])
+
+	# Resources on the finished land, then trails that reach every cave and every deposit.
+	if settings.resources_enabled:
+		NaturalResources.place(levels, source, sea_y, settings.resource_abundance, settings.mask_threshold, surfaces[0])
+		if cave_plan != null:
+			cave_plan.place_resources(levels)
+	var dests: Array = []
+	for sy: Dictionary in caves.systems:
+		for e: Dictionary in sy.entrances:
+			dests.append((e.p as Vector2) + (e.dir as Vector2) * 12.0)
+	roads = RoadNetwork.plan(levels[0], surfaces[0], settings, dests, river_paths[0])
+	road_plan = roads
+
+	# Phase 2, every level: cut the trails in, then build everything you see.
+	for rec: Dictionary in recs:
+		var level: HexLevel = rec.level
+		var surface: TerrainSurface = rec.surface
+		var paths: Array[RiverPath] = rec.paths
+		var hydro: Hydrology = rec.hydro
+		var noise: BorderNoise = rec.noise
+		var root := Node3D.new()
+		root.name = "Level%d" % level.level_index
+		root.visible = false
+		add_child(root)
+		roads.apply(level, surface)
 		var mat := TerrainMaterial.for_level(_base_material, level, noise, sea_y)
 		mat.set_shader_parameter("flood_rise", settings.floodplain_depth + 0.9)
 		mat.set_shader_parameter("relief", maxf(level.max_top_y() - sea_y, 10.0))
@@ -158,7 +179,6 @@ func rebuild() -> void:
 			roads.build_meshes(surface, root, paths)
 			caves.build_meshes(surface, root)
 			RockFeatures.build(level, surface, settings, root)
-		if level.level_index <= 1:
 			RiverMeshBuilder.build_falls(paths, root)
 		var lake_mat := RiverMeshBuilder.lake_material(_get_wave_normal())
 		TerrainMaterial.set_grid(lake_mat, level, noise)
@@ -166,22 +186,15 @@ func rebuild() -> void:
 		_lake_materials.append(lake_mat)
 		if hydro != null:
 			RiverMeshBuilder.build_lakes(hydro, surface, lake_mat, root)
-		fp.build_meshes(lake_mat, root)
+		(rec.fp as Floodplain).build_meshes(lake_mat, root)
 		Vegetation.build(level, surface, settings, root)
 		if level.level_index == 0 and settings.grass_enabled:
 			GrassField.build(surface, settings, root)
+		if level.level_index == 0:
+			WaterEffects.build_shore_spray(surface, root)
 		_level_roots.append(root)
-		_noises.append(noise)
 		_materials.append(mat)
-		surfaces.append(surface)
-		river_paths.append(paths)
-		hydrology.append(hydro)
-		print("HexMap: level %d (%.0f m hexes, %d x %d terrain) in %d ms" % [
-			level.level_index, level.hex_size, surface.nx, surface.nz, Time.get_ticks_msec() - t1])
 	if settings.resources_enabled:
-		NaturalResources.place(levels, source, sea_y, settings.resource_abundance, settings.mask_threshold, surfaces[0])
-		if cave_plan != null:
-			cave_plan.place_resources(levels)
 		for li in levels.size():
 			ResourceProps.build_ground(levels[li], surfaces[li], _level_roots[li])
 		for li in mini(2, levels.size()):
@@ -232,13 +245,44 @@ func _build_water() -> void:
 		_water.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
 		add_child(_water)
 	var size := source.world_size
+	# Dense over the map (~5 m, for waves near the coast), coarse beyond it.
 	var plane := PlaneMesh.new()
-	plane.size = size * 3.0
-	plane.subdivide_width = 300
-	plane.subdivide_depth = 300
+	plane.size = size
+	plane.subdivide_width = int(size.x / 5.0)
+	plane.subdivide_depth = int(size.y / 5.0)
 	_water.mesh = plane
 	_water.position = Vector3(size.x * 0.5, sea_y, size.y * 0.5)
+	for c in _water.get_children():
+		c.queue_free()
+	for off in [Vector2(-1, -1), Vector2(0, -1), Vector2(1, -1), Vector2(-1, 0), Vector2(1, 0), Vector2(-1, 1), Vector2(0, 1), Vector2(1, 1)]:
+		var outer := MeshInstance3D.new()
+		var op := PlaneMesh.new()
+		op.size = size + Vector2(2.0, 2.0)
+		op.subdivide_width = 60
+		op.subdivide_depth = 60
+		outer.mesh = op
+		outer.position = Vector3(off.x * size.x, -0.02, off.y * size.y)
+		outer.material_override = _water_material
+		outer.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+		_water.add_child(outer)
 	_water_material.set_shader_parameter("show_grid", _show_grid)
+	# The finest terrain as a height map, so the sea knows its depth everywhere.
+	if not surfaces.is_empty():
+		var s0: TerrainSurface = surfaces[0]
+		var lo := INF
+		var hi := -INF
+		for h in s0.heights:
+			lo = minf(lo, h)
+			hi = maxf(hi, h)
+		var img := Image.create(s0.nx, s0.nz, false, Image.FORMAT_RF)
+		for z in s0.nz:
+			for x in s0.nx:
+				img.set_pixel(x, z, Color((s0.heights[z * s0.nx + x] - lo) / maxf(hi - lo, 1.0), 0, 0))
+		_water_material.set_shader_parameter("terrain_height", ImageTexture.create_from_image(img))
+		_water_material.set_shader_parameter("terrain_size", Vector2((s0.nx - 1) * s0.spacing, (s0.nz - 1) * s0.spacing))
+		_water_material.set_shader_parameter("terrain_min", lo)
+		_water_material.set_shader_parameter("terrain_range", maxf(hi - lo, 1.0))
+		_water_material.set_shader_parameter("use_terrain", true)
 
 
 func _get_wave_normal() -> NoiseTexture2D:

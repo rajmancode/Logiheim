@@ -27,6 +27,12 @@ extends Resource
 ## Steepest the ground may be (rise/run; 1.25 is about 51 degrees). Steeper ground is cut back
 ## from the top. Waterfall faces are exempt. 0 = no limit.
 @export_range(0.0, 3.0, 0.05) var max_slope := 1.25
+## Island shape: land height above the sea is scaled by distance from the coast, from
+## coast_height at the shore to inland_height `coast_reach` metres inland - low-lying coasts,
+## hilly heart. 1 and 1 leave the Gaea terrain as it is.
+@export_range(0.1, 1.5, 0.05) var coast_height := 0.35
+@export_range(0.5, 2.0, 0.05) var inland_height := 1.2
+@export var coast_reach := 400.0
 ## Rock overhangs jutting from the steepest crests, at most one per this many metres (0 = none).
 @export var overhang_spacing := 90.0
 ## How much of the real Gaea relief shows inside each hex (0 = flat plateaus).

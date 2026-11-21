@@ -53,6 +53,8 @@ var _gen: HexMapGenerator
 var _meters := 1.0
 var _centers := PackedVector2Array()
 var _neighbors := PackedInt32Array()
+## Per hex: how much its height above the sea is scaled (low coast, hilly heart).
+var _lift := PackedFloat32Array()
 
 
 func _init(p_level: HexLevel, source: TerrainSource, settings: HexMapSettings, generator: HexMapGenerator) -> void:
@@ -88,6 +90,25 @@ func sample(p: Vector2) -> float:
 	var a := lerpf(heights[i], heights[i + 1], tx)
 	var b := lerpf(heights[i + nx], heights[i + nx + 1], tx)
 	return lerpf(a, b, tz)
+
+
+## Height at p on the terrain mesh's own triangles (each grid square split from (x+1, z) to
+## (x, z+1), as TerrainMeshBuilder draws it), for things that must lie exactly on the ground.
+func sample_mesh(p: Vector2) -> float:
+	var fx := clampf(p.x / spacing, 0.0, nx - 1.001)
+	var fz := clampf(p.y / spacing, 0.0, nz - 1.001)
+	var x0 := int(fx)
+	var z0 := int(fz)
+	var tx := fx - x0
+	var tz := fz - z0
+	var i := z0 * nx + x0
+	var a := heights[i]
+	var b := heights[i + 1]
+	var c := heights[i + nx]
+	var e := heights[i + nx + 1]
+	if tx + tz <= 1.0:
+		return a + (b - a) * tx + (c - a) * tz
+	return e + (c - e) * (1.0 - tx) + (b - e) * (1.0 - tz)
 
 
 ## Lowest ground under a footprint of radius r around p (centre plus a ring of 8): seat
@@ -182,6 +203,28 @@ func _compute_plateaus() -> void:
 				dist[j] = dist[i] + 1
 				queue.append(j)
 	var cell_w := HexCoords.SQRT3 * level.hex_size
+	# Distance of every land hex from the sea, for the island's shape.
+	var inland := PackedInt32Array()
+	inland.resize(n)
+	inland.fill(-1)
+	var q2 := PackedInt32Array()
+	for i in n:
+		if HexMapGenerator.is_water(level.terrain[i]):
+			inland[i] = 0
+			q2.append(i)
+	var h2 := 0
+	while h2 < q2.size():
+		var i := q2[h2]
+		h2 += 1
+		for k in 6:
+			var j := _neighbors[i * 6 + k]
+			if j >= 0 and inland[j] < 0:
+				inland[j] = inland[i] + 1
+				q2.append(j)
+	_lift.resize(n)
+	for i in n:
+		var dist_m := float(inland[i] if inland[i] >= 0 else 40) * cell_w
+		_lift[i] = lerpf(_settings.coast_height, _settings.inland_height, smoothstep(0.0, maxf(_settings.coast_reach, 1.0), dist_m))
 	for i in n:
 		var t := level.terrain[i]
 		if HexMapGenerator.is_water(t):
@@ -191,7 +234,7 @@ func _compute_plateaus() -> void:
 				depth += 6.0
 			plateau[i] = sea_y - depth
 		else:
-			plateau[i] = level.top_y(i)
+			plateau[i] = sea_y + maxf(level.top_y(i) - sea_y, 0.0) * _lift[i]
 			# Land hexes almost surrounded by sea become low sand bars and skerries rather
 			# than thin, steep ridges sticking out of the water.
 			var wet := 0
@@ -244,6 +287,7 @@ func _compute_heights() -> void:
 			var sw := 0.0
 			var sh := 0.0
 			var sm := 0.0
+			var sl := 0.0
 			var land := 0.0
 			for k in 7:
 				var j := cells[k]
@@ -259,6 +303,7 @@ func _compute_heights() -> void:
 				sw += wk
 				sh += wk * plateau[j]
 				sm += wk * level.height[j]
+				sl += wk * _lift[j]
 				if not HexMapGenerator.is_water(level.terrain[j]):
 					land += wk
 			if sw <= 0.0:
@@ -268,7 +313,7 @@ func _compute_heights() -> void:
 			var h := sh / sw
 			var land_share := land / sw
 			# Real relief inside the hex, relative to the hexes' own mean height.
-			h += (_smooth_height(p) - sm / sw) * detail * land_share
+			h += (_smooth_height(p) - sm / sw) * detail * land_share * (sl / sw)
 			if land_share > 0.55:
 				h = maxf(h, sea_y + 0.6)
 			elif land_share <= 0.0:

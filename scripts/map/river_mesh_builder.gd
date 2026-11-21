@@ -768,6 +768,7 @@ static func build_falls(paths: Array[RiverPath], parent: Node3D) -> void:
 			mist.draw_pass_1 = _mist_quad()
 			mist.visibility_aabb = AABB(Vector3(-w - 10, -2, -w - 10), Vector3(w * 2 + 20, drop + 14, w * 2 + 20))
 			parent.add_child(mist)
+			WaterEffects.waterfall_splash(foot, dir, w, drop, parent)
 
 
 static func _mist_quad() -> QuadMesh:

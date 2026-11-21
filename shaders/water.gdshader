@@ -21,6 +21,14 @@ uniform float grid_fade_start = 2500.0;
 
 varying vec3 v_world_pos;
 varying float v_edge;
+varying vec3 v_wave_n;
+// Sea only: the terrain's height map, so waves know how deep the water is under them.
+uniform sampler2D terrain_height : filter_linear, repeat_disable;
+uniform vec2 terrain_size = vec2(2048.0);
+uniform float terrain_min = -40.0;
+uniform float terrain_range = 300.0;
+uniform bool use_terrain = false;
+uniform float swell = 0.55;        // metres of open-sea swell (more in wind)
 uniform bool edge_alpha = false;   // lakes: COLOR.a fades the water out at open mesh edges
 uniform float surf = 1.0;          // breakers rolling onto the shore (sea only)
 uniform float surf_period = 8.0;   // seconds between sets of breakers
@@ -31,10 +39,51 @@ float waves(vec2 p, float t) {
 	return sin(dot(p, d1) * 0.045 + t * 0.45) * 0.6 + sin(dot(p, d2) * 0.07 + t * 0.6) * 0.4;
 }
 
+// One Gerstner wave: moves the surface up and sideways (towards the crest), so crests sharpen
+// and troughs flatten like real swell. Adds to disp and to the normal's slope terms.
+void gerstner(vec2 xz, vec2 dir, float len, float amp, float steep, float t, inout vec3 disp, inout vec3 nrm) {
+	float k = 6.2832 / len;
+	float c = sqrt(9.8 / k) * 0.5;
+	float f = k * (dot(dir, xz) - c * t);
+	float q = steep / (k * amp * 3.0 + 1e-4);
+	disp.xz += q * amp * dir * cos(f);
+	disp.y += amp * sin(f);
+	nrm.xz -= dir * k * amp * cos(f);
+	nrm.y -= q * k * amp * sin(f);
+}
+
 void vertex() {
 	vec3 wp = (MODEL_MATRIX * vec4(VERTEX, 1.0)).xyz;
 	float amp = wave_height * (0.4 + 1.2 * wind_strength);
 	VERTEX.y += waves(wp.xz, wind_time) * amp;
+	v_wave_n = vec3(0.0, 1.0, 0.0);
+	if (use_terrain) {
+		// Depth from the terrain height map: waves calm right at the shore and grow offshore.
+		vec2 tuv = wp.xz / terrain_size;
+		float ground = (tuv.x < 0.0 || tuv.y < 0.0 || tuv.x > 1.0 || tuv.y > 1.0) ? -100.0
+			: texture(terrain_height, tuv).r * terrain_range + terrain_min;
+		float depth = wp.y - ground;
+		float a = swell * (0.5 + 1.3 * wind_strength) * smoothstep(0.3, 6.0, depth);
+		vec3 disp = vec3(0.0);
+		vec3 nrm = vec3(0.0, 1.0, 0.0);
+		vec2 d0 = wind_direction;
+		gerstner(wp.xz, d0, 62.0, a, 0.55, TIME, disp, nrm);
+		gerstner(wp.xz, normalize(d0 + vec2(-d0.y, d0.x) * 0.45), 37.0, a * 0.55, 0.5, TIME, disp, nrm);
+		gerstner(wp.xz, normalize(d0 - vec2(-d0.y, d0.x) * 0.6), 21.0, a * 0.3, 0.45, TIME, disp, nrm);
+		// Breakers: the swell lifts as it reaches the shallows along the lines the surf foam
+		// draws, then collapses onto the beach.
+		if (surf > 0.0 && depth > -0.5 && depth < 7.0) {
+			float ph = TIME / surf_period + env_noise(wp.xz * 0.004) * 0.8;
+			for (int k = 0; k < 2; k++) {
+				float c = fract(ph + float(k) * 0.5);
+				float front = mix(5.0, -0.2, c * c * (3.0 - 2.0 * c));
+				float bump = exp(-pow((depth - front) / 0.8, 2.0)) * (1.0 - smoothstep(0.6, 0.95, c));
+				disp.y += bump * 0.55 * surf;
+			}
+		}
+		VERTEX += disp;
+		v_wave_n = normalize(nrm);
+	}
 	v_world_pos = (MODEL_MATRIX * vec4(VERTEX, 1.0)).xyz;
 	v_edge = edge_alpha ? COLOR.a : 1.0;
 }
@@ -47,7 +96,7 @@ void fragment() {
 	vec3 n1 = texture(wave_normal, uv1).xyz * 2.0 - 1.0;
 	vec3 n2 = texture(wave_normal, uv2).xyz * 2.0 - 1.0;
 	vec2 ripple = (n1.xy + n2.xy) * (0.25 + 0.5 * wind_strength);
-	vec3 wn = normalize(vec3(ripple.x, 1.0, ripple.y));
+	vec3 wn = normalize(vec3(ripple.x, 1.0, ripple.y) + vec3(v_wave_n.x, 0.0, v_wave_n.z) * 1.6);
 
 	// Water depth below this pixel, from the depth buffer.
 	float raw = texture(depth_texture, SCREEN_UV).r;

@@ -17,14 +17,26 @@ var roads: Array = []
 var width := 3.5
 
 static var _trail_mat: ShaderMaterial
+## River water by 10 m cell: [centre, half-width] of every river point (bridges only over water).
+var _water_grid := {}
 
 const STEP := 2.0
+## Steepest a trail may climb (rise/run), and how deep it may cut or fill to manage that.
+const MAX_GRADE := 0.15
+const MAX_CUT := 8.0
 ## Columns across the trail ribbon, so it follows the ground across as well as along.
 const ACROSS := 4
 
 
-static func plan(level: HexLevel, surface: TerrainSurface, settings: HexMapSettings, destinations: Array = []) -> RoadNetwork:
+static func plan(level: HexLevel, surface: TerrainSurface, settings: HexMapSettings, destinations: Array = [], rivers: Array = []) -> RoadNetwork:
 	var rn := RoadNetwork.new()
+	for path: RiverPath in rivers:
+		for k in path.points.size():
+			var q := Vector2(path.points[k].x, path.points[k].z)
+			var key := Vector2i(floori(q.x / 10.0), floori(q.y / 10.0))
+			if not rn._water_grid.has(key):
+				rn._water_grid[key] = []
+			rn._water_grid[key].append([q, path.widths[k] * 0.5])
 	rn.width = settings.road_width
 	if not settings.roads_enabled:
 		return rn
@@ -143,7 +155,8 @@ static func plan(level: HexLevel, surface: TerrainSurface, settings: HexMapSetti
 	for i in n:
 		var ny := surface.normal_at(level.cell_center(i)).y
 		var tan_s := sqrt(maxf(1.0 / (ny * ny) - 1.0, 0.0))
-		steep[i] = 30.0 * smoothstep(0.08, 0.4, tan_s)
+		# Steep ground is all but off-limits: trails go round it.
+		steep[i] = 25.0 * smoothstep(0.08, 0.3, tan_s) + (400.0 if tan_s > 0.45 else 0.0)
 	for l in links:
 		var cells := _route(level, l[0], l[1], hh, blocked, on_road, wet, volc, hex_w, steep)
 		if cells.size() < 2:
@@ -151,11 +164,34 @@ static func plan(level: HexLevel, surface: TerrainSurface, settings: HexMapSetti
 		for c in cells:
 			on_road[c] = 1
 		rn.roads.append(rn._shape(level, surface, cells))
-	print("RoadNetwork: %d spots, %d trails" % [nodes.size(), rn.roads.size()])
+	# Spurs: every land deposit gets a trail to its door, joining the nearest trail.
+	var spurs := 0
+	for d: Dictionary in level.deposits:
+		var kind: int = d.kind
+		if kind == NaturalResources.Kind.FISH or kind == NaturalResources.Kind.WHALES:
+			continue
+		var c: int = d.center
+		if c < 0 or blocked[c] == 1:
+			continue
+		var near := on_road[c] == 1
+		for kk in 6:
+			var j := level.index_of(HexCoords.neighbor(level.coords[c], kk))
+			if j >= 0 and on_road[j] == 1:
+				near = true
+		if near:
+			continue
+		var cells := _route(level, c, -1, hh, blocked, on_road, wet, volc, hex_w, steep)
+		if cells.size() < 2:
+			continue
+		for cc in cells:
+			on_road[cc] = 1
+		rn.roads.append(rn._shape(level, surface, cells))
+		spurs += 1
+	print("RoadNetwork: %d spots, %d trails, %d spurs to deposits" % [nodes.size(), rn.roads.size() - spurs, spurs])
 	return rn
 
 
-## A* over the hexes from a to b.
+## A* over the hexes from a to b; with b = -1, to the nearest hex already on a trail.
 static func _route(level: HexLevel, a: int, b: int, hh: PackedFloat32Array, blocked: PackedByteArray,
 		on_road: PackedByteArray, wet: PackedFloat32Array, volc: PackedFloat32Array, hex_w: float, steep: PackedFloat32Array) -> PackedInt32Array:
 	var T := HexMapGenerator.Terrain
@@ -171,14 +207,18 @@ static func _route(level: HexLevel, a: int, b: int, hh: PackedFloat32Array, bloc
 	var heap: Array = []   # [f, cell], binary min-heap
 	g[a] = 0.0
 	_push(heap, [0.0, a])
-	var goal := level.coords[b]
+	var goal := level.coords[b] if b >= 0 else Vector2i.ZERO
+	var found := -1
 	while not heap.is_empty():
 		var cur: Array = _pop(heap)
 		var i: int = cur[1]
 		if closed[i] == 1:
 			continue
 		closed[i] = 1
-		if i == b:
+		if i == b or (b < 0 and i != a and on_road[i] == 1):
+			found = i
+			break
+		if b < 0 and g[i] > 2500.0:
 			break
 		for k in 6:
 			var j := level.index_of(HexCoords.neighbor(level.coords[i], k))
@@ -186,9 +226,9 @@ static func _route(level: HexLevel, a: int, b: int, hh: PackedFloat32Array, bloc
 				continue
 			var grade := absf(hh[j] - hh[i]) / hex_w
 			# Trails keep to flat ground: steep grades and steep ground underfoot cost a lot.
-			var cost := 1.0 + 70.0 * grade * grade + (60.0 if grade > 0.35 else 0.0) + steep[j]
+			var cost := 1.0 + 70.0 * grade * grade + (60.0 if grade > 0.15 else 0.0) + (200.0 if grade > 0.3 else 0.0) + steep[j]
 			if level.river[j] == 1:
-				cost += 4.0
+				cost += 25.0   # cross rivers, don't follow them
 			match level.terrain[j]:
 				T.ROCK:
 					cost += 1.5
@@ -203,11 +243,11 @@ static func _route(level: HexLevel, a: int, b: int, hh: PackedFloat32Array, bloc
 			if ng < g[j]:
 				g[j] = ng
 				came[j] = i
-				_push(heap, [ng + HexCoords.distance(level.coords[j], goal) * 0.35, j])
-	if came[b] < 0:
+				_push(heap, [ng + (HexCoords.distance(level.coords[j], goal) * 0.35 if b >= 0 else 0.0), j])
+	if found < 0 or came[found] < 0:
 		return PackedInt32Array()
-	var out := PackedInt32Array([b])
-	var c := b
+	var out := PackedInt32Array([found])
+	var c := found
 	while c != a:
 		c = came[c]
 		out.append(c)
@@ -287,15 +327,26 @@ func _shape(level: HexLevel, surface: TerrainSurface, cells: PackedInt32Array) -
 	var bridge := PackedByteArray()
 	bridge.resize(out.size())
 	for k in out.size():
-		if surface.river_at(out[k]) > 0.45:
+		if _over_water(out[k]):
 			bridge[k] = 1
 	# Grow bridges a little so they reach dry banks.
 	var grown := bridge.duplicate()
 	for k in out.size():
 		if bridge[k] == 1:
-			for q in range(maxi(0, k - 2), mini(out.size(), k + 3)):
+			for q in range(maxi(0, k - 3), mini(out.size(), k + 4)):
 				grown[q] = 1
 	return {"pts": out, "bridge": grown}
+
+
+## True if p is on a river's water (within its half-width).
+func _over_water(p: Vector2) -> bool:
+	var key := Vector2i(floori(p.x / 10.0), floori(p.y / 10.0))
+	for dz in range(-1, 2):
+		for dx in range(-1, 2):
+			for e: Array in _water_grid.get(key + Vector2i(dx, dz), []):
+				if p.distance_to(e[0]) < float(e[1]) + 0.5:
+					return true
+	return false
 
 
 ## Cuts the trails into a level's surface and marks its hexes.
@@ -320,8 +371,23 @@ func apply(level: HexLevel, surface: TerrainSurface) -> void:
 				acc += ys[q]
 				cnt += 1
 			sm[k] = acc / cnt
+		# A trail never climbs steeper than MAX_GRADE: the profile is limited both ways along
+		# the trail, cutting into rises and building up over dips (by at most MAX_CUT metres;
+		# beyond that the trail follows the ground).
+		for it in 2:
+			for k in range(1, n):
+				var ds := pts[k].distance_to(pts[k - 1])
+				sm[k] = clampf(sm[k], sm[k - 1] - MAX_GRADE * ds, sm[k - 1] + MAX_GRADE * ds)
+			for k in range(n - 2, -1, -1):
+				var ds := pts[k].distance_to(pts[k + 1])
+				sm[k] = clampf(sm[k], sm[k + 1] - MAX_GRADE * ds, sm[k + 1] + MAX_GRADE * ds)
+		for k in n:
+			sm[k] = clampf(sm[k], ys[k] - MAX_CUT, ys[k] + MAX_CUT)
 		var half := width * 0.5
-		var reach := half + 4.0
+		# The levelled bed must reach the nearest terrain grid vertices, or the 5 m grid would
+		# leave the trail on the old slope between them.
+		var flat_r := half + surface.spacing * 0.75
+		var reach := flat_r + 4.0
 		for k in n:
 			var p := pts[k]
 			var cell := level.cell_at(p)
@@ -340,7 +406,7 @@ func apply(level: HexLevel, surface: TerrainSurface) -> void:
 					if d > reach or surface.river_mask[i] > 0.5:
 						continue
 					# Level across the whole width (t = 1), blending back into the ground beyond.
-					var t := 1.0 - smoothstep(half + 0.5, reach, d)
+					var t := 1.0 - smoothstep(flat_r, reach, d)
 					surface.heights[i] = lerpf(surface.heights[i], sm[k], t)
 					surface.path_mask[i] = maxf(surface.path_mask[i], 1.0 - smoothstep(half * 0.6, half + 1.0, d))
 					if d < half + 2.0:
@@ -375,7 +441,8 @@ func build_meshes(surface: TerrainSurface, parent: Node3D, rivers: Array = []) -
 			for c in ACROSS + 1:
 				var u := float(c) / ACROSS
 				var q := pts[k] + side * (u * 2.0 - 1.0)
-				verts.append(Vector3(q.x, surface.sample(q) + 0.06, q.y))
+				# Exactly on the terrain mesh's triangles, so the trail never dips into the ground.
+				verts.append(Vector3(q.x, surface.sample_mesh(q) + 0.1, q.y))
 				uvs.append(Vector2(u, along))
 				normals.append(surface.normal_at(q))
 			if prev >= 0:
