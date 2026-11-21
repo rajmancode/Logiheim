@@ -1,7 +1,11 @@
 """Writes the resource icons (SVG) used by the map overlay.
 
 Usage:
-    python tools/make_resource_icons.py
+    python tools/make_resource_icons.py [<renders dir>]
+
+With a renders dir (pictures from tools/blender/render_icons.py), each icon becomes a realistic
+picture of the resource inside its group's badge, saved as <key>.png (256 px); the game uses
+the PNG when there is one and the flat SVG glyph otherwise.
 
 Each icon is a badge with a simple white glyph, written to assets/icons/resources/<key>.svg.
 Keys match NaturalResources.INFO. Every group has its own shape and colour, so groups tell
@@ -9,6 +13,8 @@ apart at a glance: core = green circle, precious = gold diamond, industry = viol
 square, wildlife = orange hexagon, norse = blue shield. Badges have a dark outline, a light rim
 and a drop shadow so they stand out on any ground. cave.svg marks cave entrances.
 """
+import math
+import sys
 from pathlib import Path
 
 OUT = Path(__file__).resolve().parent.parent / "assets" / "icons" / "resources"
@@ -125,5 +131,93 @@ def main() -> None:
     print(f"wrote {len(GLYPHS)} icons to {OUT}")
 
 
+# --------------------------------------------------------------------------- picture badges
+
+def _shape_points(group: str, size: int) -> list:
+    """Outline of a badge shape as polygon points, in a size x size box."""
+    c = size / 2
+    m = size * 0.05
+    if group == "core":
+        return [(c + (c - m) * math.cos(a), c + (c - m) * math.sin(a)) for a in [i * math.tau / 96 for i in range(96)]]
+    if group == "precious":
+        return [(c, m), (size - m, c), (c, size - m), (m, c)]
+    if group == "wildlife":
+        r = c - m
+        return [(c + r * math.cos(math.radians(a)), c + r * math.sin(math.radians(a))) for a in range(-90, 270, 60)]
+    if group == "cave":
+        r = c - m
+        return [(c + r * math.cos(math.radians(a)), c + r * math.sin(math.radians(a))) for a in range(-112, 248, 45)]
+    if group == "norse":
+        pts = [(m, m), (size - m, m), (size - m, size * 0.45)]
+        for i in range(1, 17):
+            t = i / 16
+            pts.append((size - m - (c - m) * t, size * 0.45 + (size * 0.53) * math.sin(t * math.pi / 2)))
+        for i in range(1, 17):
+            t = i / 16
+            pts.append((c - (c - m) * t, size * 0.98 - (size * 0.53) * (1 - math.cos(t * math.pi / 2))))
+        return pts
+    # industry: rounded square
+    r = size * 0.16
+    pts = []
+    for cx, cy, a0 in ((size - m - r, m + r, -90), (size - m - r, size - m - r, 0), (m + r, size - m - r, 90), (m + r, m + r, 180)):
+        for i in range(9):
+            a = math.radians(a0 + i * 90 / 8)
+            pts.append((cx + r * math.cos(a), cy + r * math.sin(a)))
+    return pts
+
+
+def picture_badge(group: str, render_path: Path, out_path: Path) -> None:
+    from PIL import Image, ImageDraw, ImageFilter
+    S = 256
+    SS = S * 2   # draw at 2x, then downsample for smooth edges
+    colour = GROUP_COLORS[group]
+    rgb = tuple(int(colour[i:i + 2], 16) for i in (1, 3, 5))
+    pts = [(x * 2, y * 2) for x, y in _shape_points(group, S)]
+    mask = Image.new("L", (SS, SS), 0)
+    ImageDraw.Draw(mask).polygon(pts, fill=255)
+    inner = mask.filter(ImageFilter.MinFilter(25))
+    # Backdrop: dark, tinted by the group colour, lighter towards the top (a soft sky).
+    back = Image.new("RGBA", (SS, SS))
+    bd = ImageDraw.Draw(back)
+    for y in range(SS):
+        t = y / SS
+        k = 0.55 - 0.35 * t
+        bd.line([(0, y), (SS, y)], fill=(int(rgb[0] * k * 0.6 + 40 * (1 - t)), int(rgb[1] * k * 0.6 + 45 * (1 - t)), int(rgb[2] * k * 0.6 + 55 * (1 - t)), 255))
+    pic = Image.open(render_path).convert("RGBA")
+    box = pic.getbbox() or (0, 0, pic.width, pic.height)
+    pic = pic.crop(box)
+    fit = SS * 0.72
+    sc = min(fit / pic.width, fit / pic.height)
+    pic = pic.resize((max(1, int(pic.width * sc)), max(1, int(pic.height * sc))), Image.LANCZOS)
+    layer = Image.new("RGBA", (SS, SS), (0, 0, 0, 0))
+    layer.paste(pic, ((SS - pic.width) // 2, (SS - pic.height) // 2 + int(SS * 0.02)), pic)
+    face = Image.alpha_composite(back, layer)
+    out = Image.new("RGBA", (SS, SS), (0, 0, 0, 0))
+    # Drop shadow, dark outline, coloured rim, then the picture inside.
+    shadow = Image.new("RGBA", (SS, SS), (0, 0, 0, 120))
+    out.paste(shadow, (6, 10), mask.filter(ImageFilter.GaussianBlur(8)))
+    outline = mask.filter(ImageFilter.MaxFilter(13))
+    out.paste(Image.new("RGBA", (SS, SS), (12, 14, 16, 255)), (0, 0), outline)
+    out.paste(Image.new("RGBA", (SS, SS), (*rgb, 255)), (0, 0), mask)
+    out.paste(face, (0, 0), inner)
+    # A thin light line inside the rim.
+    rim_line = Image.new("L", (SS, SS), 0)
+    ImageDraw.Draw(rim_line).polygon([(x, y) for x, y in pts], outline=255, width=4)
+    out.paste(Image.new("RGBA", (SS, SS), (255, 250, 238, 200)), (0, 0), rim_line)
+    out.resize((S, S), Image.LANCZOS).save(out_path)
+
+
+def picture_badges(renders: Path) -> None:
+    n = 0
+    for key, (group, _glyph) in list(GLYPHS.items()) + [("cave", ("cave", ""))]:
+        src = renders / f"{key}.png"
+        if src.exists():
+            picture_badge(group, src, OUT / f"{key}.png")
+            n += 1
+    print(f"wrote {n} picture badges to {OUT}")
+
+
 if __name__ == "__main__":
     main()
+    if len(sys.argv) > 1:
+        picture_badges(Path(sys.argv[1]))

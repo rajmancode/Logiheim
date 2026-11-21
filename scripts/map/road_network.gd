@@ -18,7 +18,9 @@ var width := 3.5
 
 static var _trail_mat: ShaderMaterial
 
-const STEP := 4.0
+const STEP := 2.0
+## Columns across the trail ribbon, so it follows the ground across as well as along.
+const ACROSS := 4
 
 
 static func plan(level: HexLevel, surface: TerrainSurface, settings: HexMapSettings, destinations: Array = []) -> RoadNetwork:
@@ -135,8 +137,15 @@ static func plan(level: HexLevel, surface: TerrainSurface, settings: HexMapSetti
 		wet[i] = surface.wetland_at(c)
 		volc[i] = surface.volcanic_at(c)
 	var hex_w := HexCoords.SQRT3 * level.hex_size
+	# How steep the ground under each hex is (cross-slope matters too, not just the grade).
+	var steep := PackedFloat32Array()
+	steep.resize(n)
+	for i in n:
+		var ny := surface.normal_at(level.cell_center(i)).y
+		var tan_s := sqrt(maxf(1.0 / (ny * ny) - 1.0, 0.0))
+		steep[i] = 30.0 * smoothstep(0.08, 0.4, tan_s)
 	for l in links:
-		var cells := _route(level, l[0], l[1], hh, blocked, on_road, wet, volc, hex_w)
+		var cells := _route(level, l[0], l[1], hh, blocked, on_road, wet, volc, hex_w, steep)
 		if cells.size() < 2:
 			continue
 		for c in cells:
@@ -148,7 +157,7 @@ static func plan(level: HexLevel, surface: TerrainSurface, settings: HexMapSetti
 
 ## A* over the hexes from a to b.
 static func _route(level: HexLevel, a: int, b: int, hh: PackedFloat32Array, blocked: PackedByteArray,
-		on_road: PackedByteArray, wet: PackedFloat32Array, volc: PackedFloat32Array, hex_w: float) -> PackedInt32Array:
+		on_road: PackedByteArray, wet: PackedFloat32Array, volc: PackedFloat32Array, hex_w: float, steep: PackedFloat32Array) -> PackedInt32Array:
 	var T := HexMapGenerator.Terrain
 	var n := level.cell_count()
 	var g := PackedFloat32Array()
@@ -176,7 +185,8 @@ static func _route(level: HexLevel, a: int, b: int, hh: PackedFloat32Array, bloc
 			if j < 0 or blocked[j] == 1 or closed[j] == 1:
 				continue
 			var grade := absf(hh[j] - hh[i]) / hex_w
-			var cost := 1.0 + 25.0 * grade * grade + (40.0 if grade > 0.6 else 0.0)
+			# Trails keep to flat ground: steep grades and steep ground underfoot cost a lot.
+			var cost := 1.0 + 70.0 * grade * grade + (60.0 if grade > 0.35 else 0.0) + steep[j]
 			if level.river[j] == 1:
 				cost += 4.0
 			match level.terrain[j]:
@@ -306,12 +316,12 @@ func apply(level: HexLevel, surface: TerrainSurface) -> void:
 		for k in n:
 			var acc := 0.0
 			var cnt := 0
-			for q in range(maxi(0, k - 5), mini(n, k + 6)):
+			for q in range(maxi(0, k - 10), mini(n, k + 11)):
 				acc += ys[q]
 				cnt += 1
 			sm[k] = acc / cnt
 		var half := width * 0.5
-		var reach := half + 3.0
+		var reach := half + 4.0
 		for k in n:
 			var p := pts[k]
 			var cell := level.cell_at(p)
@@ -329,15 +339,16 @@ func apply(level: HexLevel, surface: TerrainSurface) -> void:
 					var d := Vector2(x * surface.spacing, z * surface.spacing).distance_to(p)
 					if d > reach or surface.river_mask[i] > 0.5:
 						continue
-					var t := 1.0 - smoothstep(half, reach, d)
-					surface.heights[i] = lerpf(surface.heights[i], sm[k], t * 0.85)
+					# Level across the whole width (t = 1), blending back into the ground beyond.
+					var t := 1.0 - smoothstep(half + 0.5, reach, d)
+					surface.heights[i] = lerpf(surface.heights[i], sm[k], t)
 					surface.path_mask[i] = maxf(surface.path_mask[i], 1.0 - smoothstep(half * 0.6, half + 1.0, d))
 					if d < half + 2.0:
 						surface.clear_mask[i] = 1
 
 
 ## The trail ribbons and bridges.
-func build_meshes(surface: TerrainSurface, parent: Node3D) -> void:
+func build_meshes(surface: TerrainSurface, parent: Node3D, rivers: Array = []) -> void:
 	if roads.is_empty():
 		return
 	var verts := PackedVector3Array()
@@ -360,21 +371,26 @@ func build_meshes(surface: TerrainSurface, parent: Node3D) -> void:
 				continue
 			var d := (pts[mini(k + 1, n - 1)] - pts[maxi(k - 1, 0)]).normalized()
 			var side := Vector2(-d.y, d.x) * width * 0.5
-			var l := pts[k] - side
-			var rr := pts[k] + side
 			var base := verts.size()
-			verts.append(Vector3(l.x, surface.sample(l) + 0.1, l.y))
-			verts.append(Vector3(rr.x, surface.sample(rr) + 0.1, rr.y))
-			uvs.append(Vector2(0.0, along))
-			uvs.append(Vector2(1.0, along))
-			normals.append(surface.normal_at(l))
-			normals.append(surface.normal_at(rr))
+			for c in ACROSS + 1:
+				var u := float(c) / ACROSS
+				var q := pts[k] + side * (u * 2.0 - 1.0)
+				verts.append(Vector3(q.x, surface.sample(q) + 0.06, q.y))
+				uvs.append(Vector2(u, along))
+				normals.append(surface.normal_at(q))
 			if prev >= 0:
-				var cross_up := (verts[base + 1] - verts[prev]).cross(verts[base] - verts[prev]).y > 0.0
-				if cross_up:
-					indices.append_array([prev, base, prev + 1, prev + 1, base, base + 1])
-				else:
-					indices.append_array([prev, prev + 1, base, prev + 1, base + 1, base])
+				for c in ACROSS:
+					var a0 := prev + c
+					var a1 := prev + c + 1
+					var b0 := base + c
+					var b1 := base + c + 1
+					for tri in [[a0, b0, a1], [a1, b0, b1]]:
+						var cross_y := (verts[tri[1]] - verts[tri[0]]).cross(verts[tri[2]] - verts[tri[0]]).y
+						# Clockwise from above = facing up in Godot.
+						if cross_y < 0.0:
+							indices.append_array([tri[0], tri[1], tri[2]])
+						else:
+							indices.append_array([tri[0], tri[2], tri[1]])
 			prev = base
 		# Bridges: one straight deck per run of bridge points.
 		var k := 0
@@ -388,8 +404,12 @@ func build_meshes(surface: TerrainSurface, parent: Node3D) -> void:
 			var k1 := k - 1
 			var a := pts[maxi(k0 - 1, 0)]
 			var b := pts[mini(k1 + 1, n - 1)]
-			var y := maxf(surface.sample(a), surface.sample(b)) + 0.35
-			_add_bridge(bridges, a, b, y, width * 0.9, wood)
+			# Each end sits on its own bank; the middle clears the river's water.
+			var ya := surface.sample(a) + 0.15
+			var yb := surface.sample(b) + 0.15
+			var water := _water_under((a + b) * 0.5, rivers)
+			var ym := maxf((ya + yb) * 0.5, water + 1.0)
+			_add_bridge(bridges, a, b, ya, ym, yb, width * 0.9, wood, surface)
 	var arrays := []
 	arrays.resize(Mesh.ARRAY_MAX)
 	arrays[Mesh.ARRAY_VERTEX] = verts
@@ -413,24 +433,54 @@ func build_meshes(surface: TerrainSurface, parent: Node3D) -> void:
 		parent.add_child(bm)
 
 
-## A plank deck with posts and rails from a to b.
-static func _add_bridge(data: MeshData, a: Vector2, b: Vector2, y: float, w: float, col: Color) -> void:
+## Water level of the river nearest p (or -INF if none is close).
+static func _water_under(p: Vector2, rivers: Array) -> float:
+	var best := 900.0
+	var y := -INF
+	for path: RiverPath in rivers:
+		for q in path.points:
+			var d := Vector2(q.x, q.z).distance_squared_to(p)
+			if d < best:
+				best = d
+				y = q.y
+	return y
+
+
+## A plank bridge from a to b: deck height runs a -> middle -> b (each end on its bank, the
+## middle clear of the water), planks across, rails on posts, and piers down to the ground or
+## river bed wherever the deck stands above it.
+static func _add_bridge(data: MeshData, a: Vector2, b: Vector2, ya: float, ym: float, yb: float, w: float, col: Color, surface: TerrainSurface) -> void:
 	var d := b - a
 	var length := d.length()
 	if length < 0.5:
 		return
 	var dir := d / length
 	var side := Vector2(-dir.y, dir.x)
-	var mid := (a + b) * 0.5
-	_box(data, Vector3(mid.x, y, mid.y), dir, side, length + 1.0, w, 0.35, col)
+	var deck := func(t: float) -> float:
+		return lerpf(ya, ym, smoothstep(0.0, 0.5, t) if t < 0.5 else 1.0) if t < 0.5 else lerpf(ym, yb, smoothstep(0.5, 1.0, t))
+	# Planks.
+	var planks := maxi(2, int(length / 0.5))
+	for q in planks:
+		var t := (q + 0.5) / planks
+		var c := a + dir * t * length
+		var shade := 0.85 + 0.3 * float(q % 3) / 2.0
+		_box(data, Vector3(c.x, deck.call(t), c.y), dir, side, length / planks * 0.9, w, 0.14, col * shade)
+	# Posts, rails and piers.
+	var posts := maxi(2, int(length / 2.5) + 1)
 	for s: float in [-1.0, 1.0]:
-		var rail: Vector2 = mid + side * s * w * 0.5
-		_box(data, Vector3(rail.x, y + 0.75, rail.y), dir, side, length + 0.6, 0.15, 0.12, col * 0.9)
-		var posts := maxi(2, int(length / 3.0) + 1)
 		for q in posts:
-			var t := float(q) / (posts - 1) - 0.5
-			var pp: Vector2 = rail + dir * t * length
-			_box(data, Vector3(pp.x, y + 0.35, pp.y), dir, side, 0.2, 0.2, 0.9, col * 0.8)
+			var t := float(q) / (posts - 1)
+			var pp: Vector2 = a + dir * t * length + side * s * w * 0.5
+			var y := float(deck.call(t))
+			_box(data, Vector3(pp.x, y + 0.45, pp.y), dir, side, 0.18, 0.18, 0.9, col * 0.8)
+			var ground := surface.sample(pp)
+			if y - ground > 0.3:
+				_box(data, Vector3(pp.x, (y + ground) * 0.5 - 0.3, pp.y), dir, side, 0.3, 0.3, y - ground + 0.6, col * 0.7)
+			if q < posts - 1:
+				var t2 := float(q + 1) / (posts - 1)
+				var mid: Vector2 = a + dir * (t + t2) * 0.5 * length + side * s * w * 0.5
+				var ry := (float(deck.call(t)) + float(deck.call(t2))) * 0.5 + 0.85
+				_box(data, Vector3(mid.x, ry, mid.y), dir, side, length / (posts - 1) + 0.1, 0.12, 0.12, col * 0.9)
 
 
 static func _box(data: MeshData, c: Vector3, dir: Vector2, side: Vector2, l: float, w: float, h: float, col: Color) -> void:

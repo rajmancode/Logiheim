@@ -155,7 +155,7 @@ func rebuild() -> void:
 		RiverMeshBuilder.build(paths, root)
 		volcano.build_effects(surface, root)
 		if level.level_index <= 1:
-			roads.build_meshes(surface, root)
+			roads.build_meshes(surface, root, paths)
 			caves.build_meshes(surface, root)
 			RockFeatures.build(level, surface, settings, root)
 		if level.level_index <= 1:
@@ -361,12 +361,22 @@ func set_highlight(kind: String, cell: int) -> void:
 		_water_material.set_shader_parameter(param, value)
 
 
+## Icon texture for a resource key (or "cave"): the realistic picture badge (PNG) if there is
+## one, else the flat glyph (SVG).
+static func icon_texture(key: String) -> Texture2D:
+	for ext in [".png", ".svg"]:
+		var path := "res://assets/icons/resources/%s%s" % [key, ext]
+		if ResourceLoader.exists(path):
+			return load(path)
+	return null
+
+
 ## Cave entrances: always marked (not part of the I overlay) on every level, at the mouth
 ## itself, with a label.
 func _build_cave_markers() -> void:
 	if cave_plan == null or cave_plan.systems.is_empty():
 		return
-	var tex: Texture2D = load("res://assets/icons/resources/cave.svg") if ResourceLoader.exists("res://assets/icons/resources/cave.svg") else null
+	var tex: Texture2D = icon_texture("cave")
 	for li in levels.size():
 		var root := Node3D.new()
 		root.name = "CaveMarkers"
@@ -381,7 +391,7 @@ func _build_cave_markers() -> void:
 					sp.texture = tex
 					sp.billboard = BaseMaterial3D.BILLBOARD_ENABLED
 					sp.fixed_size = true
-					sp.pixel_size = 0.00045
+					sp.pixel_size = 0.0003
 					sp.no_depth_test = true
 					sp.shaded = false
 					sp.render_priority = 12
@@ -433,8 +443,7 @@ func _build_resource_icons() -> void:
 			if not is_center and li > 1:
 				continue
 			if not textures.has(kind):
-				var path := "res://assets/icons/resources/%s.svg" % NaturalResources.key(kind)
-				textures[kind] = load(path) if ResourceLoader.exists(path) else null
+				textures[kind] = icon_texture(NaturalResources.key(kind))
 			var tex: Texture2D = textures[kind]
 			if tex == null:
 				continue
@@ -446,7 +455,9 @@ func _build_resource_icons() -> void:
 			sprite.fixed_size = true
 			# The deposit's centre gets the full badge; its other hexes a small, faint one so
 			# you can see how far it spreads.
-			sprite.pixel_size = 0.00042 if is_center else 0.0002
+			# Picture badges are 256 px; scale so they show a little bigger than before.
+			var px_scale := 128.0 / float(maxi(tex.get_width(), 1))
+			sprite.pixel_size = (0.00055 if is_center else 0.00026) * px_scale
 			sprite.modulate = Color(1, 1, 1, 1.0 if is_center else 0.6)
 			sprite.no_depth_test = true
 			sprite.shaded = false
@@ -462,8 +473,7 @@ func _build_resource_icons() -> void:
 			if li == 0 and level.resource2.size() == level.cell_count() and level.resource2[i] != 0:
 				var k2 := level.resource2[i]
 				if not textures.has(k2):
-					var path2 := "res://assets/icons/resources/%s.svg" % NaturalResources.key(k2)
-					textures[k2] = load(path2) if ResourceLoader.exists(path2) else null
+					textures[k2] = icon_texture(NaturalResources.key(k2))
 				if textures[k2] != null:
 					var s2 := Sprite3D.new()
 					s2.texture = textures[k2]
@@ -474,7 +484,7 @@ func _build_resource_icons() -> void:
 					s2.shaded = false
 					s2.render_priority = sprite.render_priority + 1
 					s2.position = pos
-					s2.offset = Vector2(70, 40) if is_center else Vector2(90, 50)
+					s2.offset = (Vector2(70, 40) if is_center else Vector2(90, 50)) * float(textures[k2].get_width()) / 128.0
 					s2.visibility_range_end = reach
 					s2.visibility_range_end_margin = reach * 0.2
 					s2.visibility_range_fade_mode = GeometryInstance3D.VISIBILITY_RANGE_FADE_SELF
