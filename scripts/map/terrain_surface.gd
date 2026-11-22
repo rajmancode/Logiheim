@@ -329,6 +329,21 @@ func volcanic_at(p: Vector2) -> float:
 	return volcanic[z * nx + x]
 
 
+## True where the ground at p (and r metres around it) is dry land: clear of the sea, river
+## channels, lakes, oxbows, ponds and pools (their beds are marked in river_mask / hollow).
+## min_above: how far above the sea it must be.
+func is_dry(p: Vector2, r := 2.5, min_above := 0.6) -> bool:
+	for k in 5:
+		var q := p if k == 0 else p + Vector2.from_angle(k * TAU / 4.0) * r
+		if sample(q) < sea_y + min_above or river_at(q) >= 0.45:
+			return false
+		var x := clampi(roundi(q.x / spacing), 0, nx - 1)
+		var z := clampi(roundi(q.y / spacing), 0, nz - 1)
+		if not hollow.is_empty() and hollow[z * nx + x] > 0.3:
+			return false
+	return true
+
+
 func river_at(p: Vector2) -> float:
 	var x := clampi(roundi(p.x / spacing), 0, nx - 1)
 	var z := clampi(roundi(p.y / spacing), 0, nz - 1)

@@ -114,8 +114,9 @@ func _walkable(p: Vector2) -> bool:
 		return true
 	var h := surface.sample(p)
 	if kind == "shore":
-		return h > surface.sea_y + 0.2 and h < surface.sea_y + 6.0
-	return h > surface.sea_y + 0.6 and surface.river_at(p) < 0.5 and surface.normal_at(p).y > 0.7
+		return h < surface.sea_y + 6.0 and surface.is_dry(p, 1.0, 0.2)
+	# Dry land only: never into the sea, a river, a lake, an oxbow or a pond.
+	return surface.is_dry(p, 1.5) and surface.normal_at(p).y > 0.7
 
 
 func _swim(delta: float) -> void:

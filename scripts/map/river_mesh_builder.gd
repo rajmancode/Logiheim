@@ -447,15 +447,77 @@ static func place(all: Array, level: HexLevel, surface: TerrainSurface, hydro: H
 					paths.append(path)
 				path = null
 				break
-			var in_lake := hydro.lake_at(pts[k]) >= 0
-			if in_lake:
+			var lake := hydro.lake_at(pts[k])
+			# Only where the river actually reaches the lake's water: passing through the dry rim
+			# of the lake's (coarser) grid, it simply runs on as a river.
+			if lake >= 0:
+				var reaches := false
+				var j2 := k
+				while j2 < pts.size() and hydro.lake_at(pts[j2]) == lake:
+					if surface.sample(pts[j2]) < hydro.lake_level[lake] - 0.05:
+						reaches = true
+						break
+					j2 += 1
+				if not reaches:
+					var j3 := k - 1
+					while j3 >= 0 and hydro.lake_at(pts[j3]) == lake:
+						if surface.sample(pts[j3]) < hydro.lake_level[lake] - 0.05:
+							reaches = true
+							break
+						j3 -= 1
+				if not reaches:
+					lake = -1
+			if lake >= 0:
 				if path != null and path.points.size() >= 2:
+					# Runs on into the lake at its level for a while, fading out over the lake's
+					# own water: no dry gap or square end where the channel meets the shore.
+					path.lake_in = lake
+					path.lake_in_y = hydro.lake_level[lake]
+					var into := 0.0
+					var reach := maxf(ws[k] * 2.0, 15.0)
+					var j := k
+					var lvl := hydro.lake_level[lake]
+					while j < pts.size() and hydro.lake_at(pts[j]) == lake and into <= reach:
+						# (The lake's grid is coarser than its water: over its dry rim the river
+						# keeps its own level; only out over the water does the distance count.)
+						var wet := surface.sample(pts[j]) < lvl - 0.05
+						if j > k and wet:
+							into += pts[j].distance_to(pts[j - 1])
+						var wy := lvl + 0.02 if wet else clampf(ys[j], lvl + 0.02, path.points[path.points.size() - 1].y)
+						path.points.append(Vector3(pts[j].x, minf(path.points[path.points.size() - 1].y, wy), pts[j].y))
+						path.widths.append(ws[j])
+						path.dist.append(along + into)
+						path.speeds.append(0.35)
+						path.turbulence.append(0.0)
+						j += 1
 					paths.append(path)
 				path = null
 				continue
 			if path == null:
 				path = RiverPath.new()
 				path.to_sea = all[i].to_sea
+				# Flowing out of a lake: start a way inside it, at its level.
+				var prev_lake := hydro.lake_at(pts[k - 1]) if k > 0 else -1
+				if prev_lake >= 0:
+					path.lake_out = prev_lake
+					path.lake_out_y = hydro.lake_level[prev_lake]
+					var back: Array[int] = []
+					var into := 0.0
+					var reach := maxf(ws[k] * 2.0, 15.0)
+					var j := k - 1
+					var lvl := hydro.lake_level[prev_lake]
+					while j >= 0 and hydro.lake_at(pts[j]) == prev_lake and into <= reach:
+						back.push_front(j)
+						if surface.sample(pts[j]) < lvl - 0.05:
+							into += pts[j].distance_to(pts[j + 1])
+						j -= 1
+					for q in back:
+						var wet := surface.sample(pts[q]) < lvl - 0.05
+						path.points.append(Vector3(pts[q].x, lvl + 0.02 if wet else maxf(ys[k], minf(ys[q], lvl + 0.02)), pts[q].y))
+						path.widths.append(ws[q])
+						path.dist.append(along - into)
+						path.speeds.append(0.35)
+						path.turbulence.append(0.0)
 			# Rapids follow the real lie of the land: the slope of the Gaea terrain over a
 			# stretch of ~30 m, not the stairs the hex terraces put in the water surface.
 			var reach_m := maxf(ws[k] * 3.0, 30.0)
@@ -511,6 +573,11 @@ static func settle(paths: Array[RiverPath], surface: TerrainSurface) -> void:
 			var reach := path.widths[k] * 1.6 + 1.5
 			var bank := minf(surface.sample(c + side * reach), surface.sample(c - side * reach))
 			bank = maxf(bank, surface.sea_y + 0.03)
+			# Inside a lake the "banks" are its bed: the water there stays at the lake's level.
+			if path.lake_in >= 0:
+				bank = maxf(bank, path.lake_in_y + 0.02)
+			if path.lake_out >= 0 and pt.y >= path.lake_out_y:
+				bank = maxf(bank, path.lake_out_y + 0.02)
 			if bank < pt.y - 0.05:
 				pt.y = bank - 0.05
 				path.points[k] = pt
@@ -519,6 +586,21 @@ static func settle(paths: Array[RiverPath], surface: TerrainSurface) -> void:
 				var q := path.points[k]
 				q.y = path.points[k - 1].y
 				path.points[k] = q
+
+
+## True if every river end at a lake still meets that lake's water in `hydro` (the lakes may
+## have been worked out again from the final ground since the rivers were placed).
+static func lakes_hold(paths: Array[RiverPath], hydro: Hydrology) -> bool:
+	for path in paths:
+		for end in 2:
+			var lake := path.lake_in if end == 0 else path.lake_out
+			if lake < 0:
+				continue
+			var q := path.points[path.points.size() - 1] if end == 0 else path.points[0]
+			var now := hydro.lake_at(Vector2(q.x, q.z))
+			if now < 0 or absf(hydro.lake_level[now] - (path.lake_in_y if end == 0 else path.lake_out_y)) > 0.3:
+				return false
+	return true
 
 
 # --------------------------------------------------------------------------- meshes
@@ -631,6 +713,52 @@ static func _ribbon(path: RiverPath, verts: PackedVector3Array, normals: PackedV
 			fade[k] = minf(fade[k], smoothstep(0.0, reach, from_end))
 			if from_end > reach:
 				break
+	# Into or out of a lake: over the stretch next to it the water takes the lake's colour, and
+	# the ribbon (which runs on a way into the lake) fades out over the lake's own water.
+	var lake_mix := PackedFloat32Array()
+	lake_mix.resize(n)
+	var to_lake := path.lake_in >= 0 or path.lake_out >= 0
+	for end in 2:
+		if (end == 0 and path.lake_in < 0) or (end == 1 and path.lake_out < 0):
+			continue
+		var k_end := n - 1 if end == 0 else 0
+		var step := -1 if end == 0 else 1
+		var L := maxf(path.widths[k_end] * 3.0, 25.0)
+		var run := 0.0
+		var k := k_end
+		while k >= 0 and k < n:
+			if k != k_end:
+				run += path.points[k].distance_to(path.points[k - step])
+			if run > L:
+				break
+			lake_mix[k] = maxf(lake_mix[k], 1.0 - smoothstep(0.0, L, run))
+			k += step
+		# Fades out over the stretch that lies inside the lake, over the lake's own water.
+		var lake_y := path.lake_in_y if end == 0 else path.lake_out_y
+		var inside := 0.0
+		var kk := k_end
+		while kk >= 0 and kk < n and absf(path.points[kk].y - (lake_y + 0.02)) < 0.05:
+			if kk != k_end:
+				inside += path.points[kk].distance_to(path.points[kk - step])
+			kk += step
+		inside = maxf(inside, 1.0)
+		# A lake whose water doesn't actually reach here (a shallow pool filled in by a trail or
+		# the shaping of the land): the river soaks away over a longer stretch instead of
+		# ending square.
+		var ep := path.points[k_end]
+		if _surface != null and _surface.sample(Vector2(ep.x, ep.z)) > lake_y - 0.1:
+			inside = maxf(inside, maxf(path.widths[k_end] * 4.0, 20.0))
+		run = 0.0
+		kk = k_end
+		while kk >= 0 and kk < n:
+			if kk != k_end:
+				run += path.points[kk].distance_to(path.points[kk - step])
+			if run > inside:
+				break
+			fade[kk] = minf(fade[kk], smoothstep(0.0, inside, run))
+			# Lake water is still: so is the river as it opens into it.
+			speed[kk] = minf(speed[kk], 0.35)
+			kk += step
 	var base := verts.size()
 	for k in n:
 		var a := path.points[maxi(k - 1, 0)]
@@ -662,7 +790,11 @@ static func _ribbon(path: RiverPath, verts: PackedVector3Array, normals: PackedV
 				var gr := _surface.sample(c2 + sd2 * reach)
 				var g := lerpf(gl, gr, smoothstep(0.3, 0.7, u)) if absf(u - 0.5) > 0.2 else minf(gl, gr)
 				fv *= smoothstep(_sea_level - 0.4, _sea_level + 0.4, g)
-			colors.append(Color(speed[k] / 6.0, fv, sea_mix[k]))
+			# b: how much the water takes on open water's colour; a: 1 the sea's, 0 a lake's.
+			if to_lake and lake_mix[k] > sea_mix[k]:
+				colors.append(Color(speed[k] / 6.0, fv, lake_mix[k], 0.0))
+			else:
+				colors.append(Color(speed[k] / 6.0, fv, sea_mix[k], 1.0))
 			uvs.append(Vector2(u, path.dist[k]))
 	var row := ACROSS + 1
 	for k in n - 1:

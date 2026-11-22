@@ -14,5 +14,11 @@ var speeds := PackedFloat32Array()
 ## 0 calm .. 1 white water (rapids, falls).
 var turbulence := PackedFloat32Array()
 var to_sea := false
+## The lake this stretch runs into at its end / out of at its start (-1: none), and that lake's
+## water level. The ribbon reaches a little way into the lake there and blends into its water.
+var lake_in := -1
+var lake_out := -1
+var lake_in_y := 0.0
+var lake_out_y := 0.0
 ## Indices of points where a waterfall starts (the fall runs to the next point).
 var falls := PackedInt32Array()

@@ -26,8 +26,10 @@ varying float v_turb;
 varying float v_width;
 varying float v_fade;
 varying float v_sea;
+varying float v_sea_kind;   // 1: blending into the sea, 0: into a lake
 varying vec3 v_shape_n;
 uniform vec3 sea_shallow : source_color = vec3(0.09, 0.4, 0.4);   // = the sea's shallow water / plume colour
+uniform vec3 lake_shallow : source_color = vec3(0.2, 0.36, 0.3);  // = the lakes' shallow water colour
 
 // The water surface's own shape (metres up), from across (u 0..1) and along (metres):
 // slightly crowned in the middle, with waves running downstream at the flow's speed and,
@@ -50,6 +52,7 @@ void vertex() {
 	v_width = UV2.y;
 	v_fade = COLOR.g;
 	v_sea = COLOR.b;
+	v_sea_kind = COLOR.a;
 	vec3 wp = (MODEL_MATRIX * vec4(VERTEX, 1.0)).xyz;
 	float h = surface_h(UV.x, UV.y, v_width, v_speed, v_turb, TIME);
 	// Slope of the shape, for its lighting (across in metres per u, and along).
@@ -111,7 +114,8 @@ void fragment() {
 	foam = max(foam, bank * 0.15 * v_turb * smoothstep(0.5, 0.7, pn));
 	col = mix(col, foam_color, foam);
 	// Meeting the sea: the river water takes on the sea's shallow green-blue.
-	vec3 sea_like = mix(sea_shallow, bed_col * vec3(0.75, 1.0, 1.0), exp(-depth / 2.5) * 0.4);
+	vec3 open_col = mix(lake_shallow, sea_shallow, v_sea_kind);
+	vec3 sea_like = mix(open_col, bed_col * vec3(0.75, 1.0, 1.0), exp(-depth / 2.5) * 0.4);
 	col = mix(col, sea_like, v_sea);
 	col *= cloud_shadow(v_world_pos);
 

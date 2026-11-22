@@ -146,6 +146,13 @@ func rebuild() -> void:
 		# then never stand higher than the ground that holds it.
 		if hydro != null:
 			hydro = Hydrology.from_surface(surface, 2 if level.level_index == 0 else 1, settings, source)
+			# A lake that has drained or shrunk since the rivers were placed would leave them
+			# ending (or starting) in dry ground: place them again on the final lakes, so every
+			# river runs on to real water, and settle and carve the new stretches.
+			if not paths.is_empty() and not RiverMeshBuilder.lakes_hold(paths, hydro):
+				paths = RiverMeshBuilder.place(courses, level, surface, hydro, noise, settings, source)
+				RiverMeshBuilder.settle(paths, surface)
+				surface.carve_channels(paths)
 			for i in level.cell_count():
 				level.lake[i] = 1 if hydro.lake_at(level.cell_center(i)) >= 0 else 0
 		landforms.mark_oxbows(level, hydro)

@@ -146,7 +146,15 @@ static func build(level: HexLevel, surface: TerrainSurface, hydro: Hydrology, pa
 			if p.x == INF:
 				continue
 			if def[4]:
-				p += Vector2(rng.randf_range(-1.0, 1.0), rng.randf_range(-1.0, 1.0)) * s * 0.18 * sqrt(scale)
+				# Spread around the herd's spot, but only onto dry land (no horses in the water).
+				var spread := s * 0.18 * sqrt(scale)
+				var q := p
+				for attempt in 8:
+					var o := p + Vector2(rng.randf_range(-1.0, 1.0), rng.randf_range(-1.0, 1.0)) * spread
+					if surface.is_dry(o, 1.5, 0.3 if def[3] == "coast" else 0.6) and (hydro == null or hydro.lake_at(o) < 0):
+						q = o
+						break
+				p = q
 			if base_model.contains("|"):
 				var options := base_model.split("|")
 				model = options[rng.randi() % options.size()]
@@ -423,7 +431,7 @@ static func _spot(kind: String, c: Vector2, s: float, surface: TerrainSurface, h
 			continue
 		var h := surface.sample(p)
 		var water := hydro != null and hydro.lake_at(p) >= 0
-		var dry := h > surface.sea_y + 0.5 and not water
+		var dry := not water and surface.is_dry(p, 2.5, 0.5 if kind == "coast" else 0.6)
 		var score := -INF
 		match kind:
 			"water":
@@ -434,7 +442,7 @@ static func _spot(kind: String, c: Vector2, s: float, surface: TerrainSurface, h
 				score = -absf(h - (surface.sea_y + 1.0)) if dry else -INF
 			"bank":
 				var r := surface.river_at(p)
-				score = (1.0 - absf(r - 0.35) * 2.0) if dry and r > 0.05 else (-2.0 if dry else -INF)
+				score = (1.0 - absf(r - 0.25) * 2.0) if dry and r > 0.05 else (-2.0 if dry else -INF)
 			"clearing":
 				score = (1.0 - surface.weight_at(p, HexMapGenerator.Terrain.ROCK)) if dry and not surface.keep_clear(p) else -INF
 				score -= surface.normal_at(p).angle_to(Vector3.UP)
@@ -458,8 +466,10 @@ static func _water_level(p: Vector2, surface: TerrainSurface, hydro: Hydrology) 
 ## two fields share a shape and none is a rectangle), triangulated in rings that follow the
 ## terrain. Furrows run along one direction (UV.x across them, metres).
 static func _add_field(data: MeshData, center: Vector2, s: float, surface: TerrainSurface, rng: RandomNumberGenerator) -> void:
-	const SIDES := 14
-	const RINGS := 3
+	# Fine enough (a few metres between points) to lie on the ground like a cloth over every
+	# rise and hollow, never floating over a dip or cut through by a bump.
+	const SIDES := 28
+	const RINGS := 8
 	var r0 := s * rng.randf_range(0.28, 0.42)
 	var stretch := rng.randf_range(1.1, 1.7)
 	var yaw := rng.randf() * PI
@@ -485,7 +495,7 @@ static func _add_field(data: MeshData, center: Vector2, s: float, surface: Terra
 			var p := center + ax * local.x + ay * local.y
 			if surface.sample(p) < surface.sea_y + 0.4 or surface.keep_clear(p) or surface.wetland_at(p) > 0.5:
 				return
-			pts.append(Vector3(p.x, surface.sample(p) + 0.12, p.y))
+			pts.append(Vector3(p.x, surface.sample_mesh(p) + 0.08, p.y))
 			uvs.append(Vector2(local.y, local.x))
 	for ring in RINGS:
 		for k in SIDES:
