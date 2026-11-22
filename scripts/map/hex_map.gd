@@ -338,6 +338,11 @@ func _build_water() -> void:
 		padded.append(Vector4.ZERO)
 	_water_material.set_shader_parameter("mouths", padded)
 	_water_material.set_shader_parameter("mouth_count", mouth_list.size())
+	# River mouths: strips of sea water melding each river into the sea (finest two levels).
+	var meld_mat := _water_material.duplicate() as ShaderMaterial
+	meld_mat.set_shader_parameter("edge_alpha", true)
+	for li in mini(2, mini(river_paths.size(), _level_roots.size())):
+		RiverMeshBuilder.build_mouth_melds(river_paths[li], meld_mat, _level_roots[li], sea_y)
 
 
 func _get_wave_normal() -> NoiseTexture2D:

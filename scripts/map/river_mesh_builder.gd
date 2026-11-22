@@ -82,6 +82,26 @@ static func courses(hydro: Hydrology, settings: HexMapSettings) -> Array:
 		var course := _meander(smooth[0], smooth[1], hydro, settings)
 		out.append({"pts": course[0], "areas": course[1], "to_sea": seg.to_sea, "delta": false,
 			"joins": not seg.to_sea and hydro.parent[cells[cells.size() - 1]] >= 0})
+	# No stub rivers: a course only a tile or so long (under ~90 m) with nothing flowing into
+	# it is dropped (it would only cut a squarish notch into the shore or a bank).
+	var kept: Array = []
+	for c: Dictionary in out:
+		var pts: PackedVector2Array = c.pts
+		var length := 0.0
+		for k in range(1, pts.size()):
+			length += pts[k].distance_to(pts[k - 1])
+		if length >= 90.0 or pts.is_empty():
+			kept.append(c)
+			continue
+		var fed := false
+		for o: Dictionary in out:
+			var op: PackedVector2Array = o.pts
+			if o != c and not op.is_empty() and op[op.size() - 1].distance_to(pts[0]) < hydro.spacing * 2.0:
+				fed = true
+				break
+		if fed:
+			kept.append(c)
+	out = kept
 	_snap_junctions(out, hydro.spacing * 3.0)
 	# Deltas: wide rivers reaching the sea over low, flat land split into distributaries.
 	var deltas: Array = []
@@ -502,6 +522,101 @@ static func settle(paths: Array[RiverPath], surface: TerrainSurface) -> void:
 # --------------------------------------------------------------------------- meshes
 
 static var _sea_level := -INF
+
+
+## How far up a river its water cross-fades into the sea's (metres).
+static func meld_length(w: float) -> float:
+	return maxf(w * 4.0, 40.0)
+
+
+## Where a river meets the sea, a strip of sea water (drawn with the sea's own material and
+## waves) laid over its last stretch and a little way out to sea: it fades in as the river
+## fades out, widening into the sea and soft at its edges, so river and sea are one surface.
+static func build_mouth_melds(paths: Array, sea_material: Material, parent: Node3D, sea_y: float) -> void:
+	var verts := PackedVector3Array()
+	var normals := PackedVector3Array()
+	var colors := PackedColorArray()
+	var indices := PackedInt32Array()
+	for path: RiverPath in paths:
+		var n := path.points.size()
+		if n < 3 or path.points[n - 1].y > sea_y + 0.15:
+			continue
+		var s0 := n - 1
+		for k in n:
+			if path.points[k].y < sea_y + 0.15:
+				s0 = k
+				break
+		var L := meld_length(path.widths[s0])
+		# Points along the strip: upstream to s0 on the river, then out to sea.
+		var pts: Array[Vector3] = []
+		var ws := PackedFloat32Array()
+		var alpha := PackedFloat32Array()
+		var run := 0.0
+		var k0 := s0
+		while k0 > 0 and run < L:
+			run += path.points[k0].distance_to(path.points[k0 - 1])
+			k0 -= 1
+		var acc := 0.0
+		for k in range(k0, s0 + 1):
+			if k > k0:
+				acc += path.points[k].distance_to(path.points[k - 1])
+			var t := clampf((run - (run - acc)) / maxf(run, 0.01), 0.0, 1.0)
+			var up := run - acc
+			pts.append(path.points[k] + Vector3.UP * 0.08)
+			ws.append(path.widths[k] * lerpf(1.1, 1.5, t))
+			alpha.append(1.0 - clampf(up / L, 0.0, 1.0))
+		var a := path.points[maxi(s0 - 3, 0)]
+		var d3 := Vector3(path.points[s0].x - a.x, 0.0, path.points[s0].z - a.z).normalized()
+		var ext := maxf(path.widths[s0] * 2.0, 20.0)
+		var steps := 5
+		for q in range(1, steps + 1):
+			var f := float(q) / steps
+			var p := path.points[s0] + d3 * ext * f
+			pts.append(Vector3(p.x, sea_y + 0.03, p.z))
+			ws.append(path.widths[s0] * lerpf(1.5, 2.4, f))
+			alpha.append(1.0 - smoothstep(0.4, 1.0, f))
+		if pts.size() < 2:
+			continue
+		var base := verts.size()
+		const ACROSS_M := 6
+		for k in pts.size():
+			var pa: Vector3 = pts[maxi(k - 1, 0)]
+			var pb: Vector3 = pts[mini(k + 1, pts.size() - 1)]
+			var tdir := Vector2(pb.x - pa.x, pb.z - pa.z).normalized()
+			var side := Vector3(-tdir.y, 0.0, tdir.x) * ws[k] * 0.5
+			for c in ACROSS_M + 1:
+				var u := float(c) / ACROSS_M
+				verts.append(pts[k] + side * (u * 2.0 - 1.0))
+				normals.append(Vector3.UP)
+				colors.append(Color(1, 1, 1, alpha[k] * sin(PI * u)))
+		var row := ACROSS_M + 1
+		for k in pts.size() - 1:
+			for c in ACROSS_M:
+				var l0 := base + k * row + c
+				var r0 := l0 + 1
+				var l1 := l0 + row
+				var r1 := l1 + 1
+				var cross_up := (verts[r0] - verts[l0]).cross(verts[r1] - verts[l0]).y > 0.0
+				if cross_up:
+					indices.append_array([l0, r1, r0, l0, l1, r1])
+				else:
+					indices.append_array([l0, r0, r1, l0, r1, l1])
+	if verts.is_empty():
+		return
+	var arrays := []
+	arrays.resize(Mesh.ARRAY_MAX)
+	arrays[Mesh.ARRAY_VERTEX] = verts
+	arrays[Mesh.ARRAY_NORMAL] = normals
+	arrays[Mesh.ARRAY_COLOR] = colors
+	arrays[Mesh.ARRAY_INDEX] = indices
+	var mesh := ArrayMesh.new()
+	mesh.add_surface_from_arrays(Mesh.PRIMITIVE_TRIANGLES, arrays)
+	var mi := MeshInstance3D.new()
+	mi.name = "RiverMouthMelds"
+	mi.mesh = mesh
+	mi.material_override = sea_material
+	mi.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+	parent.add_child(mi)
 ## Vertices across a river ribbon, minus one.
 const ACROSS := 6
 
@@ -585,9 +700,10 @@ static func _ribbon(path: RiverPath, verts: PackedVector3Array, normals: PackedV
 		for k in range(s0, -1, -1):
 			if k < s0:
 				run += path.points[k].distance_to(path.points[k + 1])
-			sea_mix[k] = 1.0 - smoothstep(0.0, maxf(path.widths[k] * 4.0, 40.0), run)
-			# Fully faded by the time it meets the sea: from there on only the sea is drawn.
-			fade[k] = minf(fade[k], smoothstep(0.0, maxf(path.widths[k] * 2.0, 18.0), run))
+			sea_mix[k] = 1.0 - smoothstep(0.0, meld_length(path.widths[s0]), run)
+			# Cross-fades with the sea-water meld mesh over the same stretch (see
+			# build_mouth_melds): fully faded by the time it meets the sea.
+			fade[k] = minf(fade[k], clampf(run / meld_length(path.widths[s0]), 0.0, 1.0))
 		for k in range(s0, n):
 			sea_mix[k] = 1.0
 			fade[k] = 0.0
