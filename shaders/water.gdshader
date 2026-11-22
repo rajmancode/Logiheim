@@ -142,7 +142,9 @@ void fragment() {
 
 	// Shoreline foam that laps in and out, plus whitecaps in strong wind.
 	float lap = 0.5 + 0.5 * sin(TIME * 0.7 - depth * 2.5);
-	float foam_noise = env_noise(v_world_pos.xz * 0.35 + drift * 8.0) * 0.6 + env_noise(v_world_pos.xz * 1.1 - drift * 5.0) * 0.4;
+	vec2 fq = mat2(vec2(0.8, 0.6), vec2(-0.6, 0.8)) * v_world_pos.xz;
+	fq += vec2(env_noise(fq * 0.08), env_noise(fq * 0.08 + vec2(5.2, 1.3))) * 6.0;
+	float foam_noise = env_noise(fq * 0.35 + drift * 8.0) * 0.6 + env_noise(mat2(vec2(0.6, -0.8), vec2(0.8, 0.6)) * fq * 1.1 - drift * 5.0) * 0.4;
 	float shore = 1.0 - smoothstep(0.0, foam_width * (0.6 + 0.6 * lap), depth);
 	float caps = smoothstep(0.78, 0.95, foam_noise) * smoothstep(0.55, 1.0, wind_strength);
 	float foam = clamp(shore * smoothstep(0.3, 0.7, foam_noise + shore * 0.3) + caps * 0.6, 0.0, 1.0);

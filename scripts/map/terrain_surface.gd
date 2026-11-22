@@ -40,6 +40,8 @@ var convexity := PackedFloat32Array()
 var wetland := PackedFloat32Array()
 ## 0..1 under a trail (keeps grass off it).
 var path_mask := PackedFloat32Array()
+## Extra bare rock asked for by features (cave mouths), 0..1, applied in finish_weights().
+var rock_boost := PackedFloat32Array()
 ## Depth (m) water would pool to in small hollows that aren't lakes; feeds wetland.
 var hollow := PackedFloat32Array()
 ## 0..1 volcanic ground (basalt and ash): the cone of a volcano and its old lava flows.
@@ -393,6 +395,8 @@ func _compute_heights() -> void:
 	volcanic.fill(0.0)
 	path_mask.resize(nx * nz)
 	path_mask.fill(0.0)
+	rock_boost.resize(nx * nz)
+	rock_boost.fill(0.0)
 	var radius := _settings.step_softness * level.hex_size
 	var inv_r2 := 1.0 / (radius * radius)
 	var detail := _settings.terrain_detail * _meters
@@ -919,6 +923,8 @@ func finish_weights() -> void:
 				_pull(base, T.ROCK, smoothstep(cliff * 0.35, cliff * 0.7, slope) * (1.0 - smoothstep(sea_y + 4.0, sea_y + 30.0, h)) * 0.85)
 				# Outcrops poking through the grass on moderate slopes.
 				_pull(base, T.ROCK, smoothstep(0.18, 0.4, slope) * smoothstep(0.8, 0.9, n2) * 0.8)
+			if rock_boost[vi] > 0.0 and under <= 0.0:
+				_pull(base, T.ROCK, rock_boost[vi] * 0.85)
 			# Volcanic ground: bare basalt with ash in the hollows; little grows there.
 			var volc := volcanic[vi]
 			if volc > 0.0 and under <= 0.0:

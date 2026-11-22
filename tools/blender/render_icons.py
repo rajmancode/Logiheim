@@ -40,7 +40,7 @@ ICONS = {
     "coal": ([(R("outcrop_coal"), (0, 0, 0), 1.0, 0)], "coal", 35, 25),
     "gold": ([(R("gold_gravel"), (0, 0, 0), 1.0, 0)], "pebbles", 35, 35),
     "silver": ([(R("outcrop_silver"), (0, 0, 0), 1.0, 0)], "rock", 35, 25),
-    "gems": ("@gems", None, 20, 28),
+    "gems": ("@gems", None, 10, 38),
     "fish": ("@fish", None, 25, 22),
     "whales": ([(A("whale"), (0, 0, 0), 1.0, 0)], None, 60, 15),
     "seals": ([(A("seal"), (0, 0, 0), 1.0, 0)], None, 50, 15),
@@ -55,7 +55,7 @@ ICONS = {
     "amber": ([(R("amber"), (0, 0, 0), 1.0, 0)], "sand", 35, 30),
     "reeds": ([(R("reeds"), (0, 0, 0), 1.0, 0)], "reeds", 35, 15),
     "lake_ore": ([(R("bog"), (0, 0, 0), 1.0, 0)], "mud", 35, 35),
-    "cave": ("@cave", None, 8, 12),
+    "cave": ("@cave", None, 0, 6),
 }
 # Props built from mixed materials: which texture goes under the wood-coloured parts.
 WOOD_PROPS = {"log_pile", "tar_kiln", "peat_stack"}
@@ -392,99 +392,131 @@ def _boulder(rng, seed, loc, s, mat, col):
 
 
 def make_gems():
-    """A geode cracked open, packed with clear crystals, and a cut ruby in front."""
+    """Three brilliant-cut stones - ruby, emerald, sapphire - on a dark rock slab, with a small
+    amethyst cluster behind: one bold subject that reads at badge size."""
     rng = random.Random(11)
-    rock = bpy.data.materials.new("geode")
-    textured(rock, "rock_dark", scale=0.7)
-    _darken(rock, (0.3, 0.27, 0.25))
-    for k in range(7):
-        a = math.tau * k / 7
-        s = rng.uniform(0.9, 1.2)
-        _boulder(rng, 70 + k, (math.cos(a) * 1.25, math.sin(a) * 1.25, -0.15), (s, s, s * 0.8), rock, (0.2, 0.18, 0.17, 1))
-    bpy.ops.mesh.primitive_cylinder_add(vertices=24, radius=1.3, depth=0.3, location=(0, 0, -0.35))
+    slab = bpy.data.materials.new("slab")
+    textured(slab, "rock_dark", scale=0.9)
+    _darken(slab, (0.22, 0.2, 0.19))
+    bpy.ops.mesh.primitive_cylinder_add(vertices=40, radius=1.75, depth=0.3, location=(0, 0.1, -0.15))
     base = bpy.context.object
-    base.data.materials.append(rock)
-    col = base.data.color_attributes.new("Col", "BYTE_COLOR", "CORNER")
-    for d in col.data:
-        d.color = (0.3, 0.28, 0.27, 1)
-    mats = [glass("amethyst", (0.55, 0.22, 0.85)), glass("emerald", (0.1, 0.75, 0.35)),
-            glass("sapphire", (0.15, 0.35, 0.95))]
-    for k in range(16):
-        a = rng.uniform(0, math.tau)
-        r = rng.uniform(0.0, 0.85)
-        b0 = (math.cos(a) * r, math.sin(a) * r, -0.2)
-        d = (math.cos(a) * r * 0.6 + rng.uniform(-0.2, 0.2), math.sin(a) * r * 0.6 + rng.uniform(-0.2, 0.2), 1.0)
-        crystal(mats[k % 3 if k < 12 else 0], b0, d, rng.uniform(0.7, 1.6), rng.uniform(0.1, 0.2))
-    ruby = glass("ruby", (0.9, 0.05, 0.12), ior=1.76, rough=0.01)
-    g = brilliant(ruby, (0.45, -1.75, 0.55), 0.55)
-    g.rotation_euler = (math.radians(-20), 0, 0)
-    light = bpy.data.objects.new("glow", bpy.data.lights.new("glow", "POINT"))
-    light.data.energy = 60
-    light.data.color = (1.0, 0.85, 0.95)
-    light.location = (0, -0.6, 1.4)
-    bpy.context.scene.collection.objects.link(light)
+    base.scale = (1.0, 0.75, 1.0)
+    base.data.materials.append(slab)
+    ruby = glass("ruby", (0.95, 0.04, 0.1), ior=1.76, rough=0.0)
+    emerald = glass("emerald", (0.05, 0.8, 0.3), ior=1.58, rough=0.0)
+    sapphire = glass("sapphire", (0.1, 0.3, 1.0), ior=1.77, rough=0.0)
+    for mat, loc, r, tilt in ((ruby, (0.0, -0.45, 0.62), 0.78, -12), (emerald, (-1.15, 0.35, 0.52), 0.62, 8),
+                              (sapphire, (1.15, 0.35, 0.52), 0.62, -6)):
+        g = brilliant(mat, loc, r)
+        g.rotation_euler = (math.radians(tilt), math.radians(rng.uniform(-8, 8)), rng.uniform(0, 1))
+    amethyst = glass("amethyst", (0.6, 0.25, 0.9))
+    for k in range(6):
+        a = rng.uniform(-0.9, 0.9)
+        crystal(amethyst, (a * 0.5, 1.15, 0.0), (a * 0.5, 0.2, 1.0), rng.uniform(0.9, 1.5), rng.uniform(0.12, 0.18))
+    # Bright point lights for sparkle in the facets.
+    for loc, e in (((-2.0, -2.5, 3.0), 250), ((2.5, -1.5, 2.0), 150), ((0.0, 1.5, 3.5), 120)):
+        light = bpy.data.objects.new("spark", bpy.data.lights.new("spark", "POINT"))
+        light.data.energy = e
+        light.data.shadow_soft_size = 0.05
+        light.location = loc
+        bpy.context.scene.collection.objects.link(light)
 
 
 def make_cave_mouth():
-    """A cave in a rocky hillside: a ragged arch over a deep tunnel, stalactites at the lip,
-    torchlight glowing inside, moss on top."""
+    """A cave seen from in front: a weathered cliff face with a big arched opening, dark and
+    deep, warm light far inside, stalactites at the lip and moss along the top."""
+    import bmesh
+    from mathutils import noise
     rng = random.Random(7)
     rock = bpy.data.materials.new("cliff")
-    textured(rock, "rock_cliff", scale=0.45)
-    _darken(rock, (0.42, 0.4, 0.37))
+    textured(rock, "rock_cliff", scale=0.55)
+    _darken(rock, (0.15, 0.14, 0.13))
     moss = bpy.data.materials.new("moss")
-    textured(moss, "rock_mossy", scale=0.5)
-    _darken(moss, (0.45, 0.5, 0.36))
-    # A row of blocks over the arch, so the hillside closes above the opening.
-    for k in range(6):
-        x = -1.9 + k * 0.76
-        s = rng.uniform(1.3, 1.7)
-        _boulder(rng, 300 + k, (x, 0.9, rng.uniform(2.3, 2.7)), (s, s, s * 0.8), moss, (1, 1, 1, 1))
-    for k in range(30):
-        x = rng.uniform(-3.0, 3.0)
-        z = rng.uniform(-0.6, 2.8)
-        if abs(x) < 1.6 and z < 1.9:
-            continue
-        s = rng.uniform(1.4, 2.2)
-        _boulder(rng, 100 + k, (x, rng.uniform(0.6, 1.6), z), (s, s, s * 0.85), moss if z > 2.0 else rock, (0.27, 0.26, 0.24, 1))
-    for k in range(9):
-        a = math.pi * k / 8
-        s = rng.uniform(0.8, 1.15)
-        _boulder(rng, 200 + k, (math.cos(a) * 1.5, 0.2, math.sin(a) * 1.7 - 0.1), (s, s, s), rock, (0.24, 0.23, 0.21, 1))
-    bpy.ops.mesh.primitive_cylinder_add(vertices=32, radius=1.25, depth=6.0, end_fill_type="NOTHING", location=(0, 3.4, 0.4), rotation=(math.radians(90), 0, 0))
+    textured(moss, "rock_mossy", scale=0.6)
+    _darken(moss, (0.22, 0.32, 0.15))
+    # The cliff face: a displaced grid with an arch cut out of it.
+    bm = bmesh.new()
+    W, H, N = 7.0, 5.6, 150
+    verts = {}
+    for j in range(N + 1):
+        for i in range(N + 1):
+            x = -W / 2 + W * i / N
+            z = -1.0 + H * j / N
+            n = noise.fractal(Vector((x * 0.6, z * 0.6, 0.3)), 0.6, 2.2, 5)
+            ridge = abs(noise.noise(Vector((x * 1.6, z * 1.6, 3.1))))
+            y = n * 0.45 + ridge * 0.25
+            # The face leans back a little towards the top and bulges round the opening.
+            y += max(z, 0.0) * 0.12
+            verts[(i, j)] = bm.verts.new((x, y, z))
+    def in_arch(x, z):
+        return z > -1.0 and (x / 1.55) ** 2 + (max(z, 0.0) / 2.3) ** 2 < 1.0
+    def outside(x, z):
+        # A ragged, rounded outcrop outline instead of a rectangle.
+        a = math.atan2(z - 1.6, x)
+        r = 1.0 + 0.12 * noise.noise(Vector((math.cos(a) * 2.0, math.sin(a) * 2.0, 1.7)))
+        return (x / (W * 0.5)) ** 2 + ((z - 1.6) / (H * 0.55)) ** 2 > r * r and z > -0.8
+    for j in range(N):
+        for i in range(N):
+            cx = -W / 2 + W * (i + 0.5) / N
+            cz = -1.0 + H * (j + 0.5) / N
+            if in_arch(cx, cz) or outside(cx, cz):
+                continue
+            bm.faces.new((verts[(i, j)], verts[(i + 1, j)], verts[(i + 1, j + 1)], verts[(i, j + 1)]))
+    me = bpy.data.meshes.new("face")
+    bm.to_mesh(me)
+    face = bpy.data.objects.new("face", me)
+    bpy.context.scene.collection.objects.link(face)
+    col = me.color_attributes.new("Col", "BYTE_COLOR", "CORNER")
+    for d in col.data:
+        d.color = (1, 1, 1, 1)
+    me.materials.append(rock)
+    me.materials.append(moss)
+    for poly in me.polygons:
+        poly.use_smooth = True
+        if poly.center.z > H - 1.9 + noise.noise(Vector((poly.center.x * 1.3, 0.0, 7.0))) * 0.4:
+            poly.material_index = 1
+    # The tunnel behind the opening, receding into darkness.
+    bpy.ops.mesh.primitive_cylinder_add(vertices=32, radius=1.6, depth=7.0, end_fill_type="NOTHING",
+        location=(0, 3.6, 0.6), rotation=(math.radians(90), 0, 0))
     tube = bpy.context.object
-    tube.scale = (1.0, 1.25, 1.0)
+    tube.scale = (1.0, 1.5, 1.0)
     inner = bpy.data.materials.new("inner")
     textured(inner, "rock_dark", scale=0.6)
+    _darken(inner, 0.4)
     tube.data.materials.append(inner)
-    c = tube.data.color_attributes.new("Col", "BYTE_COLOR", "CORNER")
-    for d in c.data:
-        d.color = (0.35, 0.33, 0.3, 1)
-    bpy.ops.mesh.primitive_plane_add(size=3.4, location=(0, 6.3, 0.4), rotation=(math.radians(90), 0, 0))
+    bpy.ops.mesh.primitive_plane_add(size=5, location=(0, 7.0, 0.6), rotation=(math.radians(90), 0, 0))
     black = bpy.data.materials.new("black")
     plain(black, (0.0, 0.0, 0.0), 1.0)
     bpy.context.object.data.materials.append(black)
-    drip = bpy.data.materials.new("drip")
-    plain(drip, (0.42, 0.4, 0.37), 0.5)
-    for k in range(6):
-        x = rng.uniform(-0.9, 0.9)
-        bpy.ops.mesh.primitive_cone_add(vertices=8, radius1=rng.uniform(0.07, 0.14), depth=rng.uniform(0.35, 0.7),
-            location=(x, 0.45, 1.45 - abs(x) * 0.35), rotation=(math.radians(180), 0, 0))
-        bpy.context.object.data.materials.append(drip)
-    bpy.ops.mesh.primitive_plane_add(size=4.6, location=(0, -0.3, -0.95))
-    gr = bpy.context.object
+    # Cave floor and the ground in front.
+    bpy.ops.mesh.primitive_circle_add(vertices=40, radius=1.0, fill_type="NGON", location=(0, 0.6, -1.0))
+    fl = bpy.context.object
+    fl.scale = (W * 0.5, 3.2, 1.0)
     gmat = bpy.data.materials.new("ground")
-    textured(gmat, "gravel", scale=0.8)
-    _darken(gmat, 0.45)
-    gr.data.materials.append(gmat)
-    c = gr.data.color_attributes.new("Col", "BYTE_COLOR", "CORNER")
-    for d in c.data:
-        d.color = (0.26, 0.24, 0.22, 1)
+    textured(gmat, "gravel", scale=0.9)
+    _darken(gmat, 0.5)
+    fl.data.materials.append(gmat)
+    # Stalactites along the lip of the arch.
+    drip = bpy.data.materials.new("drip")
+    plain(drip, (0.25, 0.23, 0.21), 0.45)
+    for k in range(3):
+        a = math.pi * rng.uniform(0.3, 0.7)
+        x = math.cos(a) * 1.5
+        z = math.sin(a) * 2.25 - 0.05
+        bpy.ops.mesh.primitive_cone_add(vertices=7, radius1=rng.uniform(0.05, 0.09), depth=rng.uniform(0.2, 0.45),
+            location=(x, 0.25, z - 0.2), rotation=(math.radians(180), 0, 0))
+        bpy.context.object.data.materials.append(drip)
+    # A few fallen blocks at the foot.
+    for k in range(4):
+        x = rng.choice([-1, 1]) * rng.uniform(1.8, 3.0)
+        s2 = rng.uniform(0.35, 0.7)
+        _boulder(rng, 400 + k, (x, -0.6, -0.8), (s2, s2, s2 * 0.8), rock, (1, 1, 1, 1))
+    # Warm light deep inside.
     torch = bpy.data.objects.new("torch", bpy.data.lights.new("torch", "POINT"))
-    torch.data.energy = 350
-    torch.data.color = (1.0, 0.55, 0.2)
-    torch.data.shadow_soft_size = 0.3
-    torch.location = (0.5, 2.6, 0.2)
+    torch.data.energy = 220
+    torch.data.color = (1.0, 0.5, 0.15)
+    torch.data.shadow_soft_size = 0.2
+    torch.location = (0.4, 3.5, 0.0)
     bpy.context.scene.collection.objects.link(torch)
 
 

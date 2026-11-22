@@ -565,8 +565,28 @@ static func _ribbon(path: RiverPath, verts: PackedVector3Array, normals: PackedV
 	var fade := PackedFloat32Array()
 	fade.resize(n)
 	fade.fill(1.0)
+	var sea_mix := PackedFloat32Array()
+	sea_mix.resize(n)
 	# Any river ending at sea level runs into the sea (delta trunks and estuaries too).
 	if path.to_sea or path.points[n - 1].y < _sea_level + 0.15:
+		# Where the river comes down to sea level it is the sea's: its water takes the sea's
+		# colour over the last stretch above that point and fades out soon after it.
+		var s0 := n - 1
+		for k in n:
+			if path.points[k].y < _sea_level + 0.15:
+				s0 = k
+				break
+		var run := 0.0
+		for k in range(s0, -1, -1):
+			if k < s0:
+				run += path.points[k].distance_to(path.points[k + 1])
+			sea_mix[k] = 1.0 - smoothstep(0.0, maxf(path.widths[k] * 3.0, 25.0), run)
+		var past := 0.0
+		for k in range(s0, n):
+			if k > s0:
+				past += path.points[k].distance_to(path.points[k - 1])
+			sea_mix[k] = 1.0
+			fade[k] = minf(fade[k], 1.0 - smoothstep(0.0, maxf(path.widths[k] * 1.5, 14.0), past))
 		var from_end := 0.0
 		var reach := maxf(path.widths[n - 1] * 5.0, 30.0)
 		for k in range(n - 1, -1, -1):
@@ -594,7 +614,7 @@ static func _ribbon(path: RiverPath, verts: PackedVector3Array, normals: PackedV
 			verts.append(path.points[k] + side * (u * 2.0 - 1.0) + lift)
 			normals.append(nrm)
 			uv2s.append(Vector2(turb[k], path.widths[k]))
-			colors.append(Color(speed[k] / 6.0, fade[k], 0.0))
+			colors.append(Color(speed[k] / 6.0, fade[k], sea_mix[k]))
 			uvs.append(Vector2(u, path.dist[k]))
 	var row := ACROSS + 1
 	for k in n - 1:

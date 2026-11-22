@@ -25,7 +25,9 @@ varying float v_speed;
 varying float v_turb;
 varying float v_width;
 varying float v_fade;
+varying float v_sea;
 varying vec3 v_shape_n;
+uniform vec3 sea_shallow : source_color = vec3(0.07, 0.36, 0.38);
 
 // The water surface's own shape (metres up), from across (u 0..1) and along (metres):
 // slightly crowned in the middle, with waves running downstream at the flow's speed and,
@@ -47,6 +49,7 @@ void vertex() {
 	v_turb = UV2.x;
 	v_width = UV2.y;
 	v_fade = COLOR.g;
+	v_sea = COLOR.b;
 	vec3 wp = (MODEL_MATRIX * vec4(VERTEX, 1.0)).xyz;
 	float h = surface_h(UV.x, UV.y, v_width, v_speed, v_turb, TIME);
 	// Slope of the shape, for its lighting (across in metres per u, and along).
@@ -107,6 +110,8 @@ void fragment() {
 	float foam = smoothstep(edge0, edge0 + 0.12, pn) * 0.85 * smoothstep(0.3, 0.6, v_turb);
 	foam = max(foam, bank * 0.15 * v_turb * smoothstep(0.5, 0.7, pn));
 	col = mix(col, foam_color, foam);
+	// Meeting the sea: the river water takes on the sea's shallow green-blue.
+	col = mix(col, mix(sea_shallow, bed_col, exp(-depth / 1.5) * 0.6), v_sea * 0.85);
 	col *= cloud_shadow(v_world_pos);
 
 	// Lit by the water's own shape (crown and waves) plus the small ripples.

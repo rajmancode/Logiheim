@@ -10,8 +10,9 @@ extends RefCounted
 ## marks the hexes (`level.cave`). place_resources(): after the open-country resources, gives
 ## each entrance hex its cave resources (deposit flagged as a cave, so icons say so).
 ## build_meshes(): the mouths. A height grid can't have holes, so a mouth is a dark, recessed
-## arch set into the rock face at the back of the ledge, framed by fractured rock slabs, with a
-## few fallen stones in front.
+## arch set into the back wall of an alcove cut into the hillside (apply()), opening from an
+## outcrop of big, half-buried rock round and over it, on bare rock ground, with a few fallen
+## stones in front.
 
 ## Each: {entrances: Array of {p: Vector2, dir: Vector2 (outward, downhill)}, kinds: Array[int],
 ## lava: bool}.
@@ -100,25 +101,33 @@ func apply(level: HexLevel, surface: TerrainSurface) -> void:
 			var cell := level.cell_at(p)
 			if cell >= 0:
 				level.cave[cell] = si
-			# A small ledge in front of the mouth only: the hillside behind stays as the rock
-			# face the mouth opens into.
+			# The mouth is set into the hill: an alcove cut back into the slope (its back wall is
+			# the face the cave opens from), with a smooth apron in front of it. The ground all
+			# round turns to bare rock.
 			var floor_y := surface.sample(p) - 0.5
-			var r := 9.0
-			var x0 := maxi(0, floori((p.x - r) / surface.spacing))
-			var x1 := mini(surface.nx - 1, ceili((p.x + r) / surface.spacing))
-			var z0 := maxi(0, floori((p.y - r) / surface.spacing))
-			var z1 := mini(surface.nz - 1, ceili((p.y + r) / surface.spacing))
+			var side := Vector2(-dir.y, dir.x)
+			var reach := 22.0
+			var x0 := maxi(0, floori((p.x - reach) / surface.spacing))
+			var x1 := mini(surface.nx - 1, ceili((p.x + reach) / surface.spacing))
+			var z0 := maxi(0, floori((p.y - reach) / surface.spacing))
+			var z1 := mini(surface.nz - 1, ceili((p.y + reach) / surface.spacing))
 			for z in range(z0, z1 + 1):
 				for x in range(x0, x1 + 1):
 					var q := Vector2(x, z) * surface.spacing
 					var rel := q - p
 					var ahead := rel.dot(dir)
-					if ahead < -1.0 or rel.length() > r:
-						continue
+					var lat := absf(rel.dot(side))
 					var i := z * surface.nx + x
-					var t := (1.0 - smoothstep(r * 0.5, r, rel.length())) * smoothstep(-1.0, 1.5, ahead)
-					surface.heights[i] = lerpf(surface.heights[i], minf(surface.heights[i], floor_y), t)
-					surface.clear_mask[i] = 1
+					# Alcove: from 6 m into the hill out to the apron, ~14 m wide, wider at the front.
+					var half_w := 6.0 + maxf(ahead, 0.0) * 0.4
+					var t := (1.0 - smoothstep(half_w - 2.0, half_w + 3.0, lat)) \
+						* smoothstep(-7.5, -4.5, ahead) * (1.0 - smoothstep(9.0, 16.0, ahead))
+					if t > 0.0:
+						surface.heights[i] = lerpf(surface.heights[i], minf(surface.heights[i], floor_y + maxf(ahead, 0.0) * 0.08), t)
+						surface.clear_mask[i] = 1
+					var d := rel.length()
+					if d < reach:
+						surface.rock_boost[i] = maxf(surface.rock_boost[i], 1.0 - smoothstep(8.0, reach, d))
 
 
 ## After the open-country resources: each entrance hex holds the system's cave resources.
@@ -492,22 +501,31 @@ func build_meshes(surface: TerrainSurface, parent: Node3D) -> void:
 			var p: Vector2 = e.p
 			var dir: Vector2 = e.dir
 			var side := Vector2(-dir.y, dir.x)
-			var floor_y := surface.sample(p + dir * 2.0) + 0.1
-			var w := rng.randf_range(4.5, 7.0)
-			var h := rng.randf_range(4.0, 6.0)
-			var back := p - dir * 0.5
+			# The mouth opens from the alcove's back wall, as tall as that wall allows.
+			var back := p - dir * 5.0
+			var floor_y := surface.sample(back + dir * 1.5) + 0.05
+			var wall := surface.sample(back - dir * 6.0) - floor_y
+			var w := rng.randf_range(5.5, 7.5)
+			var h := clampf(minf(rng.randf_range(4.5, 6.0), wall * 0.9), 3.4, 6.0)
 			_mouth(mouths, Vector3(back.x, floor_y, back.y), dir, side, w, h)
 			var basalt := surface.volcanic_at(p)
-			# Frame: slabs around the arch.
-			for k in 7:
-				var a := PI * (float(k) / 6.0)
-				var off := side * cos(a) * (w * 0.62) + dir * rng.randf_range(0.2, 1.2)
-				var pos := Vector3(back.x + off.x, floor_y + sin(a) * h * 1.02 + 0.5, back.y + off.y)
-				# Never above the hillside around it: frame stones sit on or in the ground.
-				pos.y = minf(pos.y, surface.sample(Vector2(pos.x, pos.z)) + size_hint(sin(a), h))
-				var size := rng.randf_range(2.5, 4.5)
-				var basis := Basis(Vector3.UP, rng.randf() * TAU).scaled(Vector3(size, size * rng.randf_range(0.7, 1.1), size))
+			# An outcrop the mouth opens from: big slabs round the arch and a roof mass over
+			# and behind it, all half buried in the slope, so the rock grows out of the hill.
+			for k in 9:
+				var a := PI * (float(k) / 8.0)
+				var off := side * cos(a) * (w * 0.68) + dir * rng.randf_range(-0.5, 0.8)
+				var size := rng.randf_range(3.5, 6.0)
+				var pos := Vector3(back.x + off.x, floor_y + sin(a) * h * 0.95 + size * 0.15, back.y + off.y)
+				pos.y = minf(pos.y, surface.sample(Vector2(pos.x, pos.z)) + size * 0.35 + sin(a) * h * 0.4)
+				var basis := Basis(Vector3.UP, rng.randf() * TAU).scaled(Vector3(size * rng.randf_range(0.9, 1.2), size * rng.randf_range(0.8, 1.05), size))
 				_add(items, ["rock_a", "rock_c", "rock_e"][rng.randi() % 3], Transform3D(basis, pos), Color(1, 1, 1, basalt))
+			for k in 3:
+				var q := back - dir * rng.randf_range(2.5, 7.0) + side * rng.randf_range(-w * 0.6, w * 0.6)
+				var size := rng.randf_range(5.0, 8.0)
+				# Mostly buried: only the top of the roof rock shows above the slope.
+				var y := maxf(floor_y + h + size * 0.05, surface.sample(q) - size * 0.4)
+				var basis := Basis(Vector3.UP, rng.randf() * TAU).scaled(Vector3(size * 1.1, size * 0.75, size))
+				_add(items, ["rock_c", "rock_a"][rng.randi() % 2], Transform3D(basis, Vector3(q.x, y, q.y)), Color(1, 1, 1, basalt))
 			# Fallen stones on the ledge.
 			for k in rng.randi_range(2, 4):
 				var q := p + dir * rng.randf_range(3.0, 8.0) + side * rng.randf_range(-w, w)
