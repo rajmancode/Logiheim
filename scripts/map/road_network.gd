@@ -649,6 +649,8 @@ func build_meshes(surface: TerrainSurface, parent: Node3D, rivers: Array = []) -
 		return
 	var verts := PackedVector3Array()
 	var uvs := PackedVector2Array()
+	var uv2s := PackedVector2Array()
+	var colors := PackedColorArray()
 	var normals := PackedVector3Array()
 	var indices := PackedInt32Array()
 	var bridges := MeshData.new()
@@ -659,6 +661,7 @@ func build_meshes(surface: TerrainSurface, parent: Node3D, rivers: Array = []) -
 		var bridge: PackedByteArray = r.bridge
 		var shared: PackedByteArray = r.get("shared", PackedByteArray())
 		var n := pts.size()
+		var ground := _ground_kinds(pts, surface)
 		var along := 0.0
 		var prev := -1
 		for k in n:
@@ -676,6 +679,10 @@ func build_meshes(surface: TerrainSurface, parent: Node3D, rivers: Array = []) -
 				# Exactly on the terrain mesh's triangles, so the trail never dips into the ground.
 				verts.append(Vector3(q.x, surface.sample_mesh(q) + 0.1, q.y))
 				uvs.append(Vector2(u, along))
+				# The ground the trail runs over (picks its surface in trail.gdshader).
+				var gk: Array = ground[k]
+				colors.append(gk[0])
+				uv2s.append(gk[1])
 				normals.append(surface.normal_at(q))
 			if prev >= 0:
 				for c in ACROSS:
@@ -716,13 +723,28 @@ func build_meshes(surface: TerrainSurface, parent: Node3D, rivers: Array = []) -
 			# Each end sits on its own bank; the middle clears the river's water.
 			var ya := surface.sample(a) + 0.15
 			var yb := surface.sample(b) + 0.15
-			var water := _water_under((a + b) * 0.5, rivers)
-			var ym := maxf((ya + yb) * 0.5, water + 1.0)
-			_add_bridge(bridges, a, b, ya, ym, yb, width * 0.9, wood, surface)
+			var info := _river_under((a + b) * 0.5, rivers)
+			var water: float = info[0]
+			var river_w: float = info[1]
+			var span := a.distance_to(b)
+			var rocky := (surface.weight_at(a, HexMapGenerator.Terrain.ROCK) + surface.weight_at(b, HexMapGenerator.Terrain.ROCK)) * 0.5
+			# The bridge suits its crossing: a couple of logs over a brook, a stone arch where
+			# the banks are rock, a braced trestle over a long span, planks on piers otherwise.
+			if river_w < 4.5 and span < 10.0:
+				var ym := maxf((ya + yb) * 0.5, water + 0.5)
+				_add_log_bridge(bridges, a, b, ya, ym, yb, wood, surface)
+			elif rocky > 0.35 and span < 26.0:
+				var ym := maxf((ya + yb) * 0.5 + span * 0.06, water + 1.6)
+				_add_stone_bridge(bridges, a, b, ya, ym, yb, width * 0.95, water, surface)
+			else:
+				var ym := maxf((ya + yb) * 0.5, water + 1.0)
+				_add_bridge(bridges, a, b, ya, ym, yb, width * 0.9, wood, surface, span > 16.0)
 	var arrays := []
 	arrays.resize(Mesh.ARRAY_MAX)
 	arrays[Mesh.ARRAY_VERTEX] = verts
 	arrays[Mesh.ARRAY_TEX_UV] = uvs
+	arrays[Mesh.ARRAY_TEX_UV2] = uv2s
+	arrays[Mesh.ARRAY_COLOR] = colors
 	arrays[Mesh.ARRAY_NORMAL] = normals
 	arrays[Mesh.ARRAY_INDEX] = indices
 	if not verts.is_empty():
@@ -732,6 +754,7 @@ func build_meshes(surface: TerrainSurface, parent: Node3D, rivers: Array = []) -
 		mi.name = "Trails"
 		mi.mesh = mesh
 		mi.material_override = _trail_material()
+		_trail_material().set_shader_parameter("trail_width", width)
 		mi.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
 		parent.add_child(mi)
 	if not bridges.verts.is_empty():
@@ -740,6 +763,51 @@ func build_meshes(surface: TerrainSurface, parent: Node3D, rivers: Array = []) -
 		bm.mesh = bridges.to_mesh()
 		bm.material_override = ResourceProps._material("body")
 		parent.add_child(bm)
+
+
+## What each trail point runs over, smoothed along the trail (~20 m) so its surface changes
+## gradually: [Color(sand, rock, bog, forest), Vector2(snow, moisture)].
+static func _ground_kinds(pts: PackedVector2Array, surface: TerrainSurface) -> Array:
+	const T := HexMapGenerator.Terrain
+	var raw: Array = []
+	for p in pts:
+		var acc := [0.0, 0.0, 0.0, 0.0, 0.0, 0.0]
+		for o in [Vector2.ZERO, Vector2(4, 0), Vector2(-4, 0), Vector2(0, 4), Vector2(0, -4)]:
+			var q: Vector2 = p + o
+			acc[0] += surface.weight_at(q, T.SAND)
+			acc[1] += surface.weight_at(q, T.ROCK)
+			acc[2] += surface.wetland_at(q)
+			acc[3] += surface.weight_at(q, T.FOREST)
+			acc[4] += surface.weight_at(q, T.SNOW)
+			acc[5] += surface.moisture_at(q)
+		raw.append(acc)
+	var out: Array = []
+	var n := pts.size()
+	for k in n:
+		var s := [0.0, 0.0, 0.0, 0.0, 0.0, 0.0]
+		var cnt := 0
+		for j in range(maxi(k - 5, 0), mini(k + 6, n)):
+			for c in 6:
+				s[c] += raw[j][c] / 5.0
+			cnt += 1
+		for c in 6:
+			s[c] /= cnt
+		out.append([Color(s[0], s[1], s[2], s[3]), Vector2(s[4], s[5])])
+	return out
+
+
+## [water level, width] of the river nearest p ([-INF, 0] if none is close).
+static func _river_under(p: Vector2, rivers: Array) -> Array:
+	var best := 900.0
+	var out := [-INF, 0.0]
+	for path: RiverPath in rivers:
+		for k in path.points.size():
+			var q := path.points[k]
+			var d := Vector2(q.x, q.z).distance_squared_to(p)
+			if d < best:
+				best = d
+				out = [q.y, path.widths[k]]
+	return out
 
 
 ## Water level of the river nearest p (or -INF if none is close).
@@ -758,7 +826,7 @@ static func _water_under(p: Vector2, rivers: Array) -> float:
 ## A plank bridge from a to b: deck height runs a -> middle -> b (each end on its bank, the
 ## middle clear of the water), planks across, rails on posts, and piers down to the ground or
 ## river bed wherever the deck stands above it.
-static func _add_bridge(data: MeshData, a: Vector2, b: Vector2, ya: float, ym: float, yb: float, w: float, col: Color, surface: TerrainSurface) -> void:
+static func _add_bridge(data: MeshData, a: Vector2, b: Vector2, ya: float, ym: float, yb: float, w: float, col: Color, surface: TerrainSurface, trestle := false) -> void:
 	var d := b - a
 	var length := d.length()
 	if length < 0.5:
@@ -785,11 +853,152 @@ static func _add_bridge(data: MeshData, a: Vector2, b: Vector2, ya: float, ym: f
 			var ground := surface.sample(pp)
 			if y - ground > 0.3:
 				_box(data, Vector3(pp.x, (y + ground) * 0.5 - 0.3, pp.y), dir, side, 0.3, 0.3, y - ground + 0.6, col * 0.7)
+				# A trestle: every other pier tied to its partner across the deck by a
+				# cross-beam under the deck and two diagonal braces down to the bed.
+				if trestle and s > 0.0 and q % 2 == 0 and y - ground > 1.0:
+					var other: Vector2 = pp - side * w
+					var g2 := surface.sample(other)
+					var low := maxf(ground, g2) + 0.4
+					var top := y - 0.35
+					_log(data, Vector3(pp.x, top, pp.y), Vector3(other.x, top, other.y), 0.12, col * 0.65)
+					_log(data, Vector3(pp.x, top, pp.y), Vector3(other.x, low, other.y), 0.09, col * 0.6)
+					_log(data, Vector3(other.x, top, other.y), Vector3(pp.x, low, pp.y), 0.09, col * 0.6)
 			if q < posts - 1:
 				var t2 := float(q + 1) / (posts - 1)
 				var mid: Vector2 = a + dir * (t + t2) * 0.5 * length + side * s * w * 0.5
 				var ry := (float(deck.call(t)) + float(deck.call(t2))) * 0.5 + 0.85
 				_box(data, Vector3(mid.x, ry, mid.y), dir, side, length / (posts - 1) + 0.1, 0.12, 0.12, col * 0.9)
+
+
+## A footbridge over a brook: three logs laid side by side from bank to bank (round in
+## section), with one rail on posts along one side.
+static func _add_log_bridge(data: MeshData, a: Vector2, b: Vector2, ya: float, ym: float, yb: float, col: Color, surface: TerrainSurface) -> void:
+	var d := b - a
+	var length := d.length()
+	if length < 0.5:
+		return
+	var dir := d / length
+	var side := Vector2(-dir.y, dir.x)
+	# The logs run a little onto each bank.
+	var a2 := a - dir * 0.6
+	var b2 := b + dir * 0.6
+	var m := (a + b) * 0.5
+	for i in 3:
+		var o := side * (float(i) - 1.0) * 0.42
+		var r := 0.2 + 0.03 * float((i * 7) % 3)
+		var shade := 0.8 + 0.12 * i
+		_log(data, Vector3(a2.x + o.x, ya + r - 0.1, a2.y + o.y), Vector3(m.x + o.x, ym + r - 0.1, m.y + o.y), r, col * shade)
+		_log(data, Vector3(m.x + o.x, ym + r - 0.1, m.y + o.y), Vector3(b2.x + o.x, yb + r - 0.1, b2.y + o.y), r, col * shade)
+	# A hand rail on one side.
+	var rs := side * 0.75
+	var posts := maxi(2, int(length / 2.5) + 1)
+	for q in posts:
+		var t := float(q) / (posts - 1)
+		var pp := a + dir * t * length + rs
+		var y := lerpf(ya, ym, t * 2.0) if t < 0.5 else lerpf(ym, yb, t * 2.0 - 1.0)
+		_box(data, Vector3(pp.x, y + 0.75, pp.y), dir, side, 0.14, 0.14, 1.0, col * 0.75)
+	var ra := a + rs
+	var rb := b + rs
+	var rm := m + rs
+	_log(data, Vector3(ra.x, ya + 1.2, ra.y), Vector3(rm.x, ym + 1.2, rm.y), 0.07, col * 0.85)
+	_log(data, Vector3(rm.x, ym + 1.2, rm.y), Vector3(rb.x, yb + 1.2, rb.y), 0.07, col * 0.85)
+
+
+## A stone arch bridge (where the banks are rock): a smooth humped deck on a single arch
+## springing from each bank - spandrel walls down to the curve of the arch, its underside
+## (the soffit) across, a parapet along each side, and a footing on each bank.
+static func _add_stone_bridge(data: MeshData, a: Vector2, b: Vector2, ya: float, ym: float, yb: float, w: float, water: float, surface: TerrainSurface) -> void:
+	var d := b - a
+	var length := d.length()
+	if length < 0.5:
+		return
+	var dir := d / length
+	var side := Vector2(-dir.y, dir.x)
+	var stone := Color(0.52, 0.5, 0.47)
+	var segs := maxi(12, int(length / 0.5))
+	var spring := maxf(water - 0.2, minf(ya, yb) - 2.0)
+	var hw := w * 0.5
+	var pw := 0.32   # parapet thickness
+	var ph := 0.7    # parapet height
+	var prev: Array = []
+	for q in segs + 1:
+		var t := float(q) / segs
+		var c := a + dir * t * length
+		var deck := lerpf(ya, yb, t) + (ym - lerpf(ya, yb, 0.5)) * sin(PI * t)
+		var soffit := spring + (deck - 0.7 - spring) * pow(sin(PI * t), 0.6)
+		# Over the banks the walls run down into the ground.
+		var ground := minf(surface.sample(c + side * hw), surface.sample(c - side * hw))
+		if ground > soffit - 0.3:
+			soffit = ground - 0.4
+		var l := c + side * (hw + pw)
+		var li := c + side * hw
+		var ri := c - side * hw
+		var rr := c - side * (hw + pw)
+		var row := [
+			Vector3(l.x, soffit, l.y), Vector3(l.x, deck + ph, l.y), Vector3(li.x, deck + ph, li.y), Vector3(li.x, deck, li.y),
+			Vector3(ri.x, deck, ri.y), Vector3(ri.x, deck + ph, ri.y), Vector3(rr.x, deck + ph, rr.y), Vector3(rr.x, soffit, rr.y),
+		]
+		if not prev.is_empty():
+			# Courses of stone: each band a slightly different shade.
+			var shade := 0.86 + 0.2 * fposmod(float(q) * 0.618, 1.0)
+			var col := stone * shade
+			var up := Vector3.UP
+			var out_l := Vector3(side.x, 0, side.y)
+			var fwd := Vector3(dir.x, 0, dir.y)
+			_quad(data, prev[0], row[0], row[1], prev[1], out_l, col)            # outer wall, left
+			_quad(data, prev[1], row[1], row[2], prev[2], up, col * 1.05)        # parapet top
+			_quad(data, prev[2], row[2], row[3], prev[3], -out_l, col * 0.9)     # parapet inner face
+			_quad(data, prev[3], row[3], row[4], prev[4], up, col * 0.95)        # deck
+			_quad(data, prev[4], row[4], row[5], prev[5], out_l, col * 0.9)      # parapet inner face
+			_quad(data, prev[5], row[5], row[6], prev[6], up, col * 1.05)        # parapet top
+			_quad(data, prev[6], row[6], row[7], prev[7], -out_l, col)           # outer wall, right
+			_quad(data, prev[7], row[7], row[0], prev[0], -up, col * 0.7)        # arch underside
+		else:
+			_quad(data, row[0], row[1], row[6], row[7], -Vector3(dir.x, 0, dir.y), stone * 0.9)
+		prev = row
+	_quad(data, prev[0], prev[1], prev[6], prev[7], Vector3(dir.x, 0, dir.y), stone * 0.9)
+	# Footings on the banks.
+	for e: Vector2 in [a, b]:
+		var y := ya if e == a else yb
+		_box(data, Vector3(e.x, y - 0.7, e.y), dir, side, 1.6, w + 1.2, 1.6, stone * 0.8)
+
+
+## Two triangles p0-p1-p2-p3, wound to face along n (Godot: clockwise from the front).
+static func _quad(data: MeshData, p0: Vector3, p1: Vector3, p2: Vector3, p3: Vector3, n: Vector3, col: Color) -> void:
+	_tri(data, p0, p1, p2, n, col)
+	_tri(data, p0, p2, p3, n, col)
+
+
+static func _tri(data: MeshData, p0: Vector3, p1: Vector3, p2: Vector3, n: Vector3, col: Color) -> void:
+	if (p1 - p0).cross(p2 - p0).dot(n) < 0.0:
+		data.tri(p0, p1, p2, Vector2.ZERO, Vector2.ZERO, Vector2.ZERO, n, Vector2.ZERO, col)
+	else:
+		data.tri(p0, p2, p1, Vector2.ZERO, Vector2.ZERO, Vector2.ZERO, n, Vector2.ZERO, col)
+
+
+## A round log from p to q (an eight-sided prism) of radius r.
+static func _log(data: MeshData, p: Vector3, q: Vector3, r: float, col: Color) -> void:
+	var ax := q - p
+	var length := ax.length()
+	if length < 0.01:
+		return
+	var f := ax / length
+	var up := Vector3.UP if absf(f.y) < 0.95 else Vector3.RIGHT
+	var u := f.cross(up).normalized()
+	var v := u.cross(f).normalized()
+	const SIDES := 8
+	for i in SIDES:
+		var a0 := TAU * i / SIDES
+		var a1 := TAU * (i + 1) / SIDES
+		var o0 := (u * cos(a0) + v * sin(a0)) * r
+		var o1 := (u * cos(a1) + v * sin(a1)) * r
+		var nrm := (u * cos((a0 + a1) * 0.5) + v * sin((a0 + a1) * 0.5)).normalized()
+		var shade := 0.85 + 0.15 * nrm.y
+		_tri(data, p + o0, q + o0, q + o1, nrm, col * shade)
+		_tri(data, p + o0, q + o1, p + o1, nrm, col * shade)
+		# End grain, paler.
+		_tri(data, p, p + o1, p + o0, -f, col * 1.35)
+		_tri(data, q, q + o0, q + o1, f, col * 1.35)
 
 
 static func _box(data: MeshData, c: Vector3, dir: Vector2, side: Vector2, l: float, w: float, h: float, col: Color) -> void:

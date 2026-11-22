@@ -315,6 +315,14 @@ func path_at(p: Vector2) -> float:
 	return path_mask[z * nx + x]
 
 
+func moisture_at(p: Vector2) -> float:
+	if moisture.is_empty():
+		return 0.0
+	var x := clampi(roundi(p.x / spacing), 0, nx - 1)
+	var z := clampi(roundi(p.y / spacing), 0, nz - 1)
+	return moisture[z * nx + x]
+
+
 func wetland_at(p: Vector2) -> float:
 	if wetland.is_empty():
 		return 0.0

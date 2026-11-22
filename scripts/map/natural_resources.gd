@@ -332,7 +332,27 @@ static func _features(lv: HexLevel, sea_y: float) -> Dictionary:
 			if j >= 0 and land_dist[j] < 0:
 				land_dist[j] = land_dist[i] + 1
 				queue.append(j)
-	return {"rel": rel, "sea_nb": sea_nb, "river_nb": river_nb, "lake_nb": lake_nb, "land_dist": land_dist}
+	# River mouths: river hexes on the coast, then the river hexes and banks next to them.
+	var mouth := PackedByteArray()
+	mouth.resize(n)
+	var core: Array[int] = []
+	for i in n:
+		if lv.river[i] == 1 and sea_nb[i] > 0 and not _is_sea(lv, i):
+			mouth[i] = 1
+			core.append(i)
+	for ring in 2:
+		var grow: Array[int] = []
+		for i in core:
+			for k in 6:
+				var j := lv.index_of(HexCoords.neighbor(lv.coords[i], k))
+				if j < 0 or mouth[j] == 1 or _is_sea(lv, j):
+					continue
+				# First ring: every bank; second ring: only on up the river itself.
+				if ring == 0 or lv.river[j] == 1:
+					mouth[j] = 1
+					grow.append(j)
+		core = grow
+	return {"rel": rel, "sea_nb": sea_nb, "river_nb": river_nb, "lake_nb": lake_nb, "land_dist": land_dist, "mouth": mouth}
 
 
 static func _is_sea(lv: HexLevel, i: int) -> bool:
@@ -343,6 +363,9 @@ static func _is_sea(lv: HexLevel, i: int) -> bool:
 static func _suitability(kind: int, i: int, lv: HexLevel, f: Dictionary) -> float:
 	# Nothing on steep ground (fish and whales live in the water, so they don't care).
 	if kind != Kind.FISH and kind != Kind.WHALES and f.has("steep") and float(f.steep[i]) > MAX_SLOPE:
+		return 0.0
+	# Nothing on land sits in a river's mouth (the estuary and its banks); fish do best there.
+	if kind != Kind.FISH and kind != Kind.WHALES and f.has("mouth") and f.mouth[i] == 1:
 		return 0.0
 	var t := lv.terrain[i]
 	var rel: float = f.rel[i]
