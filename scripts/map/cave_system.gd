@@ -125,6 +125,13 @@ func apply(level: HexLevel, surface: TerrainSurface) -> void:
 					if t > 0.0:
 						surface.heights[i] = lerpf(surface.heights[i], minf(surface.heights[i], floor_y + maxf(ahead, 0.0) * 0.08), t)
 						surface.clear_mask[i] = 1
+					# Behind and above the mouth, a knoll of rock at least as high as the opening
+					# plus its lintel: the face backs onto solid ground and the dark tunnel stays
+					# inside the hill (never seen from above).
+					var kt := (1.0 - smoothstep(half_w + 1.0, half_w + 7.0, lat)) * smoothstep(-18.0, -12.0, ahead) 						* (1.0 - smoothstep(-8.5, -6.5, ahead))
+					if kt > 0.0:
+						var top := floor_y + 7.5 + (BorderNoise.snoise(q * 0.15) - 0.5) * 1.5
+						surface.heights[i] = maxf(surface.heights[i], lerpf(surface.heights[i], top, kt))
 					var d := rel.length()
 					if d < reach:
 						surface.rock_boost[i] = maxf(surface.rock_boost[i], 1.0 - smoothstep(8.0, reach, d))
@@ -509,7 +516,7 @@ func build_meshes(surface: TerrainSurface, parent: Node3D, terrain_mat: Material
 			var wall := surface.sample(back - dir * 6.0) - floor_y
 			var w := rng.randf_range(5.5, 7.5)
 			var h := clampf(minf(rng.randf_range(4.5, 6.0), wall * 0.9), 3.4, 6.0)
-			_mouth(mouths, Vector3(back.x, floor_y, back.y), dir, side, w, h)
+			_mouth(mouths, Vector3(back.x, floor_y, back.y), dir, side, w, h, surface)
 			var basalt := surface.volcanic_at(p)
 			# The rock face the cave opens from: a sculpted wall standing at the back of the
 			# alcove, leaning back into the hill, its ragged edges sinking into the slope.
@@ -676,30 +683,32 @@ static func _rock_face(f: Dictionary, surface: TerrainSurface, back: Vector2, fl
 
 
 ## A recessed arch: a half-dome opening facing `dir`, black deep inside, dark grey at the rim.
-static func _mouth(data: MeshData, base: Vector3, dir: Vector2, side: Vector2, w: float, h: float) -> void:
-	const SEG := 12
-	const RINGS := 4
+static func _mouth(data: MeshData, base: Vector3, dir: Vector2, side: Vector2, w: float, h: float, surface: TerrainSurface = null) -> void:
+	# The opening: a dark jamb stepping in from the face's arch, then a black backdrop just
+	# behind it, darkest at the middle so it reads as depth. It stands in front of the hill
+	# behind, so the ground can't show through it and nothing of it pokes out of the slope.
+	const SEG := 16
 	var out := Vector3(dir.x, 0, dir.y)
 	var sd := Vector3(side.x, 0, side.y)
 	var rim: Array[Vector3] = []
+	var inner: Array[Vector3] = []
 	for k in SEG + 1:
 		var a := PI * float(k) / SEG
-		rim.append(base + sd * cos(a) * w * 0.5 + Vector3.UP * sin(a) * h + out * 0.6)
-	var deep := base - out * 5.0 + Vector3.UP * h * 0.3
-	var prev := rim
-	for r in range(1, RINGS + 1):
-		var t := float(r) / RINGS
-		var ring: Array[Vector3] = []
-		for k in SEG + 1:
-			ring.append(rim[k].lerp(deep, t))
-		for k in SEG:
-			# Near-black throughout (no lighter rings): the cave swallows the light.
-			var col := Color(0.012, 0.011, 0.01) * (1.0 - t * 0.7)
-			data.tri(prev[k], prev[k + 1], ring[k + 1], Vector2.ZERO, Vector2.ZERO, Vector2.ZERO, out, Vector2.ZERO, col)
-			data.tri(prev[k], ring[k + 1], ring[k], Vector2.ZERO, Vector2.ZERO, Vector2.ZERO, out, Vector2.ZERO, col)
-		prev = ring
-	# Floor of the opening.
-	data.tri(rim[0], rim[SEG], deep - Vector3.UP * h * 0.3, Vector2.ZERO, Vector2.ZERO, Vector2.ZERO, Vector3.UP, Vector2.ZERO, Color(0.01, 0.009, 0.008))
+		var off := sd * cos(a) * w * 0.5 + Vector3.UP * sin(a) * h
+		rim.append(base + off + out * 0.6)
+		inner.append(base + off * 0.9 + out * -0.1)
+	var centre := base + Vector3.UP * h * 0.35 - out * 0.15
+	var c_rim := Color(0.035, 0.032, 0.03)
+	var c_in := Color(0.012, 0.011, 0.01)
+	var c_mid := Color(0.0, 0.0, 0.0)
+	for k in SEG:
+		data.tri(rim[k], rim[k + 1], inner[k + 1], Vector2.ZERO, Vector2.ZERO, Vector2.ZERO, out, Vector2.ZERO, c_rim.lerp(c_in, 0.5))
+		data.tri(rim[k], inner[k + 1], inner[k], Vector2.ZERO, Vector2.ZERO, Vector2.ZERO, out, Vector2.ZERO, c_rim.lerp(c_in, 0.5))
+		data.tri(inner[k], inner[k + 1], centre, Vector2.ZERO, Vector2.ZERO, Vector2.ZERO, out, Vector2.ZERO, c_mid)
+	# Close the bottom between the two legs.
+	data.tri(inner[0], centre, inner[SEG], Vector2.ZERO, Vector2.ZERO, Vector2.ZERO, out, Vector2.ZERO, c_mid)
+	data.tri(rim[0], inner[0], inner[SEG], Vector2.ZERO, Vector2.ZERO, Vector2.ZERO, Vector3.UP, Vector2.ZERO, c_in)
+	data.tri(rim[0], inner[SEG], rim[SEG], Vector2.ZERO, Vector2.ZERO, Vector2.ZERO, Vector3.UP, Vector2.ZERO, c_in)
 
 
 ## How far a frame stone may stand above the ground: the top of the arch rises clear, the

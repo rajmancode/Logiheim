@@ -732,6 +732,10 @@ func carve_channels(paths: Array) -> void:
 			var pt := path.points[k]
 			var w := path.widths[k]
 			var depth := RiverMeshBuilder.depth_for(w)
+			# Where the river reaches the sea its bed comes up to the shelf around it, so the
+			# estuary shows the same shallow water as the coast beside it.
+			if pt.y < sea_y + 0.15:
+				depth = minf(depth, 1.0)
 			var bed := pt.y - depth
 			# Thin streams still get a channel at least a grid cell wide: the terrain is a
 			# 5 m mesh, so a narrower cut would leave its triangles over the water.

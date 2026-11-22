@@ -585,13 +585,12 @@ static func _ribbon(path: RiverPath, verts: PackedVector3Array, normals: PackedV
 		for k in range(s0, -1, -1):
 			if k < s0:
 				run += path.points[k].distance_to(path.points[k + 1])
-			sea_mix[k] = 1.0 - smoothstep(0.0, maxf(path.widths[k] * 3.0, 25.0), run)
-		var past := 0.0
+			sea_mix[k] = 1.0 - smoothstep(0.0, maxf(path.widths[k] * 4.0, 40.0), run)
+			# Fully faded by the time it meets the sea: from there on only the sea is drawn.
+			fade[k] = minf(fade[k], smoothstep(0.0, maxf(path.widths[k] * 2.0, 18.0), run))
 		for k in range(s0, n):
-			if k > s0:
-				past += path.points[k].distance_to(path.points[k - 1])
 			sea_mix[k] = 1.0
-			fade[k] = minf(fade[k], 1.0 - smoothstep(0.0, maxf(path.widths[k] * 1.5, 14.0), past))
+			fade[k] = 0.0
 		var from_end := 0.0
 		var reach := maxf(path.widths[n - 1] * 5.0, 30.0)
 		for k in range(n - 1, -1, -1):

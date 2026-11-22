@@ -35,7 +35,7 @@ uniform float surf_period = 8.0;   // seconds between sets of breakers
 // River mouths (sea only): xy = where the river meets the sea, z = flow angle, w = width (m).
 uniform vec4 mouths[32];
 uniform int mouth_count = 0;
-uniform vec3 plume_color : source_color = vec3(0.17, 0.22, 0.13);
+uniform vec3 plume_color : source_color = vec3(0.1, 0.42, 0.38);
 
 // The river's outflow at a point: how much plume water is here (0..1) and how close to the
 // plume's edge, where fresh water meets salt and foam lines collect (0..1).
@@ -213,7 +213,8 @@ void fragment() {
 	if (rp.x > 0.001 || rp.y > 0.001) {
 		// Silty river water: greener-brown and murkier, in drifting patches.
 		float silt = 0.75 + 0.5 * env_noise(v_world_pos.xz * 0.04 + vec2(TIME * 0.02, 0.0));
-		col = mix(col, plume_color * silt, clamp(rp.x * 0.9, 0.0, 0.85));
+		// A gentle greener tint in the sea's own shallow colour, never a dark patch.
+		col = mix(col, plume_color * silt, clamp(rp.x * 0.35, 0.0, 0.3));
 		vec2 sq = mat2(vec2(0.8, 0.6), vec2(-0.6, 0.8)) * v_world_pos.xz;
 		float streak = smoothstep(0.55, 0.8, env_noise(sq * 0.22 + vec2(TIME * 0.2, 0.0))) * rp.y;
 		foam = max(foam, streak * 0.75);
