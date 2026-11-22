@@ -27,7 +27,7 @@ varying float v_width;
 varying float v_fade;
 varying float v_sea;
 varying vec3 v_shape_n;
-uniform vec3 sea_shallow : source_color = vec3(0.1, 0.21, 0.16);   // = the sea's river plume colour
+uniform vec3 sea_shallow : source_color = vec3(0.17, 0.22, 0.13);   // = the sea's river plume colour
 
 // The water surface's own shape (metres up), from across (u 0..1) and along (metres):
 // slightly crowned in the middle, with waves running downstream at the flow's speed and,

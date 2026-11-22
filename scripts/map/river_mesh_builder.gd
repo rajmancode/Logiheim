@@ -312,7 +312,12 @@ static func place(all: Array, level: HexLevel, surface: TerrainSurface, hydro: H
 				w *= lerpf(0.25, 1.0, smoothstep(0.0, 300.0, along))
 			w = maxf(w, min_w)
 			if c.to_sea and not c.get("delta", false):
-				w *= lerpf(1.0, 1.8, smoothstep(total * 0.75, total, along))
+				# Estuary: over the last stretch (up to ~250 m) the river opens out into a
+				# funnel, ~3x wider at the sea, its banks swelling and pinching unevenly.
+				var est := minf(maxf(total * 0.3, 80.0), 250.0)
+				var f := smoothstep(total - est, total, along)
+				var uneven := 1.0 + 0.35 * f * (BorderNoise.snoise(Vector2(along * 0.025, pts[0].x * 0.013 + pts[0].y * 0.007)) - 0.5)
+				w *= lerpf(1.0, 3.2, f * f) * uneven
 			var y := hydro.filled_at(pts[k]) - depth_for(w) * 0.25
 			if c.to_sea and k == n - 1:
 				y = surface.sea_y + 0.03

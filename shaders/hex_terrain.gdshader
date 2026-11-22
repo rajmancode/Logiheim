@@ -366,19 +366,26 @@ void fragment() {
 	// lichen on the gentler faces and layered strata on steep ones.
 	float rockm = smoothstep(0.12, 0.55, w[5]) * (1.0 - smoothstep(0.3, 0.8, v_volcanic) * 0.6);
 	if (rockm > 0.01) {
-		vec2 rq;
-		if (abs(n.y) > 0.62) {
-			rq = p.xz;
-		} else if (abs(n.x) > abs(n.z)) {
-			rq = p.zy;
-		} else {
-			rq = p.xy;
-		}
 		float e = 0.12;
-		float h0 = rock_h(rq);
-		float hx = rock_h(rq + vec2(e, 0.0));
-		float hz = rock_h(rq + vec2(0.0, e));
-		vec2 grad = vec2(hx - h0, hz - h0) / e;
+		float h0;
+		vec2 grad;
+		if (abs(n.y) > 0.62) {
+			vec2 rq = p.xz;
+			h0 = rock_h(rq);
+			grad = vec2(rock_h(rq + vec2(e, 0.0)) - h0, rock_h(rq + vec2(0.0, e)) - h0) / e;
+		} else {
+			// Steep: the two side projections blended by how the face is turned (triplanar),
+			// so the relief keeps its shape whichever way the face points.
+			float wx = abs(n.x) / max(abs(n.x) + abs(n.z), 1e-4);
+			vec2 qa = p.zy;
+			vec2 qb = p.xy;
+			float ha = rock_h(qa);
+			float hb = rock_h(qb + vec2(37.0, 11.0));
+			vec2 ga = vec2(rock_h(qa + vec2(e, 0.0)) - ha, rock_h(qa + vec2(0.0, e)) - ha) / e;
+			vec2 gb = vec2(rock_h(qb + vec2(37.0 + e, 11.0)) - hb, rock_h(qb + vec2(37.0, 11.0 + e)) - hb) / e;
+			h0 = mix(hb, ha, wx);
+			grad = mix(gb, ga, wx);
+		}
 		nrm_xy += grad * 0.5 * rockm;
 		// Crevices and pits hold shadow and grime; knobs catch the light a little.
 		// Shading comes from the relief itself; only the deepest hollows hold a little grime.
