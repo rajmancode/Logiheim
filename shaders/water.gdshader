@@ -96,7 +96,11 @@ void gerstner(vec2 xz, vec2 dir, float len, float amp, float steep, float t, ino
 void vertex() {
 	vec3 wp = (MODEL_MATRIX * vec4(VERTEX, 1.0)).xyz;
 	float amp = wave_height * (0.4 + 1.2 * wind_strength);
-	VERTEX.y += waves(wp.xz, wind_time) * amp;
+	// River mouths are calm: the current holds the swell and surf back, so the water there
+	// never heaves up over the banks.
+	float still = 1.0 - (mouth_count > 0 ? river_plume(wp.xz, TIME).z : 0.0);
+	float base_y = waves(wp.xz, wind_time) * amp * still;
+	VERTEX.y += base_y;
 	v_wave_n = vec3(0.0, 1.0, 0.0);
 	if (use_terrain) {
 		// Depth from the terrain height map: waves calm right at the shore and grow offshore.
@@ -144,7 +148,9 @@ void vertex() {
 				disp.y += bump * 0.55 * surf * smoothstep(0.4, 1.8, depth);
 			}
 		}
-		VERTEX += disp;
+		// No heave in the last metre and a half of water either, where it would ride up the beach.
+		VERTEX.y -= base_y * (1.0 - smoothstep(0.2, 1.5, depth));
+		VERTEX += disp * still;
 		v_wave_n = normalize(nrm);
 	}
 	v_world_pos = (MODEL_MATRIX * vec4(VERTEX, 1.0)).xyz;

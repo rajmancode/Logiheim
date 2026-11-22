@@ -55,6 +55,9 @@ const ORE_FINISH := {"outcrop_iron": 1, "outcrop_silver": 2, "outcrop_coal": 3, 
 const PROP_BOOST := 2.0
 ## Per-model correction on top of PROP_BOOST for props that are big to begin with, so they
 ## stay in proportion to trees (log piles and quarries would otherwise tower over a forest).
+## Props that lie on the ground rather than stand on it (pits, pans, gravel spreads): they tilt
+## to the slope and sink in until only this much of their height (model units) shows above it.
+const FLAT_PROPS := {"clay_pit": 0.1, "gold_gravel": 0.08, "amber": 0.08}
 const PROP_SIZE := {"log_pile": 0.5, "quarry": 0.55, "tar_kiln": 0.75, "salt_pans": 0.8, "clay_pit": 0.8, "peat_stack": 0.8}
 
 ## Ground tint per resource: deposits colour the land they cover (rusty soil over iron, golden
@@ -178,6 +181,9 @@ static func build(level: HexLevel, surface: TerrainSurface, hydro: Hydrology, pa
 						var home := herd_spot if def[4] and herd_spot.x != INF else p
 						_spawn_animal(parent, model.trim_prefix("a:"), Vector3(p.x, y, p.y), yaw, size, custom,
 							surface, home, s * (0.6 if def[3] == "deep" else 0.9) * sqrt(scale), rng.randi())
+					elif FLAT_PROPS.has(model):
+						size *= PROP_BOOST * float(PROP_SIZE.get(model, 1.0))
+						_add(items, model, _flat_on_ground(model, p, yaw, size, surface), custom)
 					else:
 						if not model.begins_with("a:"):
 							size *= PROP_BOOST * float(PROP_SIZE.get(model, 1.0))
@@ -358,6 +364,33 @@ static func build_outlines(level: HexLevel, surface: TerrainSurface, sea_y: floa
 
 
 ## True if a prop of `kind` with radius r at p doesn't overlap a prop of another resource.
+## A ground-hugging prop moulded into the land: tilted to the plane of the ground under its
+## footprint and sunk so just its top shows; lifted only where the ground bulges over it.
+static func _flat_on_ground(model: String, p: Vector2, yaw: float, size: float, surface: TerrainSurface) -> Transform3D:
+	var ab := _mesh(model).get_aabb() if _mesh(model) != null else AABB(Vector3(-2, 0, -2), Vector3(4, 0.5, 4))
+	var r := maxf(ab.size.x, ab.size.z) * 0.5 * size * 0.8
+	var c := surface.sample_mesh(p)
+	var hx := (surface.sample_mesh(p + Vector2(r, 0)) - surface.sample_mesh(p - Vector2(r, 0))) / (2.0 * r)
+	var hz := (surface.sample_mesh(p + Vector2(0, r)) - surface.sample_mesh(p - Vector2(0, r))) / (2.0 * r)
+	# Plane height at the centre: the mean of the centre and the four probes.
+	var y := (c * 2.0 + surface.sample_mesh(p + Vector2(r, 0)) + surface.sample_mesh(p - Vector2(r, 0))
+		+ surface.sample_mesh(p + Vector2(0, r)) + surface.sample_mesh(p - Vector2(0, r))) / 6.0
+	var nrm := Vector3(-hx, 1.0, -hz).normalized()
+	# At most 25 degrees of tilt: steeper than that it would read as a wall, not a pit.
+	var tilt := acos(clampf(nrm.y, -1.0, 1.0))
+	if tilt > deg_to_rad(25.0):
+		nrm = Vector3.UP.slerp(nrm, deg_to_rad(25.0) / tilt)
+	# The ground under the whole footprint is pressed onto that plane, so no edge stands
+	# proud of a slope or sinks into it.
+	var half := Vector2(ab.size.x, ab.size.z).length() * 0.5 * size
+	surface.plane_pad(p, half, y, nrm, 6.0, 1.5)
+	var show: float = FLAT_PROPS[model]
+	var top := ab.position.y + ab.size.y
+	var basis := Basis(Quaternion(Vector3.UP, nrm)) * Basis(Vector3.UP, yaw)
+	basis = basis.scaled(Vector3.ONE * size)
+	return Transform3D(basis, Vector3(p.x, y - (top - show) * size, p.y))
+
+
 static func _free(occ: Array, p: Vector2, r: float, kind: int) -> bool:
 	for o: Array in occ:
 		if o[2] != kind and (o[0] as Vector2).distance_to(p) < r + float(o[1]):

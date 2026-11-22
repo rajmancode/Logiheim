@@ -122,7 +122,9 @@ void fragment() {
 	SPECULAR = 0.5;
 	NORMAL = normalize((VIEW_MATRIX * vec4(wn, 0.0)).xyz);
 	// Soft banks: fade out where the water gets very shallow.
-	ALPHA = clamp(depth / 0.25, 0.0, 1.0) * smoothstep(0.0, 0.06, min(UV.x, 1.0 - UV.x)) + foam * 0.3;
+	// A soft waterline: over a bar or bank the water thins out over most of a metre of depth,
+	// so its edge never traces the terrain mesh's triangles.
+	ALPHA = clamp(depth / 0.7, 0.0, 1.0) * smoothstep(0.0, 0.06, min(UV.x, 1.0 - UV.x)) + foam * 0.3;
 	ALPHA = clamp(ALPHA, 0.0, 1.0) * v_fade;
 	// Faded-out water writes no depth either, so the sea under a river mouth is never hidden.
 	if (ALPHA < 0.004) {

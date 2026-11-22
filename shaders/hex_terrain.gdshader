@@ -218,7 +218,8 @@ void pick(int cls, float hr, float slope, float alt, float moist, float convex, 
 		b2 = T_WET_SAND; c2 = 0.5;
 	} else if (cls == 2) {
 		a = T_SAND;
-		b1 = T_WET_SAND; c1 = 1.0 - smoothstep(0.3, 1.5, hr);
+		// Wet sand up to an uneven tide line (a level one would follow the mesh's triangles).
+		b1 = T_WET_SAND; c1 = 1.0 - smoothstep(0.2, 1.6, hr + (n2 - 0.5) * 1.1);
 		b2 = T_PEBBLES;  c2 = smoothstep(0.58, 0.7, n1) * (1.0 - smoothstep(1.5, 5.0, hr)) + smoothstep(0.12, 0.3, slope) + smoothstep(0.75, 0.95, river) * 0.8;
 		b3 = T_DUNE;     c3 = smoothstep(1.8, 4.0, hr) * smoothstep(0.38, 0.6, n2);
 	} else if (cls == 3) {
@@ -310,7 +311,12 @@ void fragment() {
 			}
 			alb[i] = a;
 			nrm[i] = nr;
-			score[i] = w[i] + alb[i].a * 0.5;
+			// Organic, world-space wobble per layer: the weights are interpolated across the
+			// mesh's triangles (10-15 m on coarse levels), so without it a sharp height blend
+			// draws their straight edges - square patches and saw-tooth coasts.
+			vec2 q = p.xz + vec2(float(i) * 37.1, float(i) * 11.7);
+			float wob = env_noise(q * 0.05) * 0.65 + env_noise(q * 0.13 + vec2(4.3, 8.1)) * 0.35;
+			score[i] = w[i] + alb[i].a * 0.5 + (wob - 0.5) * 0.45 * smoothstep(0.02, 0.25, w[i]) * smoothstep(0.02, 0.25, 1.0 - w[i]);
 			best = max(best, score[i]);
 		}
 	}

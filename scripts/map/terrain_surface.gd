@@ -135,7 +135,7 @@ func ground_min(p: Vector2, r: float) -> float:
 ## terrain averaged over its footprint, and any footprint that is a third or more land stays
 ## land (spits, bars, islets and reefs don't wash away at coarse resolution).
 func match_coast(fine: TerrainSurface) -> void:
-	var r := spacing * 0.4
+	var r := spacing * 0.3
 	for z in nz:
 		for x in nx:
 			var i := z * nx + x
@@ -144,8 +144,8 @@ func match_coast(fine: TerrainSurface) -> void:
 			var land := 0
 			var land_sum := 0.0
 			var sea_sum := 0.0
-			for dz in range(-1, 2):
-				for dx in range(-1, 2):
+			for dz in range(-2, 3):
+				for dx in range(-2, 3):
 					var h := fine.sample(p + Vector2(dx, dz) * r)
 					acc += h
 					if h > sea_y:
@@ -153,13 +153,28 @@ func match_coast(fine: TerrainSurface) -> void:
 						land_sum += h
 					else:
 						sea_sum += h
-			var a := acc / 9.0
+			var a := acc / 25.0
 			var w := 1.0 - smoothstep(12.0, 30.0, a - sea_y)
 			if w <= 0.0:
 				continue
 			# Land from the land samples, sea from the sea samples (mixing them would make a
-			# wide, half-drowned strip along every shore).
-			var target := maxf(land_sum / maxf(land, 1), sea_y + 0.4) if land >= 3 				else minf(sea_sum / maxf(9 - land, 1), sea_y - 0.6)
+			# wide, half-drowned strip along every shore). Where both are present, the height
+			# follows the share of land around the vertex, so it stands as far above or below
+			# the sea as the true shore is from it: the coarse mesh's shoreline then runs where
+			# the fine one does, smoothly, instead of half-way along every triangle edge in
+			# zig-zags (and without flat terraces pinned just above the sea).
+			var f := land / 25.0
+			var target: float
+			if land == 25:
+				target = maxf(land_sum / 25.0, sea_y + 0.25)
+			elif land == 0:
+				target = minf(sea_sum / 25.0, sea_y - 0.25)
+			else:
+				target = sea_y + (f - 0.5) * 2.0
+				if f > 0.5:
+					target = lerpf(target, maxf(land_sum / land, target), smoothstep(0.6, 1.0, f))
+				else:
+					target = lerpf(target, minf(sea_sum / (25 - land), target), smoothstep(0.6, 1.0, 1.0 - f))
 			heights[i] = lerpf(heights[i], target, w)
 
 
@@ -211,6 +226,26 @@ func add_rock_relief(amount := 1.0) -> void:
 					var d := cq.distance_to(pt)
 					pit = maxf(pit, exp(-(d * d) / (rr * rr)))
 			heights[i] += (g * 2.2 - pit * 1.4) * amount * r
+
+
+## A sloping pad: the ground within r is pressed onto the plane through (p, y) with normal n,
+## easing back to the land over `ease` metres (at most max_change of cut or fill), so a prop
+## that lies on the ground (a clay pit, salt pans) sits flush all round, tilted with the slope.
+func plane_pad(p: Vector2, r: float, y: float, n: Vector3, ease := 6.0, max_change := 1.2) -> void:
+	var reach := r + ease
+	for z in range(maxi(0, floori((p.y - reach) / spacing)), mini(nz, ceili((p.y + reach) / spacing) + 1)):
+		for x in range(maxi(0, floori((p.x - reach) / spacing)), mini(nx, ceili((p.x + reach) / spacing) + 1)):
+			var i := z * nx + x
+			var o := Vector2(x, z) * spacing - p
+			var d := o.length()
+			if d > reach:
+				continue
+			var t := 1.0 - smoothstep(r, reach, d)
+			t *= (1.0 - clampf(river_mask[i] / 0.3, 0.0, 1.0)) * (1.0 - clampf(path_mask[i] / 0.5, 0.0, 1.0))
+			var plane := y - (n.x * o.x + n.z * o.y) / maxf(n.y, 0.3)
+			heights[i] = lerpf(heights[i], clampf(plane, heights[i] - max_change, heights[i] + max_change), t)
+			if d < r + 2.0:
+				clear_mask[i] = 1
 
 
 ## A level pad for a prop: the ground within r is brought to its average height there (so the
@@ -447,10 +482,12 @@ func _compute_heights() -> void:
 			var land_share := land / sw
 			# Real relief inside the hex, relative to the hexes' own mean height.
 			h += (_smooth_height(p) - sm / sw) * detail * land_share * (sl / sw)
-			if land_share > 0.55:
-				h = maxf(h, sea_y + 0.6)
-			elif land_share <= 0.0:
-				h = minf(h, sea_y - 0.8)
+			# Mostly-land ground stands clear of the sea and all-sea ground stays under it - but
+			# eased in over a band, with a wandering threshold: a hard cut at a fixed share of
+			# land runs along the hex edges and gives step-sided, saw-tooth coasts.
+			var ls := land_share + (BorderNoise.snoise(p * 0.02 + Vector2(3.3, 7.7)) - 0.5) * 0.35
+			h = maxf(h, lerpf(h, sea_y + 0.6, smoothstep(0.35, 0.75, ls)))
+			h = minf(h, lerpf(h, sea_y - 0.8, 1.0 - smoothstep(0.0, 0.3, ls)))
 			heights[vi] = h
 			var natural := _settings.natural_texturing if land_share > 0.5 else 0.0
 			for k in 7:
@@ -530,7 +567,9 @@ func _roughen_coast() -> void:
 			if d > 3.0:
 				continue
 			var p := Vector2(x * spacing, z * spacing)
-			var n := BorderNoise.snoise(p * 0.025 + Vector2(6.0, 2.0)) * 0.65 + BorderNoise.snoise(p * 0.08 + Vector2(1.0, 9.0)) * 0.35
+			# Wavelengths of 25 m and more: anything shorter is barely sampled by the 5 m grid and
+			# turns into single-triangle bumps (faceted, polygon-patched shores).
+			var n := BorderNoise.snoise(p * 0.025 + Vector2(6.0, 2.0)) * 0.65 + BorderNoise.snoise(p * 0.04 + Vector2(1.0, 9.0)) * 0.35
 			heights[i] += (n - 0.5) * 2.4 * (1.0 - smoothstep(0.0, 3.0, d))
 
 
