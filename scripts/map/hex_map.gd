@@ -202,7 +202,7 @@ func rebuild() -> void:
 		mat.set_shader_parameter("relief", maxf(level.max_top_y() - sea_y, 10.0))
 		mat.set_shader_parameter("show_grid", _show_grid)
 		TerrainMeshBuilder.build(surface, mat, root)
-		RiverMeshBuilder.build(paths, root, sea_y)
+		RiverMeshBuilder.build(paths, root, sea_y, surface)
 		volcano.build_effects(surface, root)
 		if level.level_index <= 1:
 			roads.build_meshes(surface, root, paths)
@@ -267,6 +267,8 @@ func _build_water() -> void:
 	if _water == null:
 		_water_material = ShaderMaterial.new()
 		_water_material.shader = load("res://shaders/water.gdshader")
+		# The sea draws before rivers and mouth melds (priority 1), which blend over it.
+		_water_material.render_priority = -1
 		_water_material.set_shader_parameter("wave_normal", _get_wave_normal())
 		_water = MeshInstance3D.new()
 		_water.name = "Sea"
@@ -341,8 +343,9 @@ func _build_water() -> void:
 	# River mouths: strips of sea water melding each river into the sea (finest two levels).
 	var meld_mat := _water_material.duplicate() as ShaderMaterial
 	meld_mat.set_shader_parameter("edge_alpha", true)
+	meld_mat.render_priority = 1
 	for li in mini(2, mini(river_paths.size(), _level_roots.size())):
-		RiverMeshBuilder.build_mouth_melds(river_paths[li], meld_mat, _level_roots[li], sea_y)
+		RiverMeshBuilder.build_mouth_melds(river_paths[li], meld_mat, _level_roots[li], sea_y, surfaces[li])
 
 
 func _get_wave_normal() -> NoiseTexture2D:

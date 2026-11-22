@@ -39,9 +39,10 @@ uniform vec3 plume_color : source_color = vec3(0.1, 0.42, 0.38);
 
 // The river's outflow at a point: how much plume water is here (0..1) and how close to the
 // plume's edge, where fresh water meets salt and foam lines collect (0..1).
-vec2 river_plume(vec2 xz, float t) {
+vec3 river_plume(vec2 xz, float t) {
 	float plume = 0.0;
 	float shear = 0.0;
+	float calm = 0.0;
 	for (int i = 0; i < 32; i++) {
 		if (i >= mouth_count) {
 			break;
@@ -51,6 +52,12 @@ vec2 river_plume(vec2 xz, float t) {
 		vec2 rel = xz - m.xy;
 		float along = dot(rel, d);
 		float w = max(m.w, 2.0);
+		// In the river's own mouth the current holds the surf back: no shore foam line where
+		// the sea floods in over the river bed, and a soft water edge instead of a hard one.
+		float mx = dot(rel, vec2(-d.y, d.x));
+		float mlen = max(w * 4.0, 40.0);
+		calm = max(calm, smoothstep(-mlen, -mlen * 0.6, along) * (1.0 - smoothstep(w * 1.0, w * 2.5, along))
+			* (1.0 - smoothstep(w * 0.7 + 4.0, w * 1.4 + 10.0, abs(mx))));
 		float len = 90.0 + w * 22.0;
 		if (along < -w * 2.0 || along > len) {
 			continue;
@@ -64,7 +71,7 @@ vec2 river_plume(vec2 xz, float t) {
 		float e = (abs(across) - spread * 0.9) / (spread * 0.12 + 1.0);
 		shear = max(shear, exp(-e * e) * reach * (1.0 - smoothstep(len * 0.2, len * 0.75, along)));
 	}
-	return vec2(plume, shear);
+	return vec3(plume, shear, calm);
 }
 
 float waves(vec2 p, float t) {
@@ -145,7 +152,7 @@ void vertex() {
 }
 
 void fragment() {
-	vec2 rp = mouth_count > 0 ? river_plume(v_world_pos.xz, TIME) : vec2(0.0);
+	vec3 rp = mouth_count > 0 ? river_plume(v_world_pos.xz, TIME) : vec3(0.0);
 	// Small ripples from two scrolling normal maps, drifting with the wind.
 	vec2 drift = wind_direction * wind_time * 0.012;
 	vec2 uv1 = v_world_pos.xz * wave_scale - drift + TIME * vec2(0.0015, 0.0008);
@@ -209,6 +216,7 @@ void fragment() {
 		// The face of a breaker catches the light a little.
 		col *= 1.0 + 0.15 * breakers * surf;
 	}
+	foam *= 1.0 - rp.z * 0.9;
 	// River plume: silty river water spreading over the sea, with foam lines along its edges.
 	if (rp.x > 0.001 || rp.y > 0.001) {
 		// Silty river water: greener-brown and murkier, in drifting patches.
@@ -216,8 +224,9 @@ void fragment() {
 		// A gentle greener tint in the sea's own shallow colour, never a dark patch.
 		col = mix(col, plume_color * silt, clamp(rp.x * 0.35, 0.0, 0.3));
 		vec2 sq = mat2(vec2(0.8, 0.6), vec2(-0.6, 0.8)) * v_world_pos.xz;
-		float streak = smoothstep(0.55, 0.8, env_noise(sq * 0.22 + vec2(TIME * 0.2, 0.0))) * rp.y;
-		foam = max(foam, streak * 0.75);
+		// Thin, broken lines of foam (not blobs) along the plume's edge.
+		float streak = smoothstep(0.7, 0.88, env_noise(sq * vec2(0.5, 0.12) + vec2(TIME * 0.2, 0.0))) * rp.y;
+		foam = max(foam, streak * 0.4);
 	}
 	col = mix(col, vec3(0.92, 0.95, 0.96), foam);
 
@@ -231,5 +240,8 @@ void fragment() {
 	NORMAL = normalize((VIEW_MATRIX * vec4(wn, 0.0)).xyz);
 	EMISSION = emission;
 	// Soft edge where the water meets the shore.
-	ALPHA = clamp(depth / 0.35, 0.0, 1.0) * v_edge;
+	ALPHA = clamp(depth / mix(0.35, 1.6, rp.z), 0.0, 1.0) * v_edge;
+	if (edge_alpha && ALPHA < 0.004) {
+		discard;
+	}
 }

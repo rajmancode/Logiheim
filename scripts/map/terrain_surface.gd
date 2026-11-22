@@ -761,7 +761,10 @@ func carve_channels(paths: Array) -> void:
 					var prof := 1.0 - smoothstep(cw * 0.3, cw * 1.5, d)
 					if prof > 0.0:
 						heights[i] = minf(heights[i], lerpf(heights[i], bed, prof))
-					river_mask[i] = maxf(river_mask[i], 1.0 - smoothstep(cw * 0.45, cw * 1.2, d))
+					# Near the sea the bed is the beach's and sea floor's sand, not river gravel,
+					# so the estuary's water looks like the sea's shallows beside it.
+					var coastal := smoothstep(sea_y + 0.3, sea_y + 3.0, pt.y)
+					river_mask[i] = maxf(river_mask[i], (1.0 - smoothstep(cw * 0.45, cw * 1.2, d)) * coastal)
 					if d < cw * 0.5 + 6.0:
 						clear_mask[i] = 1
 

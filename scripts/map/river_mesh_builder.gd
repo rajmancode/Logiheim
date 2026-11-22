@@ -20,6 +20,8 @@ static func material() -> ShaderMaterial:
 		return _material
 	_material = ShaderMaterial.new()
 	_material.shader = load(SHADER_PATH)
+	# Drawn after the sea (priority -1), so river water blends over it rather than hiding it.
+	_material.render_priority = 1
 	var noise := FastNoiseLite.new()
 	noise.noise_type = FastNoiseLite.TYPE_SIMPLEX_SMOOTH
 	noise.frequency = 0.03
@@ -522,6 +524,7 @@ static func settle(paths: Array[RiverPath], surface: TerrainSurface) -> void:
 # --------------------------------------------------------------------------- meshes
 
 static var _sea_level := -INF
+static var _surface: TerrainSurface = null
 
 
 ## How far up a river its water cross-fades into the sea's (metres).
@@ -532,7 +535,7 @@ static func meld_length(w: float) -> float:
 ## Where a river meets the sea, a strip of sea water (drawn with the sea's own material and
 ## waves) laid over its last stretch and a little way out to sea: it fades in as the river
 ## fades out, widening into the sea and soft at its edges, so river and sea are one surface.
-static func build_mouth_melds(paths: Array, sea_material: Material, parent: Node3D, sea_y: float) -> void:
+static func build_mouth_melds(paths: Array, sea_material: Material, parent: Node3D, sea_y: float, surface: TerrainSurface = null) -> void:
 	var verts := PackedVector3Array()
 	var normals := PackedVector3Array()
 	var colors := PackedColorArray()
@@ -565,16 +568,6 @@ static func build_mouth_melds(paths: Array, sea_material: Material, parent: Node
 			pts.append(path.points[k] + Vector3.UP * 0.08)
 			ws.append(path.widths[k] * lerpf(1.1, 1.5, t))
 			alpha.append(1.0 - clampf(up / L, 0.0, 1.0))
-		var a := path.points[maxi(s0 - 3, 0)]
-		var d3 := Vector3(path.points[s0].x - a.x, 0.0, path.points[s0].z - a.z).normalized()
-		var ext := maxf(path.widths[s0] * 2.0, 20.0)
-		var steps := 5
-		for q in range(1, steps + 1):
-			var f := float(q) / steps
-			var p := path.points[s0] + d3 * ext * f
-			pts.append(Vector3(p.x, sea_y + 0.03, p.z))
-			ws.append(path.widths[s0] * lerpf(1.5, 2.4, f))
-			alpha.append(1.0 - smoothstep(0.4, 1.0, f))
 		if pts.size() < 2:
 			continue
 		var base := verts.size()
@@ -586,9 +579,14 @@ static func build_mouth_melds(paths: Array, sea_material: Material, parent: Node
 			var side := Vector3(-tdir.y, 0.0, tdir.x) * ws[k] * 0.5
 			for c in ACROSS_M + 1:
 				var u := float(c) / ACROSS_M
-				verts.append(pts[k] + side * (u * 2.0 - 1.0))
+				var v := pts[k] + side * (u * 2.0 - 1.0)
+				verts.append(v)
 				normals.append(Vector3.UP)
-				colors.append(Color(1, 1, 1, alpha[k] * sin(PI * u)))
+				# Where the sea itself lies under it, the sea shows: the meld steps aside.
+				var over_sea := 0.0
+				if surface != null:
+					over_sea = 1.0 - smoothstep(sea_y - 2.0, sea_y - 0.6, surface.sample(Vector2(v.x, v.z)))
+				colors.append(Color(1, 1, 1, alpha[k] * sin(PI * u) * (1.0 - over_sea)))
 		var row := ACROSS_M + 1
 		for k in pts.size() - 1:
 			for c in ACROSS_M:
@@ -621,10 +619,11 @@ static func build_mouth_melds(paths: Array, sea_material: Material, parent: Node
 const ACROSS := 6
 
 
-static func build(paths: Array[RiverPath], parent: Node3D, sea_y := -INF) -> void:
+static func build(paths: Array[RiverPath], parent: Node3D, sea_y := -INF, surface: TerrainSurface = null) -> void:
 	if paths.is_empty():
 		return
 	_sea_level = sea_y
+	_surface = surface
 	var verts := PackedVector3Array()
 	var normals := PackedVector3Array()
 	var uvs := PackedVector2Array()
@@ -712,7 +711,7 @@ static func _ribbon(path: RiverPath, verts: PackedVector3Array, normals: PackedV
 		for k in range(n - 1, -1, -1):
 			if k < n - 1:
 				from_end += path.points[k].distance_to(path.points[k + 1])
-			fade[k] = smoothstep(0.0, reach, from_end)
+			fade[k] = minf(fade[k], smoothstep(0.0, reach, from_end))
 			if from_end > reach:
 				break
 	var base := verts.size()
@@ -734,7 +733,19 @@ static func _ribbon(path: RiverPath, verts: PackedVector3Array, normals: PackedV
 			verts.append(path.points[k] + side * (u * 2.0 - 1.0) + lift)
 			normals.append(nrm)
 			uv2s.append(Vector2(turb[k], path.widths[k]))
-			colors.append(Color(speed[k] / 6.0, fade[k], sea_mix[k]))
+			# Over the sea the river gives way: wherever the bank on this side (both banks
+			# for the middle) has dropped to sea level, the river fades out, so its surface
+			# ends along the real shoreline instead of a square end over the waves.
+			var fv := fade[k]
+			if _surface != null and _sea_level > -INF:
+				var sd2 := Vector2(side.x, side.z).normalized()
+				var c2 := Vector2(path.points[k].x, path.points[k].z)
+				var reach := path.widths[k] * 0.5 + 3.0
+				var gl := _surface.sample(c2 - sd2 * reach)
+				var gr := _surface.sample(c2 + sd2 * reach)
+				var g := lerpf(gl, gr, smoothstep(0.3, 0.7, u)) if absf(u - 0.5) > 0.2 else minf(gl, gr)
+				fv *= smoothstep(_sea_level - 0.4, _sea_level + 0.4, g)
+			colors.append(Color(speed[k] / 6.0, fv, sea_mix[k]))
 			uvs.append(Vector2(u, path.dist[k]))
 	var row := ACROSS + 1
 	for k in n - 1:

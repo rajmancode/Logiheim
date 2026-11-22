@@ -111,7 +111,8 @@ void fragment() {
 	foam = max(foam, bank * 0.15 * v_turb * smoothstep(0.5, 0.7, pn));
 	col = mix(col, foam_color, foam);
 	// Meeting the sea: the river water takes on the sea's shallow green-blue.
-	col = mix(col, mix(sea_shallow, bed_col, exp(-depth / 1.5) * 0.6), v_sea * 0.85);
+	vec3 sea_like = mix(sea_shallow, bed_col * vec3(0.75, 1.0, 1.0), exp(-depth / 2.5) * 0.4);
+	col = mix(col, sea_like, v_sea);
 	col *= cloud_shadow(v_world_pos);
 
 	// Lit by the water's own shape (crown and waves) plus the small ripples.
@@ -123,4 +124,8 @@ void fragment() {
 	// Soft banks: fade out where the water gets very shallow.
 	ALPHA = clamp(depth / 0.25, 0.0, 1.0) * smoothstep(0.0, 0.06, min(UV.x, 1.0 - UV.x)) + foam * 0.3;
 	ALPHA = clamp(ALPHA, 0.0, 1.0) * v_fade;
+	// Faded-out water writes no depth either, so the sea under a river mouth is never hidden.
+	if (ALPHA < 0.004) {
+		discard;
+	}
 }
