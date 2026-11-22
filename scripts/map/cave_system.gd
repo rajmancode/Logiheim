@@ -489,10 +489,12 @@ func floor_at(si: int, p: Vector2) -> float:
 
 
 ## The cave mouths: a dark recessed arch, a frame of rock slabs, fallen stones.
-func build_meshes(surface: TerrainSurface, parent: Node3D) -> void:
+func build_meshes(surface: TerrainSurface, parent: Node3D, terrain_mat: Material = null) -> void:
 	if systems.is_empty():
 		return
 	var mouths := MeshData.new()
+	var faces := {"verts": PackedVector3Array(), "normals": PackedVector3Array(), "colors": PackedColorArray(),
+		"uvs": PackedVector2Array(), "uv2s": PackedVector2Array(), "custom0": PackedFloat32Array(), "custom1": PackedFloat32Array()}
 	var items: Dictionary = {}
 	var rng := RandomNumberGenerator.new()
 	rng.seed = MapSeed.mix(6161)
@@ -509,29 +511,39 @@ func build_meshes(surface: TerrainSurface, parent: Node3D) -> void:
 			var h := clampf(minf(rng.randf_range(4.5, 6.0), wall * 0.9), 3.4, 6.0)
 			_mouth(mouths, Vector3(back.x, floor_y, back.y), dir, side, w, h)
 			var basalt := surface.volcanic_at(p)
-			# An outcrop the mouth opens from: big slabs round the arch and a roof mass over
-			# and behind it, all half buried in the slope, so the rock grows out of the hill.
-			for k in 9:
-				var a := PI * (float(k) / 8.0)
-				var off := side * cos(a) * (w * 0.68) + dir * rng.randf_range(-0.5, 0.8)
-				var size := rng.randf_range(3.5, 6.0)
-				var pos := Vector3(back.x + off.x, floor_y + sin(a) * h * 0.95 + size * 0.15, back.y + off.y)
-				pos.y = minf(pos.y, surface.sample(Vector2(pos.x, pos.z)) + size * 0.35 + sin(a) * h * 0.4)
-				var basis := Basis(Vector3.UP, rng.randf() * TAU).scaled(Vector3(size * rng.randf_range(0.9, 1.2), size * rng.randf_range(0.8, 1.05), size))
-				_add(items, ["rock_a", "rock_c", "rock_e"][rng.randi() % 3], Transform3D(basis, pos), Color(1, 1, 1, basalt))
+			# The rock face the cave opens from: a sculpted wall standing at the back of the
+			# alcove, leaning back into the hill, its ragged edges sinking into the slope.
+			_rock_face(faces, surface, back, floor_y, dir, side, w, h, rng.randf() * 100.0)
+			# A few blocks fallen from it, half buried at its foot.
 			for k in 3:
-				var q := back - dir * rng.randf_range(2.5, 7.0) + side * rng.randf_range(-w * 0.6, w * 0.6)
-				var size := rng.randf_range(5.0, 8.0)
-				# Mostly buried: only the top of the roof rock shows above the slope.
-				var y := maxf(floor_y + h + size * 0.05, surface.sample(q) - size * 0.4)
-				var basis := Basis(Vector3.UP, rng.randf() * TAU).scaled(Vector3(size * 1.1, size * 0.75, size))
-				_add(items, ["rock_c", "rock_a"][rng.randi() % 2], Transform3D(basis, Vector3(q.x, y, q.y)), Color(1, 1, 1, basalt))
+				var q := back + dir * rng.randf_range(1.5, 3.5) + side * (rng.randf_range(0.6, 1.1) * w * (1.0 if k % 2 == 0 else -1.0))
+				var size := rng.randf_range(1.6, 3.2)
+				var basis := Basis(Vector3.UP, rng.randf() * TAU).scaled(Vector3(size, size * 0.8, size))
+				_add(items, ["rock_a", "rock_c"][k % 2], Transform3D(basis, Vector3(q.x, surface.ground_min(q, size * 0.6) - size * 0.2, q.y)), Color(1, 1, 1, basalt))
 			# Fallen stones on the ledge.
 			for k in rng.randi_range(2, 4):
 				var q := p + dir * rng.randf_range(3.0, 8.0) + side * rng.randf_range(-w, w)
 				var size := rng.randf_range(0.8, 2.0)
 				var basis := Basis(Vector3.UP, rng.randf() * TAU).scaled(Vector3.ONE * size)
 				_add(items, ["rock_b", "rock_d"][rng.randi() % 2], Transform3D(basis, Vector3(q.x, surface.ground_min(q, size * 0.6) - size * 0.1, q.y)), Color(1, 1, 1, basalt))
+	if not (faces.verts as PackedVector3Array).is_empty():
+		var arrays := []
+		arrays.resize(Mesh.ARRAY_MAX)
+		arrays[Mesh.ARRAY_VERTEX] = faces.verts
+		arrays[Mesh.ARRAY_NORMAL] = faces.normals
+		arrays[Mesh.ARRAY_COLOR] = faces.colors
+		arrays[Mesh.ARRAY_TEX_UV] = faces.uvs
+		arrays[Mesh.ARRAY_TEX_UV2] = faces.uv2s
+		arrays[Mesh.ARRAY_CUSTOM0] = faces.custom0
+		arrays[Mesh.ARRAY_CUSTOM1] = faces.custom1
+		var fm := ArrayMesh.new()
+		var fmt := (Mesh.ARRAY_CUSTOM_RGBA_FLOAT << Mesh.ARRAY_FORMAT_CUSTOM0_SHIFT) | (Mesh.ARRAY_CUSTOM_RGBA_FLOAT << Mesh.ARRAY_FORMAT_CUSTOM1_SHIFT)
+		fm.add_surface_from_arrays(Mesh.PRIMITIVE_TRIANGLES, arrays, [], {}, fmt)
+		var fmi := MeshInstance3D.new()
+		fmi.name = "CaveFaces"
+		fmi.mesh = fm
+		fmi.material_override = terrain_mat if terrain_mat != null else Vegetation._material("Rock")
+		parent.add_child(fmi)
 	var mi := MeshInstance3D.new()
 	mi.name = "CaveMouths"
 	mi.mesh = mouths.to_mesh()
@@ -557,6 +569,112 @@ func build_meshes(surface: TerrainSurface, parent: Node3D) -> void:
 		parent.add_child(mmi)
 
 
+## The rock face round a cave mouth: a grid (across x up) pushed in and out by noise, bulging
+## out of the hill in the middle and leaning back as it rises, with a ragged rounded outline
+## whose edges sink into the ground. Grid points inside the arch are moved onto its outline, so
+## the opening has a clean edge that meets the dark recess's rim exactly. Drawn with the
+## terrain's own material as pure rock, so it is the hillside's rock, not a separate object.
+static func _rock_face(f: Dictionary, surface: TerrainSurface, back: Vector2, floor_y: float, dir: Vector2, side: Vector2, w: float, h: float, seed: float) -> void:
+	const NU := 44
+	const NV := 30
+	var fw := w + 12.0
+	var fh := h + 6.0
+	var out3 := Vector3(dir.x, 0.0, dir.y)
+	var sd3 := Vector3(side.x, 0.0, side.y)
+	var o := Vector3(back.x, floor_y, back.y)
+	var volc := surface.volcanic_at(back)
+	var pos := PackedVector3Array()
+	var inside := PackedByteArray()
+	var keep := PackedByteArray()
+	for j in NV + 1:
+		for i in NU + 1:
+			var u := (float(i) / NU - 0.5) * fw
+			var v := float(j) / NV * (fh + 2.0) - 2.0
+			var arch := pow(u / (w * 0.5), 2.0) + pow(maxf(v, 0.0) / h, 2.0)
+			var inn := arch < 1.0
+			if inn:
+				# Onto the arch outline (straight sides below the springing line).
+				if v > 0.0:
+					var k := 1.0 / sqrt(maxf(arch, 1e-4))
+					u *= k
+					v *= k
+				else:
+					u = signf(u if u != 0.0 else 1.0) * w * 0.5
+				arch = 1.0
+			var cv := v - fh * 0.35
+			var a := atan2(cv, u * 0.8)
+			var rag := 1.0 + 0.3 * (BorderNoise.snoise(Vector2(cos(a), sin(a)) * 2.2 + Vector2(seed, 3.0)) - 0.5)
+			var ex := u / (fw * 0.5)
+			var ez := cv / (fh * 0.72)
+			var rr := sqrt(ex * ex + ez * ez) / rag
+			var band := smoothstep(0.68, 1.0, rr)
+			var n1 := BorderNoise.snoise(Vector2(u, v) * 0.32 + Vector2(seed, 1.0))
+			var n2 := BorderNoise.snoise(Vector2(u, v) * 1.05 + Vector2(seed * 2.0, 5.0))
+			var bulge := 1.4 * (1.0 - clampf(rr, 0.0, 1.0))
+			var depth := (n1 - 0.5) * 1.8 + (n2 - 0.5) * 0.55 + bulge - maxf(v, 0.0) * 0.3 - band * 4.5
+			depth = lerpf(0.6, depth, smoothstep(1.0, 1.9, arch))
+			var q := o + sd3 * u + Vector3.UP * v + out3 * depth
+			var g := surface.sample(Vector2(q.x, q.z))
+			q.y = lerpf(q.y, minf(q.y, g - 0.8), band)
+			# Never a blister on the hill: the face rises at most ~a metre above the hillside
+			# just behind it, except over the opening, which keeps a lintel of rock.
+			var hill := surface.sample(Vector2(q.x, q.z) - dir * 3.0) + 1.2
+			var lintel := -INF
+			var lu := absf(u) / (w * 0.8)
+			if lu < 1.0:
+				lintel = floor_y + (h + 1.4) * sqrt(1.0 - lu * lu)
+			q.y = minf(q.y, maxf(hill, lintel))
+			pos.append(q)
+			inside.append(1 if inn else 0)
+			keep.append(1 if rr < 1.08 else 0)
+	var row := NU + 1
+	# Smooth normals from the grid (facing out of the hill).
+	var nrm := PackedVector3Array()
+	nrm.resize(pos.size())
+	for j in NV + 1:
+		for i in NU + 1:
+			var k := j * row + i
+			var du := pos[j * row + mini(i + 1, NU)] - pos[j * row + maxi(i - 1, 0)]
+			var dv := pos[mini(j + 1, NV) * row + i] - pos[maxi(j - 1, 0) * row + i]
+			var nn := dv.cross(du).normalized()
+			if nn.dot(out3) < 0.0:
+				nn = -nn
+			nrm[k] = nn
+	var verts: PackedVector3Array = f.verts
+	var norms: PackedVector3Array = f.normals
+	var cols: PackedColorArray = f.colors
+	var uvs: PackedVector2Array = f.uvs
+	var uv2s: PackedVector2Array = f.uv2s
+	var c0: PackedFloat32Array = f.custom0
+	var c1: PackedFloat32Array = f.custom1
+	for j in NV:
+		for i in NU:
+			var a := j * row + i
+			var b := a + 1
+			var c := a + row + 1
+			var d := a + row
+			if keep[a] == 0 or keep[b] == 0 or keep[c] == 0 or keep[d] == 0:
+				continue
+			if inside[a] == 1 and inside[b] == 1 and inside[c] == 1 and inside[d] == 1:
+				continue
+			for k: int in [a, b, d, b, c, d]:
+				verts.append(pos[k])
+				norms.append(nrm[k])
+				# Terrain layer weights: all rock (layer 5 = UV.y).
+				cols.append(Color(0, 0, 0, 0))
+				uvs.append(Vector2(0.0, 1.0))
+				uv2s.append(Vector2.ZERO)
+				c0.append_array(PackedFloat32Array([0.0, 0.0, 0.0, volc]))
+				c1.append_array(PackedFloat32Array([0.25, 0.6, 0.0, 0.0]))
+	f.verts = verts
+	f.normals = norms
+	f.colors = cols
+	f.uvs = uvs
+	f.uv2s = uv2s
+	f.custom0 = c0
+	f.custom1 = c1
+
+
 ## A recessed arch: a half-dome opening facing `dir`, black deep inside, dark grey at the rim.
 static func _mouth(data: MeshData, base: Vector3, dir: Vector2, side: Vector2, w: float, h: float) -> void:
 	const SEG := 12
@@ -575,14 +693,13 @@ static func _mouth(data: MeshData, base: Vector3, dir: Vector2, side: Vector2, w
 		for k in SEG + 1:
 			ring.append(rim[k].lerp(deep, t))
 		for k in SEG:
-			var c0 := Color(0.1, 0.09, 0.08) * (1.0 - (t - 1.0 / RINGS))
-			var c1 := Color(0.1, 0.09, 0.08) * (1.0 - t)
-			var col := c0.lerp(c1, 0.5)
+			# Near-black throughout (no lighter rings): the cave swallows the light.
+			var col := Color(0.012, 0.011, 0.01) * (1.0 - t * 0.7)
 			data.tri(prev[k], prev[k + 1], ring[k + 1], Vector2.ZERO, Vector2.ZERO, Vector2.ZERO, out, Vector2.ZERO, col)
 			data.tri(prev[k], ring[k + 1], ring[k], Vector2.ZERO, Vector2.ZERO, Vector2.ZERO, out, Vector2.ZERO, col)
 		prev = ring
 	# Floor of the opening.
-	data.tri(rim[0], rim[SEG], deep - Vector3.UP * h * 0.3, Vector2.ZERO, Vector2.ZERO, Vector2.ZERO, Vector3.UP, Vector2.ZERO, Color(0.06, 0.05, 0.045))
+	data.tri(rim[0], rim[SEG], deep - Vector3.UP * h * 0.3, Vector2.ZERO, Vector2.ZERO, Vector2.ZERO, Vector3.UP, Vector2.ZERO, Color(0.01, 0.009, 0.008))
 
 
 ## How far a frame stone may stand above the ground: the top of the arch rises clear, the

@@ -32,6 +32,40 @@ uniform float swell = 0.55;        // metres of open-sea swell (more in wind)
 uniform bool edge_alpha = false;   // lakes: COLOR.a fades the water out at open mesh edges
 uniform float surf = 1.0;          // breakers rolling onto the shore (sea only)
 uniform float surf_period = 8.0;   // seconds between sets of breakers
+// River mouths (sea only): xy = where the river meets the sea, z = flow angle, w = width (m).
+uniform vec4 mouths[32];
+uniform int mouth_count = 0;
+uniform vec3 plume_color : source_color = vec3(0.1, 0.21, 0.16);
+
+// The river's outflow at a point: how much plume water is here (0..1) and how close to the
+// plume's edge, where fresh water meets salt and foam lines collect (0..1).
+vec2 river_plume(vec2 xz, float t) {
+	float plume = 0.0;
+	float shear = 0.0;
+	for (int i = 0; i < 32; i++) {
+		if (i >= mouth_count) {
+			break;
+		}
+		vec4 m = mouths[i];
+		vec2 d = vec2(cos(m.z), sin(m.z));
+		vec2 rel = xz - m.xy;
+		float along = dot(rel, d);
+		float w = max(m.w, 2.0);
+		float len = 50.0 + w * 14.0;
+		if (along < -w * 2.0 || along > len) {
+			continue;
+		}
+		float across = dot(rel, vec2(-d.y, d.x));
+		// The plume fans out and meanders slowly as it spreads.
+		across += sin(along * 0.045 + t * 0.15 + float(i) * 1.7) * (w * 0.3 + along * 0.12);
+		float spread = (w * 0.6 + max(along, 0.0) * 0.45) * (0.85 + 0.3 * env_noise(vec2(along * 0.03 + float(i) * 5.0, t * 0.03)));
+		float reach = smoothstep(-w * 2.0, 0.0, along) * (1.0 - smoothstep(len * 0.35, len, along));
+		plume = max(plume, exp(-pow(across / spread, 2.0)) * reach);
+		float e = (abs(across) - spread * 0.9) / (spread * 0.12 + 1.0);
+		shear = max(shear, exp(-e * e) * reach * (1.0 - smoothstep(len * 0.2, len * 0.75, along)));
+	}
+	return vec2(plume, shear);
+}
 
 float waves(vec2 p, float t) {
 	vec2 d1 = wind_direction;
@@ -111,6 +145,7 @@ void vertex() {
 }
 
 void fragment() {
+	vec2 rp = mouth_count > 0 ? river_plume(v_world_pos.xz, TIME) : vec2(0.0);
 	// Small ripples from two scrolling normal maps, drifting with the wind.
 	vec2 drift = wind_direction * wind_time * 0.012;
 	vec2 uv1 = v_world_pos.xz * wave_scale - drift + TIME * vec2(0.0015, 0.0008);
@@ -122,6 +157,8 @@ void fragment() {
 	vec3 n3 = texture(wave_normal, rot * v_world_pos.xz * wave_scale * 0.6 + drift * 0.6 + TIME * vec2(-0.0007, 0.0011)).xyz * 2.0 - 1.0;
 	float patch = 0.45 + 1.1 * env_noise(v_world_pos.xz * 0.006 - drift * 2.0 + vec2(TIME * 0.01, 0.0));
 	vec2 ripple = (n1.xy + n2.xy + n3.xy * 0.8) * (0.2 + 0.45 * wind_strength) * patch;
+	// River water is calmer than the sea it spreads over.
+	ripple *= 1.0 - rp.x * 0.5;
 	vec3 wn = normalize(vec3(ripple.x, 1.0, ripple.y) + vec3(v_wave_n.x, 0.0, v_wave_n.z) * 1.6);
 
 	// Water depth below this pixel, from the depth buffer.
@@ -171,6 +208,13 @@ void fragment() {
 		foam = max(foam, surf_foam);
 		// The face of a breaker catches the light a little.
 		col *= 1.0 + 0.15 * breakers * surf;
+	}
+	// River plume: silty river water spreading over the sea, with foam lines along its edges.
+	if (rp.x > 0.001 || rp.y > 0.001) {
+		col = mix(col, plume_color * (0.85 + 0.3 * env_noise(v_world_pos.xz * 0.06)), rp.x * 0.65);
+		vec2 sq = mat2(vec2(0.8, 0.6), vec2(-0.6, 0.8)) * v_world_pos.xz;
+		float streak = smoothstep(0.55, 0.8, env_noise(sq * 0.22 + vec2(TIME * 0.2, 0.0))) * rp.y;
+		foam = max(foam, streak * 0.75);
 	}
 	col = mix(col, vec3(0.92, 0.95, 0.96), foam);
 

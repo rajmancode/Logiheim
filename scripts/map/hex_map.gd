@@ -206,7 +206,7 @@ func rebuild() -> void:
 		volcano.build_effects(surface, root)
 		if level.level_index <= 1:
 			roads.build_meshes(surface, root, paths)
-			caves.build_meshes(surface, root)
+			caves.build_meshes(surface, root, mat)
 			RockFeatures.build(level, surface, settings, root)
 			RiverMeshBuilder.build_falls(paths, root)
 		var lake_mat := RiverMeshBuilder.lake_material(_get_wave_normal())
@@ -312,6 +312,32 @@ func _build_water() -> void:
 		_water_material.set_shader_parameter("terrain_min", lo)
 		_water_material.set_shader_parameter("terrain_range", maxf(hi - lo, 1.0))
 		_water_material.set_shader_parameter("use_terrain", true)
+	# River mouths for the sea's plumes: where each river reaches sea level, its flow
+	# direction and width (the widest 32).
+	var mouth_list: Array = []
+	if not river_paths.is_empty():
+		for path: RiverPath in river_paths[0]:
+			var n := path.points.size()
+			if n < 3 or path.points[n - 1].y > sea_y + 0.15:
+				continue
+			var s0 := n - 1
+			for k in n:
+				if path.points[k].y < sea_y + 0.15:
+					s0 = k
+					break
+			var a := path.points[maxi(s0 - 3, 0)]
+			var b := path.points[mini(s0 + 2, n - 1)]
+			var d := Vector2(b.x - a.x, b.z - a.z)
+			if d.length() < 0.01:
+				continue
+			mouth_list.append(Vector4(path.points[s0].x, path.points[s0].z, d.angle(), path.widths[s0]))
+	mouth_list.sort_custom(func(x: Vector4, y: Vector4) -> bool: return x.w > y.w)
+	mouth_list.resize(mini(mouth_list.size(), 32))
+	var padded: Array = mouth_list.duplicate()
+	while padded.size() < 32:
+		padded.append(Vector4.ZERO)
+	_water_material.set_shader_parameter("mouths", padded)
+	_water_material.set_shader_parameter("mouth_count", mouth_list.size())
 
 
 func _get_wave_normal() -> NoiseTexture2D:
