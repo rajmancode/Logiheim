@@ -8,6 +8,8 @@ extends Node3D
 
 signal generated
 signal level_changed(level_index: int)
+## While the map builds: what it is doing now, and how far along (0..1).
+signal progress(stage: String, fraction: float)
 
 @export var settings: HexMapSettings
 
@@ -45,6 +47,13 @@ var cave_plan: CaveSystem
 ## Cave being explored (-1 = on the surface), and the node holding the cave interiors.
 var underground := -1
 var _cave_root: Node3D
+## True while a build is running.
+var building := false
+## Pause a frame between build stages so a loading screen can draw (off for tools and tests,
+## or with LOGIHEIM_SYNC_BUILD set, so a build finishes within the call).
+var yield_between_stages := true
+var _stage_total := 1
+var _stage_done := 0
 
 
 ## Loads map.json from map_dir and builds the map. Returns false if loading failed.
@@ -53,7 +62,7 @@ func load_map(map_dir: String) -> bool:
 	if src == null:
 		return false
 	source = src
-	rebuild()
+	await rebuild()
 	return true
 
 
@@ -68,11 +77,18 @@ func rebuild() -> void:
 	MapSeed.set_seed(settings.seed)
 	if _base_material == null:
 		_base_material = TerrainMaterial.create()
+	building = true
+	# Stages: per level, shaping and building; plus the shared steps in between.
+	_stage_total = 12
+	_stage_done = 0
+	await _stage("Reading the land")
 	_clear()
 
 	var t0 := Time.get_ticks_msec()
 	var gen := HexMapGenerator.new(source, settings)
 	levels = gen.build_levels()
+	# Now the real count: shaping and building per level, plus resources, trails and the coast.
+	_stage_total = _stage_done + 2 * levels.size() + 3
 	var courses: Array = []
 	var lakes: LakeMaker = null
 	var fjords: FjordMaker = null
@@ -85,6 +101,7 @@ func rebuild() -> void:
 	# and work out where the water is. Nothing is meshed yet.
 	var recs: Array = []
 	for level in levels:
+		await _stage("Shaping the land - %s" % _level_word(level.level_index))
 		var t1 := Time.get_ticks_msec()
 		var noise := BorderNoise.new(level.hex_size, settings.border_noise)
 		var surface := TerrainSurface.new(level, source, settings, gen)
@@ -172,6 +189,7 @@ func rebuild() -> void:
 			level.level_index, level.hex_size, surface.nx, surface.nz, Time.get_ticks_msec() - t1])
 
 	# Resources on the finished land, then trails that reach every cave and every deposit.
+	await _stage("Seeking ore, game and good soil")
 	if settings.resources_enabled:
 		NaturalResources.place(levels, source, sea_y, settings.resource_abundance, settings.mask_threshold, surfaces[0])
 		if cave_plan != null:
@@ -180,6 +198,7 @@ func rebuild() -> void:
 	for sy: Dictionary in caves.systems:
 		for e: Dictionary in sy.entrances:
 			dests.append((e.p as Vector2) + (e.dir as Vector2) * 12.0)
+	await _stage("Treading the old ways")
 	roads = RoadNetwork.plan(levels[0], surfaces[0], settings, dests, river_paths[0])
 	road_plan = roads
 
@@ -190,6 +209,7 @@ func rebuild() -> void:
 		var paths: Array[RiverPath] = rec.paths
 		var hydro: Hydrology = rec.hydro
 		var noise: BorderNoise = rec.noise
+		await _stage("Raising forests and rivers - %s" % _level_word(level.level_index))
 		var root := Node3D.new()
 		root.name = "Level%d" % level.level_index
 		root.visible = false
@@ -234,6 +254,7 @@ func rebuild() -> void:
 			WaterEffects.build_river_mouths(paths, hydro, surface, root)
 		_level_roots.append(root)
 		_materials.append(mat)
+	await _stage("Charting the coasts")
 	if settings.resources_enabled:
 		for li in levels.size():
 			ResourceProps.build_ground(levels[li], surfaces[li], _level_roots[li])
@@ -249,7 +270,23 @@ func rebuild() -> void:
 
 	active_level = -1
 	set_level(0)
+	building = false
+	progress.emit("Ready", 1.0)
 	generated.emit()
+
+
+## Reports a build stage and (in the game) lets a frame draw before it runs.
+func _stage(text: String) -> void:
+	progress.emit(text, clampf(float(_stage_done) / maxf(_stage_total, 1.0), 0.0, 1.0))
+	_stage_done += 1
+	if yield_between_stages and is_inside_tree() and not OS.has_environment("LOGIHEIM_SYNC_BUILD"):
+		# Two frames: one to lay out the new text, one to show it.
+		await get_tree().process_frame
+		await get_tree().process_frame
+
+
+static func _level_word(i: int) -> String:
+	return ["close detail", "middle distance", "far view", "farthest view", "whole world"][mini(i, 4)]
 
 
 func _clear() -> void:

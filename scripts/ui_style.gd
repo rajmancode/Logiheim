@@ -65,4 +65,28 @@ static func hud_theme() -> Theme:
 	t.set_constant("shadow_offset_x", "Label", 1)
 	t.set_constant("shadow_offset_y", "Label", 2)
 	t.set_constant("shadow_outline_size", "Label", 2)
+	# Buttons: dark wood with a gold rim; lighter on hover, gold when pressed or toggled on.
+	var make := func(bg: Color, border: Color, width: int) -> StyleBoxFlat:
+		var sb := StyleBoxFlat.new()
+		sb.bg_color = bg
+		sb.border_color = border
+		sb.set_border_width_all(width)
+		sb.set_corner_radius_all(5)
+		sb.content_margin_left = 10
+		sb.content_margin_right = 10
+		sb.content_margin_top = 5
+		sb.content_margin_bottom = 5
+		return sb
+	t.set_stylebox("normal", "Button", make.call(Color(0.16, 0.11, 0.07, 0.95), Color(0.75, 0.58, 0.28), 1))
+	t.set_stylebox("hover", "Button", make.call(Color(0.27, 0.19, 0.11, 0.98), GOLD, 2))
+	t.set_stylebox("pressed", "Button", make.call(Color(0.45, 0.32, 0.14, 1.0), GOLD, 2))
+	t.set_stylebox("hover_pressed", "Button", make.call(Color(0.5, 0.36, 0.16, 1.0), GOLD, 2))
+	t.set_stylebox("disabled", "Button", make.call(Color(0.1, 0.08, 0.06, 0.7), Color(0.4, 0.33, 0.22), 1))
+	t.set_stylebox("focus", "Button", StyleBoxEmpty.new())
+	t.set_color("font_color", "Button", PARCHMENT)
+	t.set_color("font_hover_color", "Button", Color(1.0, 0.95, 0.8))
+	t.set_color("font_pressed_color", "Button", Color(1.0, 0.92, 0.7))
+	t.set_color("font_disabled_color", "Button", Color(0.6, 0.55, 0.45))
+	t.set_stylebox("normal", "LineEdit", make.call(Color(0.08, 0.06, 0.04, 0.9), Color(0.5, 0.4, 0.22), 1))
+	t.set_stylebox("focus", "LineEdit", make.call(Color(0.1, 0.08, 0.05, 0.95), GOLD, 1))
 	return t

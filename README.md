@@ -53,13 +53,15 @@ Gaea exports a heightmap and terrain masks. Logiheim samples them onto a hex gri
 - **Vegetation and rocks (made in Blender):** three conifer variants, two broadleaf trees, two bushes and five boulders (`tools/blender/make_vegetation.py`). Boulders and ore outcrops come from a shared rock generator (`tools/blender/rock_shapes.py`): fractured flat facets, Voronoi cracks, optional bedded strata and fine grain, with crevice AO baked in; in game they get photo-scanned rock with its normal map, lichen and moss. Forests mix conifers and broadleaf, with more conifers higher up. Trees and grass sway in the wind, leaves let light through, and rocks get moss on top. Dense grass (`grass_density`) is drawn near the camera only. Trees are 7–13 m (`tree_height`), so animals and props stay in proportion to them.
 - **Lettering:** map labels (cave names, deposit sizes) and the HUD use Cinzel (SIL Open Font License, `assets/fonts`), in heavy gold with a dark outline and drop shadow so they stand out over any ground (`scripts/ui_style.gd`).
 - **Hex grid:** drawn by the shaders with irregular, noise-wobbled borders (`border_noise`). The CPU uses the same noise for picking, so what you click is exactly what's outlined. Hover and selection highlights work the same way.
+- **Loading screen:** while a map builds, the screen shows the map itself, drawn from its own heightmap as an old sea chart (ink-washed sea hatched along the coast, parchment land shaded by height with contour lines, an inked coastline) and revealed from the middle outwards as the build goes on, behind a burning edge. Over it: the map's name, what is being made now ("Shaping the land", "Raising forests and rivers", "Treading the old ways"...), a ruled progress bar, a turning ring of procedurally drawn runes and a changing line of saga (`scripts/ui/loading_screen.gd`, `shaders/loading_chart.gdshader`). The build runs in stages and lets a frame draw between them (`HexMap.progress`).
+- **Choosing a landing:** once a map is built, each player picks where to come ashore (`scripts/ui/landing_ui.gd`). Landing sites (`scripts/map/landing_sites.gd`) are found along the coast - low, gentle ground right at the water (the best spot within each coastal hex), not on cliff tops, river channels or a cut-away map edge - and scored for a beach to draw the ships up, fresh water, a sheltered bay, flat land and the resources within about 120 m. The best are kept, spread out over the map, each with a Norse place name from what it is like (-vik for a bay, -nes for a headland, -strand for a beach, -os for a river mouth...) and 2-5 stars against the others. They stand on the map as banners. Set the number of players (1-6) and their names; for each, click a banner or a site in the list to fly there and read what it offers, then "Land here". "Random landings" fills in the rest and "Set sail" starts: the claimed banners fly the players' colours. L opens the chooser again.
 - **Atmosphere:** day/night cycle with sun and moon, drifting clouds that cast moving shadows, wind that drives trees, waves and clouds together, and weather (clear, cloudy, rain) with wet ground, fog and the odd lightning flash.
 
 ## Getting started
 
 1. Install [Godot 4.3 or newer](https://godotengine.org/download) (the standard build, not .NET).
 2. Open `project.godot` and press **F5**.
-3. Two placeholder maps are included (an island and a non-square valley). Press **M** to switch between them.
+3. Three maps are included (a Gaea island and two placeholders: an island and a non-square valley). Press **M** to switch between them. A loading screen shows while a map builds; then choose where each player lands.
 
 | Input | Action |
 |---|---|
@@ -76,6 +78,7 @@ Gaea exports a heightmap and terrain masks. Logiheim samples them onto a hex gri
 | R | Weather: clear → cloudy → rain |
 | I | Resource icons on / off |
 | C / Esc | Explore the nearest cave / back to the surface |
+| L | Choose landings again (click a banner to pick a site) |
 | F5 / Seed box / Random | New random seed / type a seed and press Enter (`--seed=N` on the command line) |
 
 ## Using your own Gaea maps

@@ -18,6 +18,12 @@ var show_grid := true
 var seed_edit: LineEdit
 var cave_env: Environment
 var _surface_cam := {}
+var loading: LoadingScreen
+var landing_ui: LandingUI
+var landing_markers: LandingMarkers
+var landing_sites: LandingSites
+## The players and where they came ashore, once landings are chosen ([] before).
+var landings: Array = []
 
 
 func _ready() -> void:
@@ -38,6 +44,18 @@ func _ready() -> void:
 	cam.name = "StrategyCamera"
 	add_child(cam)
 	_setup_hud()
+	loading = LoadingScreen.new()
+	loading.name = "LoadingScreen"
+	add_child(loading)
+	hex_map.progress.connect(loading.set_progress)
+	landing_markers = LandingMarkers.new()
+	landing_markers.name = "LandingMarkers"
+	add_child(landing_markers)
+	landing_ui = LandingUI.new()
+	landing_ui.name = "LandingUI"
+	add_child(landing_ui)
+	landing_ui.site_focused.connect(_on_site_focused)
+	landing_ui.finished.connect(_on_landings_chosen)
 
 	map_dirs = _find_maps()
 	if map_dirs.is_empty():
@@ -57,27 +75,84 @@ func _find_maps() -> PackedStringArray:
 
 
 func _load_map(i: int) -> void:
+	if hex_map.building:
+		return
 	map_index = posmod(i, map_dirs.size())
 	hovered = -1
 	selected = -1
-	if not hex_map.load_map(map_dirs[map_index]):
+	_before_build(TerrainSource.load_from_dir(map_dirs[map_index]))
+	if not await hex_map.load_map(map_dirs[map_index]):
+		loading.visible = false
+		hud_panel.visible = true
 		hud.text = "Failed to load %s (see the Output panel)" % map_dirs[map_index]
 		return
 	var size := hex_map.source.world_size
 	cam.ground_height = hex_map.surface_height(size * 0.5)
 	cam.frame_rect(Rect2(Vector2.ZERO, size))
 	atmosphere.configure(size, hex_map.levels[0].max_top_y())
+	_after_build()
 
 
 func _rebuild() -> void:
+	if hex_map.building:
+		return
 	hovered = -1
 	selected = -1
-	hex_map.rebuild()
+	_before_build(hex_map.source)
+	await hex_map.rebuild()
+	_after_build()
+
+
+## The loading screen over everything while the map builds.
+func _before_build(src: TerrainSource) -> void:
+	landing_ui.visible = false
+	if OS.has_environment("LOGIHEIM_SYNC_BUILD"):
+		return
+	hud_panel.visible = false
+	loading.begin(src)
+
+
+## Map ready: fade the loading screen and open the landing chooser on its coast.
+func _after_build() -> void:
+	hud_panel.visible = true
+	landings = []
+	landing_sites = LandingSites.find(hex_map, 10)
+	landing_markers.build(landing_sites.sites)
+	# (Tools and tests that build in one go skip the screens.)
+	if OS.has_environment("LOGIHEIM_SYNC_BUILD"):
+		landing_markers.visible = OS.has_environment("LOGIHEIM_LANDINGS")
+		if OS.has_environment("LOGIHEIM_LANDINGS"):
+			landing_ui.open(landing_sites.sites, hex_map.source.name)
+		return
+	loading.finish()
+	landing_markers.visible = true
+	landing_markers.show_all()
+	landing_ui.open(landing_sites.sites, hex_map.source.name)
+	landing_markers.update_state(landing_ui.players, landing_ui.focused)
+
+
+func _on_site_focused(index: int) -> void:
+	var s: Dictionary = landing_sites.sites[index]
+	var p: Vector2 = s.p
+	cam.set("_target", Vector3(p.x, float(s.y), p.y))
+	cam.set("_target_distance", 260.0)
+	landing_markers.update_state(landing_ui.players, index)
+
+
+## Everyone has a landing: only their banners stay, and the view goes to the first player's.
+func _on_landings_chosen(players: Array) -> void:
+	landings = players.duplicate(true)
+	landing_markers.keep_claimed(players)
+	if not players.is_empty():
+		_on_site_focused(players[0].site)
+		landing_markers.keep_claimed(players)
 
 
 func _process(_delta: float) -> void:
-	if hex_map.current_level() == null:
+	if hex_map.current_level() == null or hex_map.building:
 		return
+	if landing_ui.is_open():
+		landing_markers.update_state(landing_ui.players, landing_ui.focused)
 	if hex_map.underground >= 0:
 		var cp := cam.position
 		cam.ground_height = hex_map.cave_floor(Vector2(cp.x, cp.z))
@@ -100,11 +175,18 @@ func _unhandled_input(event: InputEvent) -> void:
 	if event is InputEventMouseButton:
 		var mb := event as InputEventMouseButton
 		if mb.pressed and mb.button_index == MOUSE_BUTTON_LEFT:
+			# While choosing landings, a click on (or near) a banner picks that site.
+			if landing_ui.is_open() and hovered >= 0:
+				var lv := hex_map.current_level()
+				var near := landing_markers.site_near(lv.cell_center(hovered), maxf(45.0, lv.hex_size * 2.5))
+				if near >= 0:
+					landing_ui.focus(near)
+					return
 			selected = hovered
 			hex_map.set_highlight("select", selected)
 		return
 	var key := event as InputEventKey
-	if key == null or not key.pressed or key.echo:
+	if key == null or not key.pressed or key.echo or hex_map.building:
 		return
 	var s := hex_map.settings
 	match key.keycode:
@@ -148,6 +230,12 @@ func _unhandled_input(event: InputEvent) -> void:
 			atmosphere.cycle_weather()
 		KEY_I:
 			hex_map.set_resource_icons_visible(not hex_map.resource_icons_visible())
+		KEY_L:
+			# Back to the landing chooser (landings kept).
+			if landing_sites != null and not hex_map.building:
+				landing_markers.show_all()
+				landing_ui.reopen()
+				landing_markers.update_state(landing_ui.players, landing_ui.focused)
 
 
 ## Into the cave nearest the view (or the hovered cave entrance), or back out.
@@ -217,12 +305,17 @@ func _update_hud() -> void:
 		level.cell_count(), "auto LOD" if hex_map.auto_lod else "manual LOD"])
 	lines.append("Step %.1f m   height x%.2f   view %.0f m" % [s.step_height, s.height_scale, cam.distance])
 	lines.append(atmosphere.describe())
+	if not landings.is_empty():
+		var who := PackedStringArray()
+		for p: Dictionary in landings:
+			who.append("%s at %s" % [p.name, landing_sites.sites[p.site].name])
+		lines.append("Landings: " + ", ".join(who) + "   (L: choose again)")
 	lines.append(_describe("Hover", level, hovered))
 	lines.append(_describe("Selected", level, selected))
 	lines.append("")
 	lines.append("WASD / arrows / middle-drag: pan    wheel: zoom    Q E / right-drag: rotate    click: select")
 	lines.append("- =: height scale    1-5: force level    0: auto LOD    G: grid    T: trees    H: hide    F5: new seed")
-	lines.append("N: pause/run day cycle    , .: time -/+ 1 h    R: weather (clear / cloudy / rain)    I: resource icons    C: explore nearest cave")
+	lines.append("N: pause/run day cycle    , .: time -/+ 1 h    R: weather (clear / cloudy / rain)    I: resource icons    C: explore nearest cave    L: landings")
 	hud.text = "\n".join(lines)
 
 
