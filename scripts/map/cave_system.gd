@@ -38,7 +38,7 @@ static func plan(level: HexLevel, surface: TerrainSurface, settings: HexMapSetti
 			if h < surface.sea_y + 12.0 or surface.river_mask[i] > 0.2 or surface.path_mask[i] > 0.1:
 				continue
 			var p := Vector2(x, z) * surface.spacing
-			if surface.wetland_at(p) > 0.3:
+			if surface.wetland_at(p) > 0.3 or surface.edge_dist(p) < TerrainSurface.EDGE_MARGIN:
 				continue
 			var g := RockFeatures._gradient(surface, p)
 			var slope := g.length()

@@ -352,6 +352,18 @@ func is_dry(p: Vector2, r := 2.5, min_above := 0.6) -> bool:
 	return true
 
 
+## Within this many metres of the map's border nothing is placed: no coastal landforms, caves,
+## lakes, fjords or resources. Where land runs right up to the border (a valley map), the
+## ground there is cut away into the sea as a steep artificial edge - not a real coast.
+const EDGE_MARGIN := 180.0
+
+
+## Metres from p to the nearest border of the map.
+func edge_dist(p: Vector2) -> float:
+	var w := _source.world_size if _source != null else Vector2((nx - 1) * spacing, (nz - 1) * spacing)
+	return minf(minf(p.x, p.y), minf(w.x - p.x, w.y - p.y))
+
+
 func river_at(p: Vector2) -> float:
 	var x := clampi(roundi(p.x / spacing), 0, nx - 1)
 	var z := clampi(roundi(p.y / spacing), 0, nz - 1)

@@ -113,6 +113,15 @@ static func place(levels: Array[HexLevel], source: TerrainSource, sea_y: float, 
 	lv.deposit.fill(-1)
 	lv.deposits.clear()
 	var f := _features(lv, sea_y)
+	# Hexes along the map's border take no resources (see TerrainSurface.EDGE_MARGIN).
+	var edge := PackedByteArray()
+	edge.resize(n)
+	for i in n:
+		var c := lv.cell_center(i)
+		var w := source.world_size
+		if minf(minf(c.x, c.y), minf(w.x - c.x, w.y - c.y)) < TerrainSurface.EDGE_MARGIN - 40.0:
+			edge[i] = 1
+	f["edge"] = edge
 	# The steepest ground in each hex (centre and around it), from the finished terrain.
 	var steep := PackedFloat32Array()
 	steep.resize(n)
@@ -363,6 +372,8 @@ static func _is_sea(lv: HexLevel, i: int) -> bool:
 static func _suitability(kind: int, i: int, lv: HexLevel, f: Dictionary) -> float:
 	# Nothing on steep ground (fish and whales live in the water, so they don't care).
 	if kind != Kind.FISH and kind != Kind.WHALES and f.has("steep") and float(f.steep[i]) > MAX_SLOPE:
+		return 0.0
+	if f.has("edge") and f.edge[i] == 1:
 		return 0.0
 	# Nothing on land sits in a river's mouth (the estuary and its banks); fish do best there.
 	if kind != Kind.FISH and kind != Kind.WHALES and f.has("mouth") and f.mouth[i] == 1:

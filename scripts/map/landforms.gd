@@ -94,6 +94,10 @@ func _coast() -> void:
 	for z in range(3, nz - 3):
 		for x in range(3, nx - 3):
 			var i := z * nx + x
+			# (Not along the map's border: there the land is only cut away into the sea, and
+			# beaches, cliffs, stacks, spits and lagoons would line the edge of the map.)
+			if mini(mini(x, z), mini(nx - 1 - x, nz - 1 - z)) * spacing < TerrainSurface.EDGE_MARGIN + 60.0:
+				continue
 			if land[i] == 1 and (land[i - 1] == 0 or land[i + 1] == 0 or land[i - nx] == 0 or land[i + nx] == 0):
 				coast.append(i)
 	if coast.size() < 30:
