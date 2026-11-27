@@ -48,6 +48,8 @@ func _ready() -> void:
 	loading.name = "LoadingScreen"
 	add_child(loading)
 	hex_map.progress.connect(loading.set_progress)
+	hex_map.chart_layer.connect(loading.add_layer)
+	hex_map.chart_layers = not OS.has_environment("LOGIHEIM_SYNC_BUILD")
 	landing_markers = LandingMarkers.new()
 	landing_markers.name = "LandingMarkers"
 	add_child(landing_markers)
@@ -377,6 +379,7 @@ func _setup_hud() -> void:
 	title.add_theme_color_override("font_outline_color", UiStyle.INK)
 	title.add_theme_constant_override("outline_size", 6)
 	box.add_child(title)
+	UiStyle.gild(title)
 	hud = Label.new()
 	hud.add_theme_font_size_override("font_size", 14)
 	box.add_child(hud)

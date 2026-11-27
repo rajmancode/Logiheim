@@ -55,6 +55,29 @@ static func _label(text: String, size: int, color: Color, offset: Vector2, prior
 	return lb
 
 
+## Gilds a title label: shaded, hammered, sheened gold instead of one flat colour
+## (shaders/gold_text.gdshader). The gradient follows the capitals' height for this font size.
+static func gild(label: Label) -> void:
+	var mat := ShaderMaterial.new()
+	mat.shader = load("res://shaders/gold_text.gdshader")
+	label.material = mat
+	var update := func() -> void:
+		var f: Font = label.get_theme_font("font")
+		var size := label.get_theme_font_size("font_size")
+		var asc := f.get_ascent(size)
+		var line_h := asc + f.get_descent(size)
+		# Where the text sits in the label (vertically centred or at the top).
+		var y0 := (label.size.y - line_h) * 0.5 if label.vertical_alignment == VERTICAL_ALIGNMENT_CENTER else 0.0
+		mat.set_shader_parameter("text_top", y0 + asc - size * 0.72)
+		mat.set_shader_parameter("text_bottom", y0 + asc)
+		var tw := f.get_string_size(label.text, HORIZONTAL_ALIGNMENT_LEFT, -1, size).x
+		if label.horizontal_alignment == HORIZONTAL_ALIGNMENT_CENTER:
+			tw = maxf(tw, label.size.x)
+		mat.set_shader_parameter("text_width", maxf(tw, 50.0))
+	label.resized.connect(update)
+	update.call()
+
+
 ## Theme for HUD controls: Cinzel body text with a light shadow.
 static func hud_theme() -> Theme:
 	var t := Theme.new()

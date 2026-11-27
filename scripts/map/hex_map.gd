@@ -10,6 +10,9 @@ signal generated
 signal level_changed(level_index: int)
 ## While the map builds: what it is doing now, and how far along (0..1).
 signal progress(stage: String, fraction: float)
+## While the map builds: a new, more detailed layer of the loading screen's chart (rivers and
+## forests, then trails and landmarks), drawn on the build thread. Only with `chart_layers`.
+signal chart_layer(image: Image, layer: int)
 
 @export var settings: HexMapSettings
 
@@ -54,6 +57,12 @@ var building := false
 var yield_between_stages := true
 var _stage_total := 1
 var _stage_done := 0
+## Draw chart layers for the loading screen while building (set by the game).
+var chart_layers := false
+var _t0 := 0
+## Work that must run on the main thread once the levels are attached (particle effects:
+## GPU particles made on a worker thread fail to set up on their first frames).
+var _main_jobs: Array[Callable] = []
 
 
 ## Loads map.json from map_dir and builds the map. Returns false if loading failed.
@@ -81,10 +90,43 @@ func rebuild() -> void:
 	# Stages: per level, shaping and building; plus the shared steps in between.
 	_stage_total = 12
 	_stage_done = 0
-	await _stage("Reading the land")
 	_clear()
+	_main_jobs.clear()
+	_t0 = Time.get_ticks_msec()
+	# The heavy work runs on a worker thread, so the game keeps drawing (the loading screen
+	# animates) and the computer isn't tied up. It builds the level roots off the scene tree;
+	# they are attached here afterwards, a level per frame. Tools and tests build in one go.
+	var threaded := yield_between_stages and is_inside_tree() and not OS.has_environment("LOGIHEIM_SYNC_BUILD")
+	if threaded:
+		var task := WorkerThreadPool.add_task(_build_data, false, "Logiheim map build")
+		while not WorkerThreadPool.is_task_completed(task):
+			await get_tree().process_frame
+		WorkerThreadPool.wait_for_task_completion(task)
+	else:
+		_build_data()
+	for root in _level_roots:
+		add_child(root)
+		if threaded:
+			await get_tree().process_frame
+	for job in _main_jobs:
+		job.call()
+	_main_jobs.clear()
+	if _cave_root != null:
+		add_child(_cave_root)
+	_build_water()
+	print("HexMap: built %d levels for '%s' in %d ms" % [levels.size(), source.name, Time.get_ticks_msec() - _t0])
 
-	var t0 := Time.get_ticks_msec()
+	active_level = -1
+	set_level(0)
+	building = false
+	progress.emit("Ready", 1.0)
+	generated.emit()
+
+
+## Everything that makes the map, off the scene tree (safe on a worker thread): the levels,
+## their ground, water, resources and trails, and each level's root with all its meshes.
+func _build_data() -> void:
+	_report("Reading the land")
 	var gen := HexMapGenerator.new(source, settings)
 	levels = gen.build_levels()
 	# Now the real count: shaping and building per level, plus resources, trails and the coast.
@@ -101,7 +143,7 @@ func rebuild() -> void:
 	# and work out where the water is. Nothing is meshed yet.
 	var recs: Array = []
 	for level in levels:
-		await _stage("Shaping the land - %s" % _level_word(level.level_index))
+		_report("Shaping the land - %s" % _level_word(level.level_index))
 		var t1 := Time.get_ticks_msec()
 		var noise := BorderNoise.new(level.hex_size, settings.border_noise)
 		var surface := TerrainSurface.new(level, source, settings, gen)
@@ -185,11 +227,13 @@ func rebuild() -> void:
 		hydrology.append(hydro)
 		_noises.append(noise)
 		recs.append({"level": level, "surface": surface, "paths": paths, "hydro": hydro, "fp": fp, "noise": noise})
+		if level.level_index == 0:
+			_chart(1)
 		print("HexMap: level %d (%.0f m hexes, %d x %d terrain) shaped in %d ms" % [
 			level.level_index, level.hex_size, surface.nx, surface.nz, Time.get_ticks_msec() - t1])
 
 	# Resources on the finished land, then trails that reach every cave and every deposit.
-	await _stage("Seeking ore, game and good soil")
+	_report("Seeking ore, game and good soil")
 	if settings.resources_enabled:
 		NaturalResources.place(levels, source, sea_y, settings.resource_abundance, settings.mask_threshold, surfaces[0])
 		if cave_plan != null:
@@ -198,9 +242,10 @@ func rebuild() -> void:
 	for sy: Dictionary in caves.systems:
 		for e: Dictionary in sy.entrances:
 			dests.append((e.p as Vector2) + (e.dir as Vector2) * 12.0)
-	await _stage("Treading the old ways")
+	_report("Treading the old ways")
 	roads = RoadNetwork.plan(levels[0], surfaces[0], settings, dests, river_paths[0])
 	road_plan = roads
+	_chart(2)
 
 	# Phase 2, every level: cut the trails in, then build everything you see.
 	for rec: Dictionary in recs:
@@ -209,11 +254,10 @@ func rebuild() -> void:
 		var paths: Array[RiverPath] = rec.paths
 		var hydro: Hydrology = rec.hydro
 		var noise: BorderNoise = rec.noise
-		await _stage("Raising forests and rivers - %s" % _level_word(level.level_index))
+		_report("Raising forests and rivers - %s" % _level_word(level.level_index))
 		var root := Node3D.new()
 		root.name = "Level%d" % level.level_index
 		root.visible = false
-		add_child(root)
 		roads.apply(level, surface)
 		# Trails are cut last: settle the rivers onto the final banks and cut their channels
 		# again, so no stretch of river ever ends up under the ground.
@@ -232,12 +276,12 @@ func rebuild() -> void:
 		mat.set_shader_parameter("show_grid", _show_grid)
 		TerrainMeshBuilder.build(surface, mat, root)
 		RiverMeshBuilder.build(paths, root, sea_y, surface)
-		volcano.build_effects(surface, root)
+		_main_jobs.append(volcano.build_effects.bind(surface, root))
 		if level.level_index <= 1:
 			roads.build_meshes(surface, root, paths)
 			caves.build_meshes(surface, root, mat)
 			RockFeatures.build(level, surface, settings, root)
-			RiverMeshBuilder.build_falls(paths, root)
+			_main_jobs.append(RiverMeshBuilder.build_falls.bind(paths, root))
 		var lake_mat := RiverMeshBuilder.lake_material(_get_wave_normal())
 		TerrainMaterial.set_grid(lake_mat, level, noise)
 		lake_mat.set_shader_parameter("show_grid", _show_grid)
@@ -250,11 +294,11 @@ func rebuild() -> void:
 		if level.level_index == 0 and settings.grass_enabled:
 			GrassField.build(surface, settings, root)
 		if level.level_index == 0:
-			WaterEffects.build_shore_spray(surface, root)
-			WaterEffects.build_river_mouths(paths, hydro, surface, root)
+			_main_jobs.append(WaterEffects.build_shore_spray.bind(surface, root))
+			_main_jobs.append(WaterEffects.build_river_mouths.bind(paths, hydro, surface, root))
 		_level_roots.append(root)
 		_materials.append(mat)
-	await _stage("Charting the coasts")
+	_report("Charting the coasts")
 	if settings.resources_enabled:
 		for li in levels.size():
 			ResourceProps.build_ground(levels[li], surfaces[li], _level_roots[li])
@@ -263,26 +307,23 @@ func rebuild() -> void:
 	if cave_plan != null and not cave_plan.systems.is_empty():
 		_cave_root = Node3D.new()
 		_cave_root.name = "CaveInteriors"
-		add_child(_cave_root)
 		cave_plan.build_interiors(surfaces[0], _cave_root)
-	_build_water()
-	print("HexMap: built %d levels for '%s' in %d ms" % [levels.size(), source.name, Time.get_ticks_msec() - t0])
-
-	active_level = -1
-	set_level(0)
-	building = false
-	progress.emit("Ready", 1.0)
-	generated.emit()
 
 
-## Reports a build stage and (in the game) lets a frame draw before it runs.
-func _stage(text: String) -> void:
-	progress.emit(text, clampf(float(_stage_done) / maxf(_stage_total, 1.0), 0.0, 1.0))
+## Reports a build stage (from the build thread: the signal goes out on the main thread).
+func _report(text: String) -> void:
+	var f := clampf(float(_stage_done) / maxf(_stage_total, 1.0), 0.0, 1.0)
 	_stage_done += 1
-	if yield_between_stages and is_inside_tree() and not OS.has_environment("LOGIHEIM_SYNC_BUILD"):
-		# Two frames: one to lay out the new text, one to show it.
-		await get_tree().process_frame
-		await get_tree().process_frame
+	progress.emit.call_deferred(text, f)
+
+
+## A new layer of the loading screen's chart, drawn here on the build thread.
+func _chart(layer: int) -> void:
+	if not chart_layers:
+		return
+	var img := ChartLayers.draw(self, layer)
+	if img != null:
+		chart_layer.emit.call_deferred(img, layer)
 
 
 static func _level_word(i: int) -> String:

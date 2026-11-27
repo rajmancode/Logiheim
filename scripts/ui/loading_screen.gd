@@ -1,11 +1,17 @@
 class_name LoadingScreen
 extends CanvasLayer
-## Shown while a map is built. Everything on it is drawn from the map itself: its heightmap,
-## rendered as an old sea chart, is revealed from the middle outwards as the build goes on
-## (shaders/loading_chart.gdshader). Over it: the title, the map's name, what is being made
-## now, a ruled progress bar, a turning ring of procedurally drawn runes, and a line of saga
-## that changes now and then.
+## Shown while a map is built (the build runs on a worker thread, so this keeps animating).
+##
+## Everything on it comes from the map itself: its heightmap, drawn as an old sea chart
+## (shaders/loading_chart.gdshader). The chart arrives in pages, each burning through the one
+## before - blank parchment, then the coast and the lie of the land, then rivers, lakes,
+## forests and peaks, then the old ways, caves and deposits (ChartLayers, drawn on the build
+## thread) - and when the world is ready the whole sheet burns away to show it. Over it: the
+## gilded title, the map's name, what is being made now, a ruled progress bar, a turning ring
+## of procedurally drawn runes and a line of saga that changes now and then.
 
+const BURN_TIME := 2.2
+const AWAY_TIME := 1.8
 const SAGA := [
 	"The land rises from the sea, as it did when the world was young.",
 	"Rivers seek the sea by the oldest roads.",
@@ -27,10 +33,20 @@ var _saga: Label
 var _bar: Control
 var _ring: Control
 var _root: Control
+var _ui: Control
 var _progress := 0.0
 var _shown := 0.0
 var _saga_timer := 0.0
 var _rng := RandomNumberGenerator.new()
+## Pages waiting to burn in: {base: bool, over: Texture2D or null}.
+var _queue: Array = []
+var _cur := {"base": false, "over": null}
+var _burn := 1.0
+var _away := -1.0
+var _finishing := false
+var _blank: ImageTexture
+var _base_tex: Texture2D
+var _generation := 0
 
 
 func _ready() -> void:
@@ -47,7 +63,15 @@ func _ready() -> void:
 	_mat.shader = load("res://shaders/loading_chart.gdshader")
 	_chart_rect.material = _mat
 	_root.add_child(_chart_rect)
+	var empty := Image.create(4, 4, false, Image.FORMAT_RGBA8)
+	empty.fill(Color(0, 0, 0, 0))
+	_blank = ImageTexture.create_from_image(empty)
 
+	# Everything over the chart fades as the sheet burns away.
+	_ui = Control.new()
+	_ui.set_anchors_preset(Control.PRESET_FULL_RECT)
+	_ui.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_root.add_child(_ui)
 	var title := Label.new()
 	title.text = "LOGIHEIM"
 	title.add_theme_font_override("font", UiStyle.font(900))
@@ -60,7 +84,8 @@ func _ready() -> void:
 	title.offset_top = 18
 	title.offset_left = -400
 	title.offset_right = 400
-	_root.add_child(title)
+	_ui.add_child(title)
+	UiStyle.gild(title)
 
 	var bottom := VBoxContainer.new()
 	bottom.set_anchors_and_offsets_preset(Control.PRESET_CENTER_BOTTOM)
@@ -70,7 +95,7 @@ func _ready() -> void:
 	bottom.offset_bottom = -24
 	bottom.alignment = BoxContainer.ALIGNMENT_END
 	bottom.add_theme_constant_override("separation", 6)
-	_root.add_child(bottom)
+	_ui.add_child(bottom)
 	_name = _label(26, UiStyle.GOLD, 900)
 	bottom.add_child(_name)
 	_stage = _label(18, UiStyle.PARCHMENT, 700)
@@ -91,7 +116,7 @@ func _ready() -> void:
 	_ring.offset_right = -34
 	_ring.offset_bottom = -34
 	_ring.draw.connect(_draw_ring)
-	_root.add_child(_ring)
+	_ui.add_child(_ring)
 	visible = false
 
 
@@ -107,43 +132,100 @@ func _label(size: int, color: Color, weight: int) -> Label:
 	return l
 
 
-## Shows the screen for a map about to be built: draws its chart from the heightmap.
+## Shows the screen for a map about to be built. The heightmap chart is drawn on a worker
+## thread and burns in when it's ready.
 func begin(source: TerrainSource) -> void:
 	visible = true
+	_generation += 1
 	_root.modulate.a = 1.0
+	_ui.modulate.a = 1.0
 	_progress = 0.0
 	_shown = 0.0
+	_finishing = false
+	_away = -1.0
+	_queue.clear()
+	_cur = {"base": false, "over": null}
+	_burn = 1.0
 	_name.text = source.name if source != null else ""
 	_stage.text = "Setting out"
 	_next_saga()
+	_apply_pages({"base": false, "over": null})
+	_mat.set_shader_parameter("away", 0.0)
 	if source != null:
-		_mat.set_shader_parameter("chart", _chart_texture(source))
 		_mat.set_shader_parameter("aspect", source.world_size.x / maxf(source.world_size.y, 1.0))
-	_mat.set_shader_parameter("progress", 0.0)
+		var gen := _generation
+		WorkerThreadPool.add_task(func() -> void:
+			var img := _chart_image(source)
+			_on_base_ready.call_deferred(img, gen))
+
+
+func _on_base_ready(img: Image, gen: int) -> void:
+	if gen != _generation:
+		return
+	_base_tex = ImageTexture.create_from_image(img)
+	_mat.set_shader_parameter("base_chart", _base_tex)
+	_queue.append({"base": true, "over": null})
+
+
+## A new ink layer from the build (HexMap.chart_layer): burns in over what's shown.
+func add_layer(img: Image, _layer: int) -> void:
+	if not visible or _finishing:
+		return
+	_queue.append({"base": true, "over": ImageTexture.create_from_image(img)})
 
 
 func set_progress(stage: String, fraction: float) -> void:
+	if _finishing:
+		return
 	_stage.text = stage + ("…" if fraction < 1.0 else "")
 	_progress = maxf(_progress, fraction)
 
 
-## Fades the screen out once the map is ready.
+## The world is ready: once the last page has burnt in, the whole sheet burns away.
 func finish() -> void:
 	_progress = 1.0
+	_finishing = true
 	_stage.text = "The land is ready"
-	var tw := create_tween()
-	tw.tween_interval(0.5)
-	tw.tween_property(_root, "modulate:a", 0.0, 0.8)
-	tw.tween_callback(func() -> void: visible = false)
+
+
+func _apply_pages(next: Dictionary) -> void:
+	_mat.set_shader_parameter("old_base", 1.0 if _cur.base else 0.0)
+	_mat.set_shader_parameter("over_old", _cur.over if _cur.over != null else _blank)
+	_mat.set_shader_parameter("new_base", 1.0 if next.base else 0.0)
+	_mat.set_shader_parameter("over_new", next.over if next.over != null else _blank)
 
 
 func _process(delta: float) -> void:
 	if not visible:
 		return
-	# The chart catches up with the build smoothly, and keeps creeping during long stages.
+	# Pages: burn the next one in once the last has finished.
+	if _burn >= 1.0 and not _queue.is_empty():
+		var next: Dictionary = _queue.pop_front()
+		# (Pages that queued up behind a long burn are skipped to the latest.)
+		while not _queue.is_empty() and _queue.size() > 1:
+			next = _queue.pop_front()
+		_apply_pages(next)
+		_cur_next = next
+		_burn = 0.0
+		_mat.set_shader_parameter("burn_seed", Vector2(_rng.randf() * 10.0, _rng.randf() * 10.0))
+	if _burn < 1.0:
+		_burn = minf(_burn + delta / BURN_TIME, 1.0)
+		_mat.set_shader_parameter("burn", _burn)
+		if _burn >= 1.0:
+			_cur = _cur_next
+			_apply_pages(_cur)
+	# The end: the whole sheet burns away once the pages are done.
+	if _finishing and _burn >= 1.0 and _queue.is_empty():
+		if _away < 0.0:
+			_away = 0.0
+		_away = minf(_away + delta / AWAY_TIME, 1.0)
+		_mat.set_shader_parameter("away", _away)
+		_ui.modulate.a = 1.0 - smoothstep(0.0, 0.4, _away)
+		if _away >= 1.0:
+			visible = false
+			return
 	var target := minf(_progress + 0.04, 1.0) if _progress < 1.0 else 1.0
 	_shown = move_toward(_shown, target, delta * (0.5 if _shown < _progress else 0.01))
-	_mat.set_shader_parameter("progress", _shown)
 	_mat.set_shader_parameter("screen_size", _root.get_viewport_rect().size)
 	_saga_timer -= delta
 	if _saga_timer <= 0.0:
@@ -152,29 +234,30 @@ func _process(delta: float) -> void:
 	_ring.queue_redraw()
 
 
+var _cur_next := {"base": false, "over": null}
+
+
 func _next_saga() -> void:
 	_saga.text = "“%s”" % SAGA[_rng.randi() % SAGA.size()]
 	_saga_timer = 6.0
 
 
-## The heightmap as a small chart texture: r = height, g = 1 where it is sea.
-func _chart_texture(source: TerrainSource) -> ImageTexture:
-	var aspect := source.world_size.x / maxf(source.world_size.y, 1.0)
-	var w := 512 if aspect >= 1.0 else int(512 * aspect)
-	var h := int(w / aspect)
-	var img := Image.create(w, h, false, Image.FORMAT_RGF)
+## The heightmap as a small chart image: r = height, g = 1 where it is sea. (Thread-safe.)
+static func _chart_image(source: TerrainSource) -> Image:
+	var d := ChartLayers.dims(source.world_size)
+	var img := Image.create(d.x, d.y, false, Image.FORMAT_RGF)
 	var sea := source.sea_level if source.sea_level > 0.0 else 0.02
 	var has_mask := source.masks.has("water")
-	for y in h:
-		for x in w:
-			var p := Vector2((x + 0.5) / w * source.world_size.x, (y + 0.5) / h * source.world_size.y)
+	for y in d.y:
+		for x in d.x:
+			var p := Vector2((x + 0.5) / d.x * source.world_size.x, (y + 0.5) / d.y * source.world_size.y)
 			var hv := source.sample_height(p)
 			var wet := hv <= sea
 			if has_mask and source.sample_mask("water", p) > 0.5:
 				wet = true
 			var rel := clampf((hv - sea) / maxf(1.0 - sea, 0.01), 0.0, 1.0) if not wet else clampf(hv / maxf(sea, 0.01), 0.0, 1.0)
 			img.set_pixel(x, y, Color(rel, 1.0 if wet else 0.0, 0.0))
-	return ImageTexture.create_from_image(img)
+	return img
 
 
 ## A ruled bar: dark track, gold fill, a tick at every tenth, and a bright leading edge.
@@ -213,10 +296,7 @@ func _draw_ring() -> void:
 		var glow := pow(maxf(cos(a + PI * 0.5), 0.0), 8.0)
 		var col := UiStyle.PARCHMENT.lerp(Color(1.0, 0.75, 0.3), glow)
 		col.a = 0.55 + 0.45 * glow
-		# A stave, and two or three branches off it.
-		var top := pos + up * 6.0
-		var bot := pos - up * 6.0
-		_ring.draw_line(top, bot, col, 2.0)
+		_ring.draw_line(pos + up * 6.0, pos - up * 6.0, col, 2.0)
 		for b in rng.randi_range(1, 3):
 			var at := lerpf(-5.0, 5.0, rng.randf())
 			var dir := side * (1.0 if rng.randf() < 0.5 else -1.0)
