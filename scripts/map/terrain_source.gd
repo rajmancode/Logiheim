@@ -74,6 +74,41 @@ func uv_of(p: Vector2) -> Vector2:
 	return Vector2(p.x / world_size.x, p.y / world_size.y)
 
 
+## The map being built (for border tests anywhere in the pipeline).
+static var current: TerrainSource = null
+
+
+## Metres from p to the nearest stretch of the map's border where the land runs off the map
+## (the heightmap is land right at the border there), or INF if there is none near. Along such
+## a stretch the ground is cut away into the sea, an artificial edge where nothing is placed;
+## where the border is open sea (an island well inside its map) there is no such edge.
+static func cut_edge_dist(p: Vector2) -> float:
+	var src := current
+	if src == null:
+		return INF
+	var w := src.world_size
+	var best := INF
+	# (side distance, the point on that side straight out from p, the direction along it)
+	var sides := [[p.x, Vector2(0.0, p.y), Vector2(0, 1)], [w.x - p.x, Vector2(w.x, p.y), Vector2(0, 1)],
+		[p.y, Vector2(p.x, 0.0), Vector2(1, 0)], [w.y - p.y, Vector2(p.x, w.y), Vector2(1, 0)]]
+	for sd: Array in sides:
+		var d: float = sd[0]
+		if d >= best:
+			continue
+		var b: Vector2 = sd[1]
+		var along: Vector2 = sd[2]
+		var land := false
+		for o in [-60.0, 0.0, 60.0]:
+			var q: Vector2 = b + along * o
+			q = Vector2(clampf(q.x, 0.0, w.x), clampf(q.y, 0.0, w.y))
+			if src.sample_height(q) > src.sea_level + 0.01:
+				land = true
+				break
+		if land:
+			best = d
+	return best
+
+
 ## Bilinear normalised height (0..1) at world position p (x, z).
 func sample_height(p: Vector2) -> float:
 	var u := clampf(p.x / world_size.x, 0.0, 1.0) * (width - 1)

@@ -80,6 +80,7 @@ func _init(p_level: HexLevel, source: TerrainSource, settings: HexMapSettings, g
 	_smooth_heights(_settings.terrain_smoothing)
 	_roughen_coast()
 	_natural_seafloor()
+	_border_skirt()
 
 
 func index(x: int, z: int) -> int:
@@ -356,12 +357,13 @@ func is_dry(p: Vector2, r := 2.5, min_above := 0.6) -> bool:
 ## lakes, fjords or resources. Where land runs right up to the border (a valley map), the
 ## ground there is cut away into the sea as a steep artificial edge - not a real coast.
 const EDGE_MARGIN := 180.0
+## The cut-away edge itself (its slope down into the sea): bare ground, no trees or boulders.
+const EDGE_BAND := 130.0
 
 
-## Metres from p to the nearest border of the map.
+## Metres from p to the nearest stretch of border where the land runs off the map (INF if none).
 func edge_dist(p: Vector2) -> float:
-	var w := _source.world_size if _source != null else Vector2((nx - 1) * spacing, (nz - 1) * spacing)
-	return minf(minf(p.x, p.y), minf(w.x - p.x, w.y - p.y))
+	return TerrainSource.cut_edge_dist(p)
 
 
 func river_at(p: Vector2) -> float:
@@ -751,6 +753,39 @@ func _natural_terrain(p: Vector2) -> int:
 		t = T.ROCK
 	# Land never gets a water texture from this; the sea floor is handled in finish_weights().
 	return T.SAND if HexMapGenerator.is_water(t) else t
+
+
+## Where the land runs up to the map's border, the last EDGE_BAND metres become one clean
+## skirt: from the ground just inside the band, a smooth slope down into the sea at the edge -
+## no inlets, notches or bumps along it, whatever the heightmap had there. (Where the border
+## is open sea anyway, the skirt is just sea floor.)
+func _border_skirt() -> void:
+	var w := _source.world_size
+	var band := EDGE_BAND
+	var bottom := sea_y - 14.0
+	var inner := heights.duplicate()
+	for z in nz:
+		for x in nx:
+			var p := Vector2(x * spacing, z * spacing)
+			if minf(minf(p.x, p.y), minf(w.x - p.x, w.y - p.y)) >= band:
+				continue
+			var d := TerrainSource.cut_edge_dist(p)
+			if d >= band:
+				continue
+			# The ground just inside the band, straight in from this point (corners: diagonally).
+			var q := Vector2(clampf(p.x, band, w.x - band), clampf(p.y, band, w.y - band))
+			var fx := clampf(q.x / spacing, 0.0, nx - 1.001)
+			var fz := clampf(q.y / spacing, 0.0, nz - 1.001)
+			var x0 := int(fx)
+			var z0 := int(fz)
+			var a := lerpf(inner[z0 * nx + x0], inner[z0 * nx + x0 + 1], fx - x0)
+			var b := lerpf(inner[(z0 + 1) * nx + x0], inner[(z0 + 1) * nx + x0 + 1], fx - x0)
+			var top := lerpf(a, b, fz - z0)
+			var t := clampf(d / band, 0.0, 1.0)
+			# A convex shoulder at the top, steepening to the sea: like a cut bluff, not a ramp.
+			var k := 1.0 - pow(1.0 - t, 2.2)
+			if top > bottom:
+				heights[z * nx + x] = lerpf(bottom, top, k)
 
 
 func _sink_edge(x: int, z: int) -> void:

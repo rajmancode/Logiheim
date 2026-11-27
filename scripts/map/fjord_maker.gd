@@ -47,10 +47,7 @@ static func plan(hydro: Hydrology, settings: HexMapSettings) -> FjordMaker:
 				break
 		if total < 200.0:
 			continue
-		var mouth := pts[0]
-		var wx := hydro.nx * hydro.spacing
-		var wz := hydro.nz * hydro.spacing
-		if minf(minf(mouth.x, mouth.y), minf(wx - mouth.x, wz - mouth.y)) < TerrainSurface.EDGE_MARGIN + 100.0:
+		if TerrainSource.cut_edge_dist(pts[0]) < TerrainSurface.EDGE_MARGIN + 100.0:
 			continue
 		# How high the land stands on both sides of the lower course.
 		var relief := 0.0

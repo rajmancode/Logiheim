@@ -261,10 +261,7 @@ func _procedural_lakes(hydro: Hydrology, settings: HexMapSettings) -> void:
 		if hydro.height[c] < hydro.sea_y + 6.0 or hydro.lake_id[c] >= 0:
 			continue
 		# Not near the map's border (a lake there would be cut off by the edge of the map).
-		var cp := hydro.cell_pos(c)
-		var wx := hydro.nx * hydro.spacing
-		var wz := hydro.nz * hydro.spacing
-		if minf(minf(cp.x, cp.y), minf(wx - cp.x, wz - cp.y)) < TerrainSurface.EDGE_MARGIN + 80.0:
+		if TerrainSource.cut_edge_dist(hydro.cell_pos(c)) < TerrainSurface.EDGE_MARGIN + 80.0:
 			continue
 		# The flattest river stretches this map has (steep maps get deep mountain lakes).
 		var slope := _local_slope(hydro, c, 3)

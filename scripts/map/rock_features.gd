@@ -26,6 +26,8 @@ static func build(level: HexLevel, surface: TerrainSurface, settings: HexMapSett
 			if h < surface.sea_y + 4.0 or surface.river_mask[i] > 0.3 or surface.path_mask[i] > 0.1:
 				continue
 			var p := Vector2(x, z) * surface.spacing
+			if surface.edge_dist(p) < TerrainSurface.EDGE_MARGIN:
+				continue
 			var g := _gradient(surface, p)
 			var slope := g.length()
 			if slope < cap * 0.75 or surface.convexity[i] < 0.12:

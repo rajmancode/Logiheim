@@ -104,6 +104,49 @@ static func courses(hydro: Hydrology, settings: HexMapSettings) -> Array:
 		if fed:
 			kept.append(c)
 	out = kept
+	# No river runs off the map over its border (where land reaches the edge of the map it is
+	# cut away into the sea there; a river would only spill down that artificial slope).
+	# Tributaries of a dropped river go with it, so none is left ending in dry ground.
+	var at_edge := func(p: Vector2) -> bool:
+		return TerrainSource.cut_edge_dist(p) < TerrainSurface.EDGE_MARGIN
+	kept = []
+	var dropped: Array = []
+	for c: Dictionary in out:
+		var pts: PackedVector2Array = c.pts
+		# Where it meets the sea (its trace runs on through the sea to the edge of the map), or
+		# where it runs off the edge of the map: within the border margin, it goes.
+		var mouth := pts[pts.size() - 1] if not pts.is_empty() else Vector2.ZERO
+		for q in pts:
+			if hydro.height_at(q) < hydro.sea_y:
+				mouth = q
+				break
+		if not pts.is_empty() and (c.to_sea or not c.joins) and at_edge.call(mouth):
+			dropped.append(c)
+		else:
+			kept.append(c)
+	# Then every river that flows into a dropped one, and so on up the network.
+	while not dropped.is_empty():
+		var next: Array = []
+		var still: Array = []
+		for c: Dictionary in kept:
+			var pts: PackedVector2Array = c.pts
+			var gone := false
+			if c.joins and not pts.is_empty():
+				var end := pts[pts.size() - 1]
+				for o: Dictionary in dropped:
+					for q in (o.pts as PackedVector2Array):
+						if q.distance_to(end) < hydro.spacing * 1.5:
+							gone = true
+							break
+					if gone:
+						break
+			if gone:
+				next.append(c)
+			else:
+				still.append(c)
+		kept = still
+		dropped = next
+	out = kept
 	_snap_junctions(out, hydro.spacing * 3.0)
 	# Deltas: wide rivers reaching the sea over low, flat land split into distributaries.
 	var deltas: Array = []

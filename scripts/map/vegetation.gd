@@ -119,7 +119,7 @@ static func _random_point(c: Vector2, s: float, rng: RandomNumberGenerator) -> V
 
 
 static func _ok_ground(surface: TerrainSurface, p: Vector2) -> bool:
-	return not surface.keep_clear(p) and surface.sample(p) > surface.sea_y + 0.6 and surface.volcanic_at(p) < 0.5 \
+	return surface.edge_dist(p) >= TerrainSurface.EDGE_BAND and not surface.keep_clear(p) and surface.sample(p) > surface.sea_y + 0.6 and surface.volcanic_at(p) < 0.5 \
 		and surface.wetland_at(p) < (0.75 if absi(hash(p)) % 100 < 15 else 0.4)  # a few trees stand in the bog
 
 
@@ -152,7 +152,7 @@ static func _place_bush(items: Dictionary, surface: TerrainSurface, c: Vector2, 
 
 static func _place_rock(items: Dictionary, surface: TerrainSurface, c: Vector2, s: float, rng: RandomNumberGenerator, size: float) -> void:
 	var p := _random_point(c, s, rng)
-	if surface.river_at(p) > 0.3 or surface.sample(p) < surface.sea_y - 0.5:
+	if surface.river_at(p) > 0.3 or surface.sample(p) < surface.sea_y - 0.5 or surface.edge_dist(p) < TerrainSurface.EDGE_BAND:
 		return
 	var up := surface.normal_at(p).lerp(Vector3.UP, 0.4).normalized()
 	var basis := Basis(Vector3.UP, rng.randf() * TAU)

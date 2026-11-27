@@ -117,9 +117,7 @@ static func place(levels: Array[HexLevel], source: TerrainSource, sea_y: float, 
 	var edge := PackedByteArray()
 	edge.resize(n)
 	for i in n:
-		var c := lv.cell_center(i)
-		var w := source.world_size
-		if minf(minf(c.x, c.y), minf(w.x - c.x, w.y - c.y)) < TerrainSurface.EDGE_MARGIN - 40.0:
+		if TerrainSource.cut_edge_dist(lv.cell_center(i)) < TerrainSurface.EDGE_MARGIN - 40.0:
 			edge[i] = 1
 	f["edge"] = edge
 	# The steepest ground in each hex (centre and around it), from the finished terrain.

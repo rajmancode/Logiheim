@@ -61,6 +61,8 @@ func load_map(map_dir: String) -> bool:
 func rebuild() -> void:
 	if source == null:
 		return
+	# Border tests anywhere in the build use this map's heightmap.
+	TerrainSource.current = source
 	if settings == null:
 		settings = HexMapSettings.new()
 	MapSeed.set_seed(settings.seed)
