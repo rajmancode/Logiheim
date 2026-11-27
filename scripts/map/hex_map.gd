@@ -52,6 +52,8 @@ var underground := -1
 var _cave_root: Node3D
 ## True while a build is running.
 var building := false
+## Where the last pick() hit the ground.
+var last_pick := Vector3.ZERO
 ## Pause a frame between build stages so a loading screen can draw (off for tools and tests,
 ## or with LOGIHEIM_SYNC_BUILD set, so a build finishes within the call).
 var yield_between_stages := true
@@ -734,7 +736,15 @@ func pick(origin: Vector3, dir: Vector3) -> int:
 		else:
 			lo = mid
 	var q := origin + dir * hi
+	last_pick = q
 	return _noises[active_level].cell_at(level, Vector2(q.x, q.z))
+
+
+## The finest level's hex at a world point (what the game builds on, whatever the zoom).
+func finest_cell_at(p: Vector2) -> int:
+	if levels.is_empty() or _noises.is_empty():
+		return -1
+	return _noises[0].cell_at(levels[0], p)
 
 
 ## Height of the surface under a world point on the active level (for the camera pivot).

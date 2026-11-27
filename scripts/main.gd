@@ -24,6 +24,8 @@ var landing_markers: LandingMarkers
 var landing_sites: LandingSites
 ## The players and where they came ashore, once landings are chosen ([] before).
 var landings: Array = []
+var game_world: GameWorld
+var game_hud: GameHUD
 
 
 func _ready() -> void:
@@ -58,6 +60,12 @@ func _ready() -> void:
 	add_child(landing_ui)
 	landing_ui.site_focused.connect(_on_site_focused)
 	landing_ui.finished.connect(_on_landings_chosen)
+	game_world = GameWorld.new()
+	game_world.name = "GameWorld"
+	add_child(game_world)
+	game_hud = GameHUD.new()
+	game_hud.name = "GameHUD"
+	add_child(game_hud)
 
 	map_dirs = _find_maps()
 	if map_dirs.is_empty():
@@ -108,6 +116,8 @@ func _rebuild() -> void:
 ## The loading screen over everything while the map builds.
 func _before_build(src: TerrainSource) -> void:
 	landing_ui.visible = false
+	game_world.clear()
+	game_hud.visible = false
 	if OS.has_environment("LOGIHEIM_SYNC_BUILD"):
 		return
 	hud_panel.visible = false
@@ -141,13 +151,16 @@ func _on_site_focused(index: int) -> void:
 	landing_markers.update_state(landing_ui.players, index)
 
 
-## Everyone has a landing: only their banners stay, and the view goes to the first player's.
+## Everyone has a landing: their town halls go up there and the game begins, the view on the
+## first player's.
 func _on_landings_chosen(players: Array) -> void:
 	landings = players.duplicate(true)
-	landing_markers.keep_claimed(players)
+	landing_markers.visible = false
 	if not players.is_empty():
 		_on_site_focused(players[0].site)
-		landing_markers.keep_claimed(players)
+	game_world.start(hex_map, players, landing_sites.sites)
+	game_hud.open(game_world)
+	hud_panel.visible = false
 
 
 func _process(_delta: float) -> void:
@@ -170,12 +183,21 @@ func _process(_delta: float) -> void:
 	if cell != hovered:
 		hovered = cell
 		hex_map.set_highlight("hover", hovered)
+	if game_world.running:
+		var over_ui := get_viewport().gui_get_hovered_control() != null
+		game_world.hover(-1 if cell < 0 or over_ui else hex_map.finest_cell_at(Vector2(hex_map.last_pick.x, hex_map.last_pick.z)))
 	_update_hud()
 
 
 func _unhandled_input(event: InputEvent) -> void:
 	if event is InputEventMouseButton:
 		var mb := event as InputEventMouseButton
+		if mb.pressed and mb.button_index == MOUSE_BUTTON_RIGHT and game_world.placing != "":
+			game_world.cancel_placement()
+			return
+		if mb.pressed and mb.button_index == MOUSE_BUTTON_LEFT and game_world.running and hovered >= 0:
+			if game_world.click(hex_map.finest_cell_at(Vector2(hex_map.last_pick.x, hex_map.last_pick.z))):
+				return
 		if mb.pressed and mb.button_index == MOUSE_BUTTON_LEFT:
 			# While choosing landings, a click on (or near) a banner picks that site.
 			if landing_ui.is_open() and hovered >= 0:
@@ -191,6 +213,21 @@ func _unhandled_input(event: InputEvent) -> void:
 	if key == null or not key.pressed or key.echo or hex_map.building:
 		return
 	var s := hex_map.settings
+	if game_world.running:
+		match key.keycode:
+			KEY_ESCAPE:
+				if game_world.placing != "":
+					game_world.cancel_placement()
+					return
+				if not game_world.selected.is_empty():
+					game_world.select({})
+					return
+			KEY_TAB:
+				game_world.set_active(game_world.active + 1)
+				return
+			KEY_SPACE:
+				game_world.paused = not game_world.paused
+				return
 	match key.keycode:
 		KEY_C:
 			_toggle_cave()
@@ -234,7 +271,7 @@ func _unhandled_input(event: InputEvent) -> void:
 			hex_map.set_resource_icons_visible(not hex_map.resource_icons_visible())
 		KEY_L:
 			# Back to the landing chooser (landings kept).
-			if landing_sites != null and not hex_map.building:
+			if landing_sites != null and not hex_map.building and not game_world.running:
 				landing_markers.show_all()
 				landing_ui.reopen()
 				landing_markers.update_state(landing_ui.players, landing_ui.focused)
