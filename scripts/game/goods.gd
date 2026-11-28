@@ -6,37 +6,80 @@ extends RefCounted
 
 ## id: [name, colour, icon key (assets/icons/resources) or "", is food]
 const INFO := {
+	# Raw goods, from the land.
 	"wood": ["Wood", Color(0.62, 0.42, 0.22), "timber", false],
+	"oak": ["Ship oak", Color(0.55, 0.4, 0.24), "oak", false],
 	"stone": ["Stone", Color(0.62, 0.62, 0.6), "stone", false],
+	"soapstone": ["Soapstone", Color(0.5, 0.56, 0.52), "soapstone", false],
 	"iron": ["Iron ore", Color(0.6, 0.35, 0.25), "iron", false],
 	"coal": ["Coal", Color(0.25, 0.25, 0.27), "coal", false],
+	"peat": ["Peat", Color(0.35, 0.25, 0.18), "peat", false],
+	"clay": ["Clay", Color(0.75, 0.5, 0.35), "clay", false],
+	"reeds": ["Reeds", Color(0.72, 0.68, 0.4), "reeds", false],
+	"salt": ["Salt", Color(0.95, 0.95, 0.95), "salt", false],
+	"tar": ["Tar", Color(0.15, 0.12, 0.1), "tar", false],
+	"wool": ["Wool", Color(0.92, 0.9, 0.84), "wool", false],
+	"hides": ["Hides", Color(0.62, 0.46, 0.32), "seals", false],
+	"furs": ["Furs", Color(0.5, 0.36, 0.24), "furs", false],
+	"grain": ["Grain", Color(0.88, 0.75, 0.38), "farmland", false],
+	"horses": ["Horses", Color(0.55, 0.38, 0.25), "horses", false],
+	# Food.
+	"fish": ["Fish", Color(0.45, 0.62, 0.75), "fish", true],
+	"meat": ["Meat", Color(0.7, 0.3, 0.28), "game", true],
+	"bread": ["Bread", Color(0.82, 0.6, 0.32), "", true],
+	"stockfish": ["Salt fish", Color(0.78, 0.74, 0.6), "", true],
+	"ale": ["Ale", Color(0.85, 0.62, 0.2), "", false],
+	# Made goods.
+	"bar_iron": ["Iron bars", Color(0.45, 0.46, 0.5), "", false],
+	"tools": ["Tools", Color(0.55, 0.58, 0.62), "", false],
+	"cloth": ["Cloth", Color(0.55, 0.45, 0.7), "", false],
+	"leather": ["Leather", Color(0.5, 0.32, 0.18), "", false],
+	"clothing": ["Clothing", Color(0.35, 0.5, 0.65), "", false],
+	"pottery": ["Pottery", Color(0.7, 0.45, 0.3), "", false],
+	"oil": ["Whale oil", Color(0.85, 0.75, 0.35), "whales", false],
+	"arrows": ["Arrows", Color(0.6, 0.55, 0.4), "", false],
+	"ship": ["Longships", Color(0.42, 0.3, 0.2), "", false],
+	# Riches.
 	"silver": ["Silver", Color(0.82, 0.84, 0.88), "silver", false],
 	"gold": ["Gold", Color(1.0, 0.8, 0.25), "gold", false],
 	"gems": ["Gems", Color(0.55, 0.35, 0.85), "gems", false],
-	"fish": ["Fish", Color(0.45, 0.62, 0.75), "fish", true],
-	"meat": ["Meat", Color(0.7, 0.3, 0.28), "game", true],
-	"grain": ["Grain", Color(0.88, 0.75, 0.38), "farmland", false],
-	"bread": ["Bread", Color(0.82, 0.6, 0.32), "", true],
-	"ale": ["Ale", Color(0.85, 0.62, 0.2), "", false],
-	"wool": ["Wool", Color(0.92, 0.9, 0.84), "wool", false],
-	"cloth": ["Cloth", Color(0.55, 0.45, 0.7), "", false],
-	"furs": ["Furs", Color(0.5, 0.36, 0.24), "furs", false],
-	"clay": ["Clay", Color(0.75, 0.5, 0.35), "clay", false],
-	"salt": ["Salt", Color(0.95, 0.95, 0.95), "salt", false],
-	"peat": ["Peat", Color(0.35, 0.25, 0.18), "peat", false],
-	"tar": ["Tar", Color(0.15, 0.12, 0.1), "tar", false],
 	"amber": ["Amber", Color(0.95, 0.6, 0.15), "amber", false],
-	"tools": ["Tools", Color(0.55, 0.58, 0.62), "", false],
+	"ivory": ["Walrus ivory", Color(0.94, 0.9, 0.8), "seals", false],
+	"jewellery": ["Jewellery", Color(0.95, 0.75, 0.35), "", false],
+	# War.
 	"weapons": ["Weapons", Color(0.7, 0.72, 0.78), "", false],
 	"warriors": ["Warriors", Color(0.8, 0.25, 0.2), "", false],
 }
 
-## The order goods are listed in the stock bar.
-const ORDER := ["wood", "stone", "clay", "peat", "tar", "iron", "coal", "tools", "weapons", "grain",
-	"fish", "meat", "bread", "ale", "wool", "cloth", "furs", "salt", "amber", "silver", "gold", "gems", "warriors"]
+## Goods by kind, for the ledger.
+const GROUPS := {
+	"Raw goods": ["wood", "oak", "stone", "soapstone", "iron", "coal", "peat", "clay", "reeds", "salt", "tar", "wool", "hides", "furs", "grain", "horses"],
+	"Food and drink": ["fish", "meat", "bread", "stockfish", "ale"],
+	"Made goods": ["bar_iron", "tools", "cloth", "leather", "clothing", "pottery", "oil", "arrows", "ship"],
+	"Riches": ["silver", "gold", "gems", "amber", "ivory", "jewellery"],
+	"War": ["weapons", "warriors"],
+}
 
-## What people eat, in the order they eat it.
-const FOOD := ["fish", "meat", "bread"]
+## Every good, in ledger order.
+const ORDER := ["wood", "oak", "stone", "soapstone", "iron", "coal", "peat", "clay", "reeds", "salt", "tar", "wool", "hides", "furs", "grain", "horses",
+	"fish", "meat", "bread", "stockfish", "ale", "bar_iron", "tools", "cloth", "leather", "clothing", "pottery", "oil", "arrows", "ship",
+	"silver", "gold", "gems", "amber", "ivory", "jewellery", "weapons", "warriors"]
+
+## What the top bar always shows.
+const TOP := ["wood", "stone", "tools", "silver"]
+
+## What people eat, in the order they eat it (salt fish keeps, so it goes last).
+const FOOD := ["fish", "meat", "bread", "stockfish"]
+
+## What people want beyond food: [good, people per unit per minute, name of the need]. Each met
+## need adds to their contentment.
+const NEEDS := [
+	["clothing", 12.0, "Clothes"],
+	["pottery", 15.0, "Pots and vessels"],
+	["ale", 10.0, "Ale"],
+	["oil", 14.0, "Lamp oil"],
+	["jewellery", 25.0, "Finery"],
+]
 
 
 static func display_name(id: String) -> String:

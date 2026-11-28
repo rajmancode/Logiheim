@@ -23,7 +23,8 @@ var _flag: MeshInstance3D
 var _cart: MeshInstance3D
 var _boat: MeshInstance3D
 var _light: OmniLight3D
-var _fires: Array = []   # [{root, flame, embers, light, kind, seed}]
+var _fires: Array = []
+var _foundation: MeshInstance3D   # [{root, flame, embers, light, kind, seed}]
 var _builders: Array = []
 var _workers: Array = []
 var _built := false
@@ -95,6 +96,7 @@ func setup(p_record: Dictionary, p_settlement: Settlement, ground: Callable) -> 
 		_light.position = (info.work as Vector3) + Vector3(0, 1.5, 0) if record.id in ["smithy", "weaponsmith", "bakery"] else Vector3(0, 2.0, -float(info.size.y) * 0.5 - 0.8)
 		add_child(_light)
 	_make_fires()
+	make_foundation()
 	# Builders at the site while it goes up.
 	for i in 2:
 		var v := _villager(Color(0.55, 0.45, 0.32), "hammer")
@@ -112,6 +114,11 @@ const TRADES := {
 	"peat_cutter": ["dig", "sack"], "tar_kiln": ["stir", "log"], "amber_gatherer": ["dig", "sack"],
 	"brewery": ["stir", "sack"], "bakery": ["stir", "sack"], "smithy": ["hammer", ""],
 	"weaponsmith": ["hammer", ""], "weaver": ["stir", ""], "barracks": ["chop", ""],
+	"horse_farm": ["idle", "sack"], "reed_cutter": ["reap", "sack"], "smokehouse": ["stir", "fish"],
+	"charcoal": ["dig", "log"], "bloomery": ["hammer", "stone"], "potter": ["stir", ""],
+	"tannery": ["stir", "sack"], "tailor": ["stir", ""], "jeweller": ["hammer", ""],
+	"fletcher": ["hammer", ""], "whaler": ["chop", "sack"], "sealer": ["chop", "sack"],
+	"shipyard": ["hammer", "log"], "trading_post": ["idle", "sack"],
 }
 
 
@@ -132,6 +139,57 @@ func get_tree_root_add(v: Node3D) -> void:
 ## a flickering light. Torches are lit at dusk and put out at dawn; braziers burn while the
 ## building stands; the forge, ovens and hearths blaze while it works and glow low otherwise.
 ## Lights come up as it gets dark, so a settlement at night is picked out in firelight.
+## The footing down to the ground, fitted to where the building stands: a dry-stone wall round
+## the footprint wherever the ground falls away below the floor (on the low side of a slope, or
+## out over the shore as a little quay), stone by stone, down into the ground. Where the ground
+## is higher it is simply dug in. The plot on top is levelled by SettlementGround.
+func make_foundation() -> void:
+	if _foundation != null:
+		_foundation.queue_free()
+		_foundation = null
+	if not is_inside_tree():
+		return
+	var k := BuildingModels.Kit.new()
+	seed(int(record.uid) * 7919)
+	var hx := float(info.size.x) * 0.5 * FOOT
+	var hz := float(info.size.y) * 0.5 * FOOT
+	var corners := [Vector3(-hx, 0, -hz), Vector3(hx, 0, -hz), Vector3(hx, 0, hz), Vector3(-hx, 0, hz)]
+	var any := false
+	for e in 4:
+		var a: Vector3 = corners[e]
+		var b: Vector3 = corners[(e + 1) % 4]
+		var out := (a + b).normalized()
+		out = Vector3(signf(out.x) if absf(a.x - b.x) < 0.01 else 0.0, 0, signf(out.z) if absf(a.z - b.z) < 0.01 else 0.0)
+		var n := maxi(1, int(ceil(a.distance_to(b) / 1.6)))
+		for i in n:
+			var p0 := a.lerp(b, float(i) / n)
+			var p1 := a.lerp(b, float(i + 1) / n)
+			var g := minf(_ground_local(p0 + out * 0.3), _ground_local(p1 + out * 0.3))
+			if g > -0.08:
+				continue
+			any = true
+			var foot := g - 0.4
+			var h := -foot + 0.05
+			k.stones(p0 + Vector3(0, foot, 0) + out * 0.15, p1 + Vector3(0, foot, 0) + out * 0.15, h, 0.55, maxi(1, int(round(h / 0.42))), BuildingModels.STONE)
+			k.quad(p0 + Vector3(0, foot, 0), p1 + Vector3(0, foot, 0), p1 + Vector3(0, 0.02, 0), p0 + Vector3(0, 0.02, 0), out, BuildingModels.DARK_STONE)
+	if not any:
+		return
+	_foundation = MeshInstance3D.new()
+	_foundation.mesh = k.commit()
+	_foundation.material_override = _mat
+	add_child(_foundation)
+
+
+## How much of the footprint the footing walls go round (the rest is yard).
+const FOOT := 0.82
+
+
+## Ground height under a point in the building's own space, relative to its floor.
+func _ground_local(p: Vector3) -> float:
+	var w := global_transform * p
+	return float(height_at.call(Vector2(w.x, w.z))) - global_position.y
+
+
 func _make_fires() -> void:
 	var lights := 0
 	for f: Array in info.get("fires", []):

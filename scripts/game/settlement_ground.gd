@@ -175,9 +175,16 @@ func _add_yard(arr: _Arrays, bv: BuildingView, surface: TerrainSurface, grow: fl
 			# Further out in front of the door, where the work is done.
 			if lz < 0.0:
 				lz *= 1.25
-			var q3 := bv.to_global(Vector3(cos(ang) * rx * r, 0, lz))
+			var lp := Vector3(cos(ang) * rx * r, 0, lz)
+			var q3 := bv.to_global(lp)
 			var q := Vector2(q3.x, q3.z)
-			arr.verts.append(Vector3(q.x, surface.sample_mesh(q) + lift, q.y))
+			var y := surface.sample_mesh(q) + lift
+			# Inside the footing the ground is levelled to the floor (a terrace on a slope).
+			var hx := size.x * 0.5 * BuildingView.FOOT
+			var hz := size.y * 0.5 * BuildingView.FOOT
+			if absf(lp.x) <= hx + 0.05 and absf(lp.z) <= hz + 0.05:
+				y = maxf(y, bv.global_position.y + 0.03)
+			arr.verts.append(Vector3(q.x, y, q.y))
 			arr.normals.append(surface.normal_at(q))
 			arr.uvs.append(Vector2(r, 0))
 			arr.colors.append(kinds[0])

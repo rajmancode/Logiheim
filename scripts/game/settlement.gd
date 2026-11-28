@@ -9,6 +9,13 @@ extends RefCounted
 ## making goods - unless something it uses has run out or the stores are full. Influence comes
 ## from the town hall, temples, towers and mead halls, and is spent to push the town hall's
 ## land outwards.
+##
+## Buildings work recipes: each cycle the first recipe whose goods are all in stock (so a smith
+## burns peat when the coal is gone). Gatherers and many workshops wear tools; with none left
+## they work at 60%. Beyond food, people want clothes, pots, ale, lamp oil and finery
+## (Goods.NEEDS): each want met adds to their contentment, which speeds growth and work and
+## brings influence. Longships and warriors add renown (influence) too. Production and use of
+## every good is tallied per minute for the ledger.
 
 signal changed
 
@@ -30,8 +37,22 @@ var _grow_timer := 0.0
 var _eat_timer := 0.0
 var _hungry := 0
 var _next_id := 1
+## How well each want is met, 0..1, by good (Goods.NEEDS); and their average.
+var needs := {}
+var contentment := 0.5
+## Goods made and used per minute (smoothed), for the ledger.
+var made_rate := {}
+var used_rate := {}
+var _made := {}
+var _used := {}
+var _rate_timer := 0.0
+var _need_timer := 0.0
+var _tool_wear := 0.0
 
-const START_STOCK := {"wood": 60, "stone": 30, "fish": 20, "grain": 10, "bread": 10, "tools": 4}
+const START_STOCK := {"wood": 80, "stone": 40, "fish": 20, "grain": 10, "bread": 10, "tools": 8, "clothing": 4, "pottery": 4}
+const NEED_TIME := 30.0
+const RATE_TIME := 5.0
+const TOOL_WEAR := 0.06    # tools worn out per cycle of a building that uses them
 const GROW_TIME := 8.0
 const EAT_TIME := 12.0
 
@@ -88,7 +109,7 @@ func storage() -> int:
 func stored() -> float:
 	var t := 0.0
 	for k in stock:
-		if k != "warriors":
+		if k != "warriors" and k != "ship":
 			t += float(stock[k])
 	return t
 
@@ -116,12 +137,18 @@ func idle() -> int:
 
 
 func influence_rate() -> float:
+	return influence_parts().values().reduce(func(a: float, b: float) -> float: return a + b, 0.0)
+
+
+## Where influence comes from, per second: {source: amount}.
+func influence_parts() -> Dictionary:
 	var r := 0.0
 	for b: Dictionary in buildings:
 		var d: Dictionary = BuildingDefs.DEFS[b.id]
 		if is_built(b) and d.has("influence") and (int(d.get("workers", 0)) == 0 or int(b.staff) > 0):
 			r += float(d.influence)
-	return r
+	return {"Buildings": r, "Contentment": contentment * 0.03 * population,
+		"Longships": 0.3 * float(stock.get("ship", 0)), "Warriors": 0.05 * float(stock.get("warriors", 0))}
 
 
 func expand_cost() -> int:
@@ -170,12 +197,13 @@ func tick(dt: float) -> Array:
 				just_finished.append(b)
 				changed.emit()
 	# Work.
+	var tools_left := float(stock.get("tools", 0)) >= 1.0
 	for b: Dictionary in buildings:
 		if not is_built(b):
 			continue
 		var d: Dictionary = BuildingDefs.DEFS[b.id]
-		var gains := _gains(b, d)
-		if gains.is_empty():
+		var recs := BuildingDefs.recipes(b.id, int(b.kind))
+		if recs.is_empty():
 			b.working = int(b.staff) > 0 or int(d.get("workers", 0)) == 0
 			if b.status == "Finished" or b.status.begins_with("Being"):
 				b.status = "Standing"
@@ -187,39 +215,89 @@ func tick(dt: float) -> Array:
 			b.status = "Idle - no one to work here"
 			b.working = false
 			continue
-		var uses: Dictionary = d.get("uses", {})
-		var missing := ""
-		for k in uses:
-			if float(stock.get(k, 0)) < float(uses[k]):
-				missing = Goods.display_name(k)
-		var full := stored() >= float(storage()) and not gains.has("influence")
-		if missing != "":
-			b.status = "Waiting for %s" % missing
+		var r := _pick_recipe(recs)
+		if r.is_empty():
+			# Name what's missing for the recipe nearest to being possible.
+			var miss := PackedStringArray()
+			for rr: Dictionary in recs:
+				var m := PackedStringArray()
+				for k in (rr.uses as Dictionary):
+					if float(stock.get(k, 0)) < float(rr.uses[k]):
+						m.append(Goods.display_name(k))
+				if miss.is_empty() or m.size() < miss.size():
+					miss = m
+			b.status = "Waiting for %s" % " and ".join(miss)
 			b.working = false
+			if d.has("influence"):
+				b.status = _passive_status(d)
 			continue
+		var uses: Dictionary = r.uses
+		var gains: Dictionary = r.makes
+		# Full stores stop only what would add to them (a workshop turning many goods into
+		# fewer, or a merchant selling, still frees room).
+		var net := 0.0
+		for k in gains:
+			if k != "influence" and k != "warriors" and k != "ship":
+				net += float(gains[k])
+		for k in uses:
+			net -= float(uses[k])
+		var full := stored() >= float(storage()) and net > 0.0
 		if full:
 			b.status = "Stores are full"
 			b.working = false
 			continue
 		b.working = true
 		var speed := float(b.staff) / float(need) if need > 0 else 1.0
+		speed *= 0.85 + 0.3 * contentment
+		var slow: bool = d.get("tools", false) and not tools_left
+		if slow:
+			speed *= 0.6
 		b.timer = float(b.timer) + dt * speed
 		var cycle := float(d.get("cycle", 10.0))
-		b.status = "Working - %s every %ds" % [Goods.describe(gains).replace("influence", "Influence"), int(cycle)]
+		b.status = "Working - %s every %ds%s" % [Goods.describe(gains).replace("influence", "Influence"), int(cycle), " (no tools: slow)" if slow else ""]
 		if b.timer >= cycle:
 			b.timer = float(b.timer) - cycle
 			for k in uses:
-				stock[k] = float(stock.get(k, 0)) - float(uses[k])
+				take(k, float(uses[k]))
 			for k in gains:
 				if k == "influence":
 					influence += float(gains[k])
 				else:
-					stock[k] = float(stock.get(k, 0)) + float(gains[k])
+					give(k, float(gains[k]))
+			if d.get("tools", false):
+				_tool_wear += TOOL_WEAR
+				if _tool_wear >= 1.0 and float(stock.get("tools", 0)) >= 1.0:
+					_tool_wear -= 1.0
+					take("tools", 1.0)
 			events.append({"building": b, "gains": gains, "uses": uses})
-	# Influence from halls, temples and towers.
+	# Influence from halls, temples, towers, contentment, ships and warriors.
 	influence += influence_rate() * dt
+	# Wants beyond food: every so often each is met from the stores, or not.
+	_need_timer += dt
+	if _need_timer >= NEED_TIME:
+		_need_timer = 0.0
+		var total := 0.0
+		for n: Array in Goods.NEEDS:
+			var good: String = n[0]
+			var want := float(population) / float(n[1]) * NEED_TIME / 60.0
+			var have := minf(float(stock.get(good, 0)), want)
+			if have > 0.0:
+				take(good, have)
+			var met := have / maxf(want, 0.001)
+			needs[good] = lerpf(float(needs.get(good, 0.0)), met, 0.5)
+			total += float(needs[good])
+		contentment = total / Goods.NEEDS.size()
+	# The ledger: made and used per minute.
+	_rate_timer += dt
+	if _rate_timer >= RATE_TIME:
+		for k in Goods.INFO:
+			made_rate[k] = lerpf(float(made_rate.get(k, 0.0)), float(_made.get(k, 0.0)) * 60.0 / _rate_timer, 0.35)
+			used_rate[k] = lerpf(float(used_rate.get(k, 0.0)), float(_used.get(k, 0.0)) * 60.0 / _rate_timer, 0.35)
+		_made.clear()
+		_used.clear()
+		_rate_timer = 0.0
 	# People: grow while there's room and food; eat; go hungry.
-	_grow_timer += dt
+	_grow_timer += dt * (0.6 + 0.8 * contentment)
 	if _grow_timer >= GROW_TIME:
 		_grow_timer = 0.0
 		if population < housing() and food() > 0.0:
@@ -229,9 +307,9 @@ func tick(dt: float) -> Array:
 		_eat_timer = 0.0
 		var need := ceili(population / 4.0)
 		for f in Goods.FOOD:
-			var take := minf(float(stock.get(f, 0)), float(need))
-			stock[f] = float(stock.get(f, 0)) - take
-			need -= int(take)
+			var eat := minf(float(stock.get(f, 0)), float(need))
+			take(f, eat)
+			need -= int(eat)
 			if need <= 0:
 				break
 		if need > 0:
@@ -244,10 +322,24 @@ func tick(dt: float) -> Array:
 	return events
 
 
-func _gains(b: Dictionary, d: Dictionary) -> Dictionary:
-	if d.has("yields"):
-		return d.yields.get(int(b.kind), {})
-	return d.get("makes", {})
+## The first recipe with everything it uses in stock, or {}.
+func _pick_recipe(recs: Array) -> Dictionary:
+	for r: Dictionary in recs:
+		if can_afford(r.get("uses", {})):
+			return r
+	return {}
+
+
+## Takes goods out of the stores (tallied for the ledger).
+func take(good: String, amount: float) -> void:
+	stock[good] = float(stock.get(good, 0)) - amount
+	_used[good] = float(_used.get(good, 0.0)) + amount
+
+
+## Puts goods into the stores (tallied for the ledger).
+func give(good: String, amount: float) -> void:
+	stock[good] = float(stock.get(good, 0)) + amount
+	_made[good] = float(_made.get(good, 0.0)) + amount
 
 
 func _passive_status(d: Dictionary) -> String:

@@ -523,9 +523,273 @@ static func shape(kind: String) -> Dictionary:
 			info.chimney = Vector3(3.0, 9.0, 3.0)
 			info.door = Vector3(0, 0, -1.0)
 			info.work = Vector3(4.5, 0, -6.6)
-	# Every building stands on a plinth reaching down into the slope.
-	var sz: Vector2 = info.size
-	k.box(Vector3(0, -1.6, 0), Vector3(sz.x + 0.6, 3.4, sz.y + 0.6), Color(0.38, 0.35, 0.3))
+		"stable":
+			# A long low stable, a paddock fence, a hay rack and horses at the rail.
+			_longhouse(k, Vector3(-2.0, 0, 2.5), 11.0, 5.0, 2.2, TURF, false)
+			for side in 4:
+				var ang := PI * 0.5 * side
+				_fence(k, Vector3(3.0, 0, -3.5) + Vector3(cos(ang), 0, sin(ang)) * 3.5, 7.0, ang + PI * 0.5)
+			for i in 2:
+				_horse(k, Vector3(2.0 + i * 2.4, 0, -3.0 - i * 1.2), 0.4 + i * 1.9)
+			k.cone(Vector3(-6.5, 0, -2.0), 1.2, 2.2, Color(0.82, 0.7, 0.36), 10)
+			info.height = 6.0
+			info.size = Vector2(14, 13)
+			info.chimney = Vector3(-4.0, 5.0, 2.5)
+			info.door = Vector3(-2.0, 0, -0.1)
+			info.work = Vector3(3.0, 0, -3.5)
+		"reeds":
+			# A reed-thatched hut and sheaves of reeds stood up to dry in stooks.
+			_house(k, Vector3(-2.0, 0, 1.0), 6.0, 4.6, 2.2, THATCH)
+			for i in 5:
+				var c := Vector3(2.4 + (i % 3) * 1.4, 0, -2.0 + (i / 3) * 1.8)
+				for j in 6:
+					var a := TAU * j / 6.0
+					k.log(c + Vector3(cos(a) * 0.25, 1.0, sin(a) * 0.25), 0.07, 2.0, Color(0.74, 0.68, 0.42), Vector3(-cos(a) * 0.15, 1, -sin(a) * 0.15).normalized())
+			info.height = 5.0
+			info.size = Vector2(12, 8)
+			info.chimney = Vector3(-3.5, 4.4, 1.0)
+			info.door = Vector3(-2.0, 0, -1.4)
+			info.work = Vector3(3.0, 0, -3.0)
+		"smokehouse":
+			# A low smokehouse, racks of fish drying, salt barrels.
+			_house(k, Vector3(-2.5, 0, 1.0), 7.0, 5.0, 2.2, TURF)
+			for r in 3:
+				var z := -2.4 + r * 1.2
+				k.post(Vector3(1.6, 0, z), 2.0, 0.07, DARK_WOOD)
+				k.post(Vector3(5.6, 0, z), 2.0, 0.07, DARK_WOOD)
+				k.log(Vector3(3.6, 1.9, z), 0.05, 4.2, DARK_WOOD, Vector3.RIGHT)
+				for f in 7:
+					k.box(Vector3(2.0 + f * 0.55, 1.5, z), Vector3(0.2, 0.7, 0.05), Color(0.78, 0.74, 0.6))
+			for i in 3:
+				k.barrel(Vector3(-6.6 + i * 0.95, 0, -2.6), 0.42, 0.9)
+				k.cylinder(Vector3(-6.6 + i * 0.95, 0.9, -2.6), 0.36, 0.06, Color(0.95, 0.95, 0.95), 8)
+			info.height = 5.5
+			info.size = Vector2(14, 8)
+			info.chimney = Vector3(-2.5, 4.6, 1.0)
+			info.door = Vector3(-2.5, 0, -1.6)
+			info.work = Vector3(3.6, 0, -3.4)
+		"charcoal":
+			# A smouldering stack under turf, wood split and stacked ready, the burner's shelter.
+			k.cone(Vector3(1.5, 0, 0), 2.6, 2.2, TURF, 12)
+			k.cone(Vector3(1.5, 1.9, 0), 0.6, 0.5, Color(0.12, 0.1, 0.08), 8)
+			k.fires.append([Vector3(1.5, 0.3, -2.4), "hearth"])
+			_woodpile(k, Vector3(-3.5, 0, -1.0), 4.0, 0.0)
+			_lean_to(k, Vector3(-3.5, 0, 2.0), 3.6, 2.6, 2.5)
+			info.height = 4.0
+			info.size = Vector2(11, 8)
+			info.chimney = Vector3(1.5, 2.6, 0)
+			info.work = Vector3(1.5, 0, -3.0)
+		"bloomery":
+			# Two clay shaft furnaces on a stone hearth, bellows, a pile of ore, a quenching trough.
+			_house(k, Vector3(-3.5, 0, 1.5), 6.0, 4.6, 2.2, TURF)
+			k.box(Vector3(2.5, 0.25, 0), Vector3(5.0, 0.5, 3.0), STONE)
+			for i in 2:
+				var c := Vector3(1.4 + i * 2.2, 0.5, 0.3)
+				k.frustum(c, 0.8, 0.5, 2.2, Color(0.66, 0.42, 0.28), 10)
+				k.box(c + Vector3(0, 0.3, -0.75), Vector3(0.4, 0.5, 0.15), Color(0.08, 0.05, 0.03))
+				k.fires.append([c + Vector3(0, 0.45, -0.85), "forge"])
+				k.box(c + Vector3(0.0, 0.6, 1.0), Vector3(0.6, 0.4, 0.8), EARTH, Vector3(0.3, 0, 0))
+			k.cone(Vector3(5.6, 0, -2.0), 1.1, 0.8, Color(0.5, 0.3, 0.22), 9)
+			k.box(Vector3(0.5, 0.25, -2.4), Vector3(1.6, 0.5, 0.6), WOOD)
+			info.height = 5.0
+			info.size = Vector2(13, 8)
+			info.chimney = Vector3(1.4, 2.8, 0.3)
+			info.door = Vector3(-3.5, 0, -0.9)
+			info.work = Vector3(2.5, 0, -2.2)
+		"potter":
+			# A hut, a domed kiln, a wheel under a lean-to, pots on boards.
+			_house(k, Vector3(-3.0, 0, 1.0), 6.5, 4.8, 2.3, THATCH)
+			var kc := Vector3(3.6, 0, 1.0)
+			k.cylinder(kc, 1.4, 0.7, STONE, 12)
+			k.sphere(kc + Vector3(0, 0.7, 0), 1.3, Color(0.64, 0.42, 0.28), 6, 12)
+			k.box(kc + Vector3(0, 0.5, -1.3), Vector3(0.6, 0.5, 0.2), Color(0.08, 0.05, 0.03))
+			k.fires.append([kc + Vector3(0, 0.55, -1.45), "hearth"])
+			_lean_to(k, Vector3(0.8, 0, -2.2), 2.6, 2.4, 2.4)
+			k.cylinder(Vector3(0.8, 0, -2.2), 0.4, 0.6, DARK_WOOD, 12)
+			k.cylinder(Vector3(0.8, 0.6, -2.2), 0.3, 0.05, Color(0.7, 0.46, 0.32), 12)
+			k.box(Vector3(-3.0, 0.6, -2.6), Vector3(3.4, 0.08, 0.7), PALE_WOOD)
+			for i in 6:
+				var pc := Vector3(-4.4 + i * 0.55, 0.64, -2.6)
+				k.frustum(pc, 0.14, 0.2, 0.22, Color(0.72, 0.46, 0.32), 10)
+				k.frustum(pc + Vector3(0, 0.22, 0), 0.2, 0.1, 0.16, Color(0.72, 0.46, 0.32), 10)
+			info.height = 5.5
+			info.size = Vector2(13, 8)
+			info.chimney = kc + Vector3(0, 2.0, 0)
+			info.door = Vector3(-3.0, 0, -1.4)
+			info.work = Vector3(0.8, 0, -3.0)
+		"tannery":
+			# Square pits of brown liquor framed in planks, hides stretched on frames.
+			_house(k, Vector3(-3.5, 0, 1.5), 6.0, 4.6, 2.2, TURF)
+			for i in 4:
+				var pc := Vector3(1.0 + (i % 2) * 2.0, 0, -1.6 + (i / 2) * 2.0)
+				k.box(pc + Vector3(0, 0.15, 0), Vector3(1.7, 0.3, 1.7), WOOD)
+				k.box(pc + Vector3(0, 0.29, 0), Vector3(1.4, 0.04, 1.4), Color(0.3, 0.2, 0.1))
+			for i in 2:
+				var fc := Vector3(5.6, 0, -1.6 + i * 2.0)
+				k.post(fc + Vector3(0, 0, -0.8), 2.2, 0.06, DARK_WOOD)
+				k.post(fc + Vector3(0, 0, 0.8), 2.2, 0.06, DARK_WOOD)
+				k.quad2(fc + Vector3(0, 1.9, -0.65), fc + Vector3(0, 1.9, 0.65), fc + Vector3(0, 0.5, 0.5), fc + Vector3(0, 0.5, -0.5), Color(0.55, 0.38, 0.24))
+			info.height = 5.0
+			info.size = Vector2(13, 8)
+			info.chimney = Vector3(-5.0, 4.4, 1.5)
+			info.door = Vector3(-3.5, 0, -0.9)
+			info.work = Vector3(2.0, 0, -2.8)
+		"tailor":
+			# A house, cloth and garments hanging on lines, a cutting table.
+			_house(k, Vector3(-2.0, 0, 1.0), 7.5, 5.5, 2.4, THATCH)
+			for x in [2.6, 6.0]:
+				k.post(Vector3(x, 0, -2.2), 2.2, 0.06, DARK_WOOD)
+			k.log(Vector3(4.3, 2.1, -2.2), 0.03, 3.4, DARK_WOOD, Vector3.RIGHT)
+			for i in 3:
+				var cc: Color = [Color(0.62, 0.22, 0.16), Color(0.28, 0.36, 0.55), Color(0.45, 0.55, 0.3)][i]
+				var x := 2.9 + i * 1.05
+				k.quad2(Vector3(x, 2.05, -2.2), Vector3(x + 0.85, 2.05, -2.2), Vector3(x + 0.75, 0.9, -2.22), Vector3(x + 0.1, 0.9, -2.22), cc)
+				k.quad2(Vector3(x, 2.0, -2.2), Vector3(x - 0.3, 1.5, -2.22), Vector3(x - 0.15, 1.4, -2.22), Vector3(x + 0.05, 1.8, -2.2), cc)
+			k.box(Vector3(-2.0, 0.8, -3.6), Vector3(2.4, 0.1, 1.0), PALE_WOOD)
+			k.box(Vector3(-2.0, 0.87, -3.6), Vector3(1.6, 0.04, 0.7), Color(0.55, 0.45, 0.7))
+			info.height = 6.0
+			info.size = Vector2(13, 9)
+			info.chimney = Vector3(-4.0, 5.0, 1.0)
+			info.door = Vector3(-2.0, 0, -1.8)
+			info.work = Vector3(-2.0, 0, -4.4)
+		"jeweller":
+			# A neat shingled house with a small forge, a bench with tools and a strongbox.
+			_longhouse(k, Vector3(-1.5, 0, 1.5), 8.0, 5.5, 2.5, SHINGLE, false, {"boards": true})
+			k.box(Vector3(4.0, 0.5, -0.5), Vector3(1.2, 1.0, 1.2), STONE)
+			k.box(Vector3(4.0, 1.05, -0.5), Vector3(0.7, 0.1, 0.7), Color(0.9, 0.4, 0.1))
+			k.fires.append([Vector3(4.0, 1.2, -0.5), "hearth"])
+			k.box(Vector3(4.0, 2.2, -0.2), Vector3(0.45, 2.2, 0.45), DARK_STONE)
+			k.box(Vector3(1.6, 0.8, -2.4), Vector3(2.0, 0.1, 0.8), PALE_WOOD)
+			for x in [0.8, 2.4]:
+				k.post(Vector3(x, 0, -2.4), 0.8, 0.05, DARK_WOOD)
+			for i in 4:
+				k.box(Vector3(1.0 + i * 0.4, 0.88, -2.4), Vector3(0.12, 0.06, 0.12), [Color(1.0, 0.8, 0.25), Color(0.82, 0.84, 0.88), Color(0.95, 0.6, 0.15), Color(0.55, 0.35, 0.85)][i])
+			k.box(Vector3(-5.0, 0.35, -2.0), Vector3(1.0, 0.7, 0.7), DARK_WOOD)
+			k.box(Vector3(-5.0, 0.35, -2.37), Vector3(0.8, 0.08, 0.04), IRON)
+			info.height = 6.5
+			info.size = Vector2(12, 9)
+			info.chimney = Vector3(4.0, 3.4, -0.2)
+			info.door = Vector3(-1.5, 0, -1.3)
+			info.work = Vector3(1.6, 0, -3.2)
+		"fletcher":
+			# A hut, bundles of shafts, a rack of finished arrows, a butt to test them on.
+			_house(k, Vector3(-2.0, 0, 1.0), 6.5, 5.0, 2.3, THATCH)
+			k.box(Vector3(2.8, 0.8, -1.8), Vector3(2.0, 0.1, 0.8), PALE_WOOD)
+			for x in [2.0, 3.6]:
+				k.post(Vector3(x, 0, -1.8), 0.8, 0.05, DARK_WOOD)
+			for i in 10:
+				k.log(Vector3(1.9 + i * 0.2, 0.9, -1.8), 0.015, 0.75, PALE_WOOD * 1.2, Vector3(0, 0, 1))
+			k.box(Vector3(5.6, 1.0, -0.5), Vector3(0.1, 2.0, 1.2), DARK_WOOD)
+			for i in 12:
+				k.log(Vector3(5.5, 0.4 + (i % 6) * 0.25, -0.9 + (i / 6) * 0.6), 0.015, 0.8, PALE_WOOD * 1.2, Vector3(0.2, 1, 0).normalized())
+			k.cylinder(Vector3(4.0, 0.8, 3.2), 0.6, 0.4, THATCH, 12, Vector3.BACK)
+			info.height = 5.5
+			info.size = Vector2(12, 9)
+			info.chimney = Vector3(-3.5, 4.8, 1.0)
+			info.door = Vector3(-2.0, 0, -1.6)
+			info.work = Vector3(2.8, 0, -2.8)
+		"whaler":
+			# A whale's jawbones as an arch, a try-pot boiling blubber, barrels of oil, a boat.
+			_house(k, Vector3(-3.5, 0, 2.0), 7.0, 5.0, 2.4, TURF)
+			for s: float in [-1.0, 1.0]:
+				var p := Vector3(1.8 + s * 1.4, 0, -2.5)
+				k.log(p + Vector3(-s * 0.4, 1.8, 0), 0.18, 3.8, Color(0.92, 0.88, 0.78), Vector3(-s * 0.4, 1, 0).normalized())
+			k.box(Vector3(4.5, 0.4, 0.8), Vector3(1.8, 0.8, 1.8), STONE)
+			k.cylinder(Vector3(4.5, 0.8, 0.8), 0.75, 0.7, IRON, 12)
+			k.fires.append([Vector3(4.5, 0.4, -0.15), "hearth"])
+			for i in 5:
+				k.barrel(Vector3(-0.5 + (i % 3) * 0.95, (i / 3) * 0.95, 3.2), 0.45, 0.95)
+			var hull := [Vector3(-7.5, 0.6, -2.5), Vector3(-6.0, 0.15, -3.2), Vector3(-2.0, 0.15, -3.2), Vector3(-0.8, 0.6, -2.5), Vector3(-2.0, 0.15, -1.8), Vector3(-6.0, 0.15, -1.8)]
+			for i in 6:
+				var ha: Vector3 = hull[i]
+				var hb: Vector3 = hull[(i + 1) % 6]
+				k.quad2(ha, hb, Vector3(hb.x * 0.98, -0.25, -2.5), Vector3(ha.x * 0.98, -0.25, -2.5), WOOD)
+			info.height = 5.5
+			info.size = Vector2(15, 10)
+			info.chimney = Vector3(4.5, 1.6, 0.8)
+			info.door = Vector3(-3.5, 0, -0.6)
+			info.work = Vector3(1.8, 0, -3.8)
+		"sealer":
+			# A turf hut, skins pegged out to dry, a rack of tusks, a skin boat.
+			_house(k, Vector3(-2.0, 0, 1.0), 6.0, 4.6, 2.1, TURF)
+			for i in 3:
+				var c := Vector3(2.2 + i * 1.5, 0.05, -1.5 + (i % 2) * 0.8)
+				k.box(c, Vector3(1.2, 0.04, 0.9), Color(0.45, 0.4, 0.36), Vector3(0, i * 0.4, 0))
+			k.box(Vector3(5.0, 1.0, 1.5), Vector3(1.4, 0.08, 0.08), DARK_WOOD)
+			for i in 4:
+				k.cone(Vector3(4.5 + i * 0.3, 0.98, 1.5), 0.04, -0.5, Color(0.94, 0.9, 0.8), 6)
+			k.box(Vector3(-5.5, 0.35, -2.4), Vector3(2.6, 0.5, 0.9), Color(0.55, 0.42, 0.3))
+			info.height = 5.0
+			info.size = Vector2(12, 8)
+			info.chimney = Vector3(-3.5, 4.2, 1.0)
+			info.door = Vector3(-2.0, 0, -1.3)
+			info.work = Vector3(3.6, 0, -2.6)
+		"shipyard":
+			# A longship rising on its slipway: keel and curved stem and stern posts, overlapping
+			# strakes, the mast lying beside; a shed for timber, a tar pot.
+			var L := 14.0
+			k.box(Vector3(0, 0.2, 0), Vector3(L + 2.0, 0.4, 0.6), DARK_WOOD)
+			for i in 7:
+				var x := -L * 0.5 + i * L / 6.0
+				k.box(Vector3(x, 0.4, 0), Vector3(0.4, 0.8, 3.6), DARK_WOOD)
+			var stake := func(t: float, row: int) -> Vector3:
+				var hw2 := 1.6 * sqrt(maxf(1.0 - t * t, 0.0)) * (0.55 + 0.45 * row / 5.0)
+				return Vector3(t * L * 0.5, 0.9 + row * 0.32 + 0.9 * t * t, hw2)
+			for side: float in [-1.0, 1.0]:
+				for row in 5:
+					for i in 10:
+						var t0 := -1.0 + 2.0 * i / 10.0
+						var t1 := -1.0 + 2.0 * (i + 1) / 10.0
+						var a0: Vector3 = stake.call(t0, row)
+						var a1: Vector3 = stake.call(t1, row)
+						var b0: Vector3 = stake.call(t0, row + 1)
+						var b1: Vector3 = stake.call(t1, row + 1)
+						a0.z *= side
+						a1.z *= side
+						b0.z *= side
+						b1.z *= side
+						k.quad2(a0, a1, b1 + Vector3(0, 0.05, 0), b0 + Vector3(0, 0.05, 0), WOOD * (0.85 + 0.05 * row))
+			for e: float in [-1.0, 1.0]:
+				for j in 5:
+					var a := float(j) / 4.0
+					k.box(Vector3(e * (L * 0.5 + 0.3 + a * 0.6), 1.0 + a * 2.6, 0), Vector3(0.3, 0.7, 0.25), DARK_WOOD, Vector3(0, 0, -e * (0.2 + a * 0.5)))
+			_dragon(k, Vector3(L * 0.5 + 1.0, 3.8, 0), Vector3(1, 0, 0))
+			k.log(Vector3(0, 0.25, 3.5), 0.15, 10.0, PALE_WOOD, Vector3.RIGHT)
+			_lean_to(k, Vector3(-5.0, 0, -4.2), 4.0, 2.6, 3.0)
+			for i in 6:
+				k.log(Vector3(-5.0, 0.3 + (i / 3) * 0.5, -4.6 + (i % 3) * 0.45), 0.2, 3.6, PALE_WOOD, Vector3.RIGHT)
+			k.barrel(Vector3(4.0, 0, -3.5), 0.5, 0.8)
+			k.fires.append([Vector3(4.0, 0.2, -4.2), "hearth"])
+			info.height = 6.0
+			info.size = Vector2(18, 11)
+			info.door = Vector3(0, 0, -2.5)
+			info.work = Vector3(0, 0, -3.0)
+		"trading_post":
+			# A shingled hall with a gallery, market stalls with awnings in the owner's colour,
+			# a set of scales, goods stacked, a mooring post.
+			_longhouse(k, Vector3(0, 0, 3.0), 13.0, 6.5, 2.8, SHINGLE, false, {"gallery": true, "boards": true})
+			for i in 3:
+				var c := Vector3(-4.5 + i * 4.5, 0, -4.2)
+				for x in [-1.0, 1.0]:
+					for z in [-0.6, 0.6]:
+						k.post(c + Vector3(x, 0, z), 2.0 if z > 0 else 1.7, 0.06, DARK_WOOD)
+				k.box(c + Vector3(0, 0.85, 0), Vector3(2.2, 0.1, 1.3), PALE_WOOD)
+				k.quad2(c + Vector3(-1.2, 1.7, -0.8), c + Vector3(1.2, 1.7, -0.8), c + Vector3(1.2, 2.05, 0.7), c + Vector3(-1.2, 2.05, 0.7), TEAM)
+				k.barrel(c + Vector3(-0.6, 0.9, 0), 0.25, 0.4)
+				k.box(c + Vector3(0.5, 1.05, 0), Vector3(0.6, 0.3, 0.5), [Color(0.5, 0.36, 0.24), Color(0.94, 0.9, 0.8), Color(0.55, 0.45, 0.7)][i])
+			k.post(Vector3(7.5, 0, -2.0), 1.6, 0.08, DARK_WOOD)
+			k.box(Vector3(7.5, 1.6, -2.0), Vector3(1.2, 0.05, 0.05), IRON)
+			for s: float in [-1.0, 1.0]:
+				k.cylinder(Vector3(7.5 + s * 0.55, 1.25, -2.0), 0.2, 0.04, Color(0.8, 0.65, 0.3), 10)
+			_torch_post(k, Vector3(-7.5, 0, -3.5))
+			_torch_post(k, Vector3(7.5, 0, -4.5))
+			info.height = 8.5
+			info.size = Vector2(18, 14)
+			info.chimney = Vector3(-2.0, 7.6, 3.0)
+			info.door = Vector3(0, 0, -0.8)
+			info.work = Vector3(0, 0, -5.4)
+	# (The footing down to the ground is built per building, to fit where it stands:
+	# BuildingView.make_foundation.)
 	info.mesh = k.commit()
 	var fires: Array = []
 	for f: Array in k.fires:
@@ -539,6 +803,21 @@ static func shape(kind: String) -> Dictionary:
 			info[key] = (info[key] as Vector3) * SCALE
 	_cache[kind] = info
 	return info
+
+
+## A horse standing, turned by `ang`: body, legs, neck and head, mane and tail.
+static func _horse(k: Kit, base: Vector3, ang: float) -> void:
+	var f := Vector3(cos(ang), 0, -sin(ang))
+	var sd := Vector3(-f.z, 0, f.x)
+	var col := Color(0.42, 0.28, 0.18)
+	k.box(base + Vector3(0, 1.15, 0), Vector3(absf(f.x) * 1.5 + absf(sd.x) * 0.5, 0.55, absf(f.z) * 1.5 + absf(sd.z) * 0.5), col)
+	for a: float in [-0.55, 0.55]:
+		for b: float in [-0.18, 0.18]:
+			k.post(base + f * a + sd * b, 0.9, 0.06, col * 0.85)
+	k.log(base + f * 0.85 + Vector3(0, 1.55, 0), 0.14, 0.8, col, (f + Vector3(0, 1.1, 0)).normalized())
+	k.log(base + f * 1.2 + Vector3(0, 1.85, 0), 0.11, 0.55, col, (f + Vector3(0, -0.6, 0)).normalized())
+	k.log(base + f * 0.75 + Vector3(0, 1.7, 0), 0.05, 0.7, Color(0.15, 0.1, 0.08), (f + Vector3(0, 1.1, 0)).normalized())
+	k.log(base - f * 0.85 + Vector3(0, 1.0, 0), 0.05, 0.6, Color(0.15, 0.1, 0.08), (-f + Vector3(0, -1.5, 0)).normalized())
 
 
 ## A carved pillar: a stout post with bands of the owner's colour and a capital.
@@ -760,11 +1039,6 @@ static func _longhouse(k: Kit, c: Vector3, length: float, width: float, wall: fl
 					gn = -gn
 				k.roof_face(go0, go1, gi0, gi1, roof_col)
 				k.quad(gi0 - Vector3(0, 0.15, 0), gi1 - Vector3(0, 0.15, 0), go1 - Vector3(0, 0.15, 0), go0 - Vector3(0, 0.15, 0), -gn, DARK_WOOD * 0.7)
-		# Buttress posts leaning against the walls, every other segment.
-		if i % 2 == 1 and not opts.get("gallery", false):
-			for sd: float in [-1.0, 1.0]:
-				var zw: float = c.z + sd * hw.call(t1)
-				k.log(Vector3(x1, 0.4 + wall * 0.45, zw + sd * 0.55), 0.13, wall * 1.05, DARK_WOOD, Vector3(0, 1, -sd * 0.45).normalized())
 	# Gable ends: planked, and crossed boards above the ridge ends.
 	for sd: float in [-1.0, 1.0]:
 		var x := c.x + sd * hl

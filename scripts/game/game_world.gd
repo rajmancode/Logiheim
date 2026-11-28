@@ -147,7 +147,7 @@ func check(id: String, cell: int) -> Array:
 		return [false, "A cave mouth is here", 0]
 	if _occupied.has(cell):
 		return [false, "Already built on", 0]
-	if l.slope[cell] > 1.05:
+	if l.slope[cell] > 0.75:
 		return [false, "Too steep", 0]
 	if d.get("unique", false) and s.count(id) > 0:
 		return [false, "You already have one", 0]
@@ -166,9 +166,43 @@ func check(id: String, cell: int) -> Array:
 	elif needs is String and needs == "fish":
 		if not _fish_near(cell):
 			return [false, "Needs fish in the water beside it", 0]
+	if d.has("near"):
+		kind = _resource_near(cell, d.near, 2)
+		if kind == 0:
+			var names := PackedStringArray()
+			for r in d.near:
+				names.append(NaturalResources.display_name(r))
+			return [false, "Needs %s within two hexes" % " or ".join(names), 0]
+	if d.get("coast", false) and not _coastal(cell):
+		return [false, "Must stand on the coast", kind]
 	if not s.can_afford(d.cost):
 		return [false, "Not enough: %s" % Goods.describe(_missing(s, d.cost)), kind]
 	return [true, "", kind]
+
+
+## The first of `kinds` on the hex or within `radius` hexes of it (0 if none).
+func _resource_near(cell: int, kinds: Array, radius: int) -> int:
+	var l := lv()
+	var a := l.coords[cell]
+	for dq in range(-radius, radius + 1):
+		for dr in range(maxi(-radius, -dq - radius), mini(radius, -dq + radius) + 1):
+			var j := l.index_of(a + Vector2i(dq, dr))
+			if j < 0:
+				continue
+			for r in [l.resource[j], l.resource2[j] if l.resource2.size() > j else 0]:
+				if r != 0 and kinds.has(r):
+					return r
+	return 0
+
+
+## Beside the sea: a neighbouring hex is water.
+func _coastal(cell: int) -> bool:
+	var l := lv()
+	for k in 6:
+		var j := l.index_of(HexCoords.neighbor(l.coords[cell], k))
+		if j >= 0 and HexMapGenerator.is_water(l.terrain[j]) and l.lake[j] == 0:
+			return true
+	return false
 
 
 func _fish_near(cell: int) -> bool:
@@ -313,12 +347,19 @@ func _raise(s: Settlement, id: String, cell: int, built: bool, kind := 0) -> Dic
 
 
 ## Base height for a footprint: the lowest ground under it (the plinth fills the slope).
+## Base height for a footprint: a little above the middle of the ground under it, so the
+## building is dug into the slope on the high side and stands on a dry-stone terrace on the low
+## side (BuildingView.make_foundation); never below the sea.
 func _seat(c: Vector2, size: Vector2) -> float:
-	var y := ground(c)
-	for k in 8:
-		var o := Vector2.from_angle(TAU * k / 8.0) * size * 0.5
-		y = minf(y, ground(c + o))
-	return y + 0.05
+	var hs: Array = []
+	var r := maxf(size.x, size.y) * 0.4
+	hs.append(hex_map.current_surface().sample(c))
+	for ring in [0.5, 1.0]:
+		for k in 12:
+			hs.append(hex_map.current_surface().sample(c + Vector2.from_angle(TAU * k / 12.0) * r * ring))
+	hs.sort()
+	var y: float = hs[int(hs.size() * 0.55)]
+	return maxf(y, hex_map.sea_y + 0.5) + 0.05
 
 
 ## Doors face the town hall (or, for the hall, the sea).
@@ -370,6 +411,7 @@ func _on_level_changed(_i: int) -> void:
 		var bv := v as BuildingView
 		var p := Vector2(bv.position.x, bv.position.z)
 		bv.position.y = _seat(p, bv.info.size)
+		bv.make_foundation()
 	_territory_dirty = true
 	_ground_dirty = true
 

@@ -5,7 +5,8 @@
 
 Writes
   assets/icons/buildings/<id>.png - a rounded tile framed in the build-menu category's colour
-      (harvest green, crafts violet, people blue, military red) with the building's own model
+      (gather green, food gold, industry iron grey, crafts violet, sea and trade teal,
+      people blue, military red) with the building's own model
       on it, and a small coin in the corner with the good it gives, so look-alike huts still
       tell apart at a glance;
   assets/icons/goods/<id>.png - a round coin in the good's colour with the good's model on it
@@ -23,6 +24,9 @@ SS = 4  # supersampling for smooth edges
 
 CATEGORY = {
     "harvest": (88, 150, 70),
+    "food": (196, 150, 60),
+    "industry": (120, 110, 100),
+    "sea": (50, 130, 150),
     "crafts": (128, 92, 168),
     "people": (70, 112, 170),
     "military": (170, 62, 52),

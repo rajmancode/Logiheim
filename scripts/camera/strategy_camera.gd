@@ -51,6 +51,9 @@ func frame_rect(rect: Rect2) -> void:
 func _unhandled_input(event: InputEvent) -> void:
 	if event is InputEventMouseButton:
 		var mb := event as InputEventMouseButton
+		# The wheel over the interface (menus, cards, panels) is the interface's, never a zoom.
+		if (mb.button_index == MOUSE_BUTTON_WHEEL_UP or mb.button_index == MOUSE_BUTTON_WHEEL_DOWN) and get_viewport().gui_get_hovered_control() != null:
+			return
 		if mb.pressed and mb.button_index == MOUSE_BUTTON_WHEEL_UP:
 			_target_distance = maxf(min_distance, _target_distance / zoom_step)
 		elif mb.pressed and mb.button_index == MOUSE_BUTTON_WHEEL_DOWN:

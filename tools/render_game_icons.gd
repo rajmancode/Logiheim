@@ -83,11 +83,9 @@ func _initialize() -> void:
 	for id in BuildingDefs.DEFS:
 		var d: Dictionary = BuildingDefs.DEFS[id]
 		var product := ""
-		if d.has("makes") and not (d.makes as Dictionary).is_empty():
-			product = String((d.makes as Dictionary).keys()[0])
-		elif d.has("yields") and not (d.yields as Dictionary).is_empty():
-			var first: Dictionary = (d.yields as Dictionary).values()[0]
-			product = String(first.keys()[0])
+		var recs := BuildingDefs.recipes(id)
+		if not recs.is_empty() and not (recs[0].makes as Dictionary).is_empty():
+			product = String((recs[0].makes as Dictionary).keys()[0])
 		manifest.buildings[id] = {"category": d.category, "product": product}
 	for id in Goods.INFO.keys() + ["influence"]:
 		manifest.goods[id] = {"color": (Goods.color(id) if Goods.INFO.has(id) else Color(0.55, 0.35, 0.75)).to_html(false)}
