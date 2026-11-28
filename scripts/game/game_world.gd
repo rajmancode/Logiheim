@@ -34,9 +34,15 @@ var _ghost_label: Label3D
 var _ghost_cell := -1
 var _ghost_ok := false
 var _territory_dirty := true
+var _ground: SettlementGround   # plots and paths worn into the land
+var _ground_dirty := false
 
 
 func _ready() -> void:
+	_ground = SettlementGround.new()
+	_ground.name = "SettlementGround"
+	add_child(_ground)
+	_ground.setup(self)
 	_ghost = MeshInstance3D.new()
 	_ghost_mat = StandardMaterial3D.new()
 	_ghost_mat.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
@@ -90,6 +96,8 @@ func clear() -> void:
 	settlements.clear()
 	_owner.clear()
 	_occupied.clear()
+	if _ground != null:
+		_ground.clear()
 	if _ghost != null:
 		_ghost.visible = false
 
@@ -256,6 +264,7 @@ func demolish(rec: Dictionary) -> void:
 		tw.tween_property(v, "scale", Vector3(1, 0.01, 1), 0.8).set_trans(Tween.TRANS_QUAD).set_ease(Tween.EASE_IN)
 		tw.tween_callback(v.queue_free)
 		_views.erase(rec.uid)
+		_ground_dirty = true
 	if d.has("territory"):
 		_territory_dirty = true
 	select({})
@@ -296,6 +305,7 @@ func _raise(s: Settlement, id: String, cell: int, built: bool, kind := 0) -> Dic
 	add_child(v)
 	v.setup(rec, s, ground)
 	_views[rec.uid] = v
+	_ground_dirty = true
 	_clear_ground(c, maxf(info.size.x, info.size.y) * 0.75 + 4.0)
 	if built:
 		rec.progress = 0.0
@@ -361,6 +371,7 @@ func _on_level_changed(_i: int) -> void:
 		var p := Vector2(bv.position.x, bv.position.z)
 		bv.position.y = _seat(p, bv.info.size)
 	_territory_dirty = true
+	_ground_dirty = true
 
 
 # --------------------------------------------------------------------------- land
@@ -454,6 +465,9 @@ func _process(delta: float) -> void:
 		return
 	if _territory_dirty:
 		_update_territory()
+	if _ground_dirty:
+		_ground_dirty = false
+		_ground.rebuild(_views.values())
 	if paused:
 		return
 	var dt := delta * speed
@@ -464,6 +478,7 @@ func _process(delta: float) -> void:
 			if _views.has(rec.uid) and s.index == active:
 				(_views[rec.uid] as BuildingView).pop(e.gains, e.get("uses", {}))
 		for b: Dictionary in s.just_finished:
+			_ground_dirty = true
 			if BuildingDefs.DEFS[b.id].has("territory"):
 				_territory_dirty = true
 			if s.index == active and b.id != "town_hall":

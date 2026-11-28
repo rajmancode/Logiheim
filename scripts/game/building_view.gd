@@ -52,6 +52,7 @@ func setup(p_record: Dictionary, p_settlement: Settlement, ground: Callable) -> 
 	_mat.set_shader_parameter("height", float(info.height))
 	_people_mat = building_material(settlement.color)
 	_people_mat.set_shader_parameter("height", 100.0)
+	_people_mat.set_shader_parameter("people", true)
 	_model = MeshInstance3D.new()
 	_model.mesh = info.mesh
 	_model.material_override = _mat

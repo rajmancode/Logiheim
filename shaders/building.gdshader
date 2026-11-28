@@ -8,7 +8,8 @@
 //            down the slope and a dark shadow line under each course;
 //   turf   - lumpy grass with darker hollows, the odd yellow tuft and a little moss;
 //   stone  - laid courses of irregular blocks with mortar between;
-//   iron   - dark, slightly metallic; cloth - woven, in the owner's colour.
+//   iron   - dark, slightly metallic; cloth - woven, in the owner's colour;
+//   shingles - overlapping wooden shingles with rounded feet, weathered, a little moss.
 //
 // Construction: everything above `build` x height is cut away, with a ragged line of fresh,
 // pale timber glowing faintly at the cut - the building rises from the ground as it is raised.
@@ -21,6 +22,7 @@ uniform vec3 team_color : source_color = vec3(0.8, 0.2, 0.2);
 uniform float build = 1.0;
 uniform float height = 8.0;
 uniform float flash = 0.0;     // brief highlight (selected, just finished)
+uniform bool people = false;   // people: cloth, skin and hair, not boards and thatch
 
 varying vec3 v_local;
 varying vec3 v_world;
@@ -54,6 +56,9 @@ void fragment() {
 	float across = abs(n.x) > abs(n.z) ? v_local.z : v_local.x;
 	float up = v_local.y;
 	int mat = int(v_mat + 0.5);
+	if (people && mat != 4 && mat != 5) {
+		mat = 8;
+	}
 	float rough = 0.85;
 	float metal = 0.0;
 	float ao = 1.0;
@@ -104,6 +109,29 @@ void fragment() {
 	} else if (mat == 4) {
 		metal = 0.6;
 		rough = 0.45;
+	} else if (mat == 7) {
+		// Shingles: rows 28 cm deep, each shingle 24 cm wide with a rounded foot, rows staggered;
+		// each its own shade of weathered grey-brown, dark in the gaps and under the row above,
+		// moss in the damp patches.
+		float row = floor(up / 0.28);
+		float u = across / 0.24 + 0.5 * mod(row, 2.0);
+		float cell = floor(u);
+		vec2 f = vec2(fract(u), fract(up / 0.28));
+		float side = abs(f.x - 0.5) * 2.0;
+		float foot = smoothstep(0.0, 0.22, f.y - 0.22 * side * side);
+		float gap = smoothstep(0.0, 0.07, f.x) * smoothstep(1.0, 0.93, f.x);
+		float tone = 0.72 + 0.4 * hash1(vec2(cell, row));
+		col = vec3(dot(col, vec3(0.33))) * vec3(1.08, 0.9, 0.7);
+		col *= tone * mix(0.45, 1.0, foot * gap) * (1.0 - 0.3 * smoothstep(0.75, 1.0, f.y));
+		col *= 0.9 + 0.18 * env_noise(vec2(across * 30.0, up * 3.0 + cell));
+		float moss = smoothstep(0.62, 0.85, env_noise(v_local.xz * 0.35 + vec2(up * 0.2, 3.0)));
+		col = mix(col, vec3(0.16, 0.2, 0.07), moss * 0.55 * foot);
+		ao = mix(0.55, 1.0, foot * gap);
+		rough = 0.9;
+	} else if (mat == 8) {
+		// People: soft wool and linen, a faint weave and fold shading.
+		col *= 0.92 + 0.1 * env_noise(v_local.xz * 40.0 + vec2(v_local.y * 40.0));
+		rough = 0.95;
 	} else if (mat == 5) {
 		// Woven cloth.
 		float weave = 0.9 + 0.1 * sin(v_local.x * 90.0) * sin(v_local.y * 90.0);

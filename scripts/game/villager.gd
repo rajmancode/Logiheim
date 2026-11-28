@@ -1,8 +1,11 @@
 class_name Villager
 extends Node3D
-## One of a settlement's people, seen at work: a jointed figure (tunic flaring over the hips
-## with a belt, head with hair and a beard or braids, a hood in the owner's colour; arms that
-## bend at the elbow, legs at the knee) going about its round.
+## One of a settlement's people, seen at work: a jointed figure going about its round. Men
+## wear a knee-length tunic with a belt and buckle, trousers with leg wraps, and a cloak in the
+## owner's colour pinned at the shoulder; women a long underdress with an apron dress over it,
+## held by two oval brooches with a string of beads between, and a shawl in the owner's colour.
+## Hair, beards, braids, buns, hoods and headscarves vary from one to the next. Arms bend at
+## the elbow and legs at the knee; cloaks and skirts swing as they walk.
 ##
 ## Walking: a real gait - legs swing and the knee bends as each foot lifts, the arms swing
 ## against the legs, the hips bob and the shoulders turn a little. At work each trade has its
@@ -27,6 +30,9 @@ var _sh := []    # shoulders [L, R]
 var _el := []    # elbows
 var _hp := []    # hip joints
 var _kn := []    # knees
+var _cloak: Node3D
+var _skirt: Node3D
+var _female := false
 var _tool: MeshInstance3D
 var _load: MeshInstance3D
 var _i := 0
@@ -47,34 +53,50 @@ func setup(_team: Color, tunic: Color, mat: ShaderMaterial, ground: Callable, p_
 	_rng.randomize()
 	_phase = _rng.randf() * TAU
 	speed = _rng.randf_range(1.3, 1.7)
-	var skin := Color(0.88, 0.7, 0.58).lerp(Color(0.72, 0.52, 0.4), _rng.randf())
-	var hair: Color = [Color(0.85, 0.7, 0.4), Color(0.55, 0.35, 0.18), Color(0.3, 0.2, 0.12), Color(0.7, 0.35, 0.15), Color(0.8, 0.78, 0.72)][_rng.randi() % 5]
-	var bearded := _rng.randf() < 0.55
+	var skin := Color(0.9, 0.73, 0.6).lerp(Color(0.74, 0.54, 0.42), _rng.randf())
+	var hair: Color = [Color(0.86, 0.72, 0.42), Color(0.92, 0.82, 0.55), Color(0.55, 0.35, 0.18), Color(0.3, 0.2, 0.12), Color(0.72, 0.36, 0.14), Color(0.8, 0.78, 0.72)][_rng.randi() % 6]
+	_female = _rng.randf() < 0.45
+	# Clothes: plant-dyed wool and linen; men's tunics as given, women's dresses varied.
+	var dress: Color = [Color(0.62, 0.22, 0.16), Color(0.28, 0.36, 0.55), Color(0.4, 0.5, 0.3), Color(0.7, 0.58, 0.32), Color(0.5, 0.36, 0.5)][_rng.randi() % 5]
+	var under := Color(0.86, 0.82, 0.72).lerp(Color(0.72, 0.66, 0.55), _rng.randf())
+	var legs := Color(0.36, 0.3, 0.22).lerp(Color(0.3, 0.32, 0.36), _rng.randf())
+	var style := _rng.randi() % 3
+	var body := (under if _female else tunic)
 	_hips = Node3D.new()
 	_hips.position = Vector3(0, 0.95, 0)
 	add_child(_hips)
 	_torso = Node3D.new()
 	_hips.add_child(_torso)
-	_mesh(_torso, _torso_mesh(tunic))
+	_mesh(_torso, _torso_mesh(dress if _female else tunic, _female, under))
 	_head = Node3D.new()
 	_head.position = Vector3(0, 0.62, 0)
 	_torso.add_child(_head)
-	_mesh(_head, _head_mesh(skin, hair, bearded))
+	_mesh(_head, _head_mesh(skin, hair, _female, style))
+	# A skirt (or the tunic's hem) that hangs from the hips and swings as the legs move.
+	_skirt = Node3D.new()
+	_skirt.position = Vector3(0, -0.02, 0)
+	_hips.add_child(_skirt)
+	_mesh(_skirt, _skirt_mesh(dress if _female else tunic, _female, under))
+	# A cloak (men) or a shawl (women) in the owner's colour, hanging from the shoulders.
+	_cloak = Node3D.new()
+	_cloak.position = Vector3(0, 0.56, 0.13)
+	_torso.add_child(_cloak)
+	_mesh(_cloak, _cloak_mesh(_female))
 	for s: float in [-1.0, 1.0]:
 		var sh := Node3D.new()
-		sh.position = Vector3(s * 0.21, 0.52, 0)
+		sh.position = Vector3(s * (0.19 if _female else 0.23), 0.52, 0)
 		_torso.add_child(sh)
-		_mesh(sh, _limb_mesh(tunic, 0.065, 0.055, 0.3))
+		_mesh(sh, _limb_mesh(body, 0.07, 0.058, 0.3))
 		var el := Node3D.new()
 		el.position = Vector3(0, -0.3, 0)
 		sh.add_child(el)
-		_mesh(el, _forearm_mesh(tunic, skin))
+		_mesh(el, _forearm_mesh(body, skin))
 		_sh.append(sh)
 		_el.append(el)
 		var hp := Node3D.new()
 		hp.position = Vector3(s * 0.1, 0.0, 0)
 		_hips.add_child(hp)
-		_mesh(hp, _limb_mesh(Color(0.36, 0.3, 0.22), 0.08, 0.065, 0.46))
+		_mesh(hp, _limb_mesh(legs, 0.085, 0.068, 0.46))
 		var kn := Node3D.new()
 		kn.position = Vector3(0, -0.46, 0)
 		hp.add_child(kn)
@@ -160,6 +182,8 @@ func _set_load(kind: String) -> void:
 # --------------------------------------------------------------------------- poses
 
 func _pose_walk(ph: float, carrying: bool) -> void:
+	_cloak.rotation = Vector3(0.28 + 0.06 * sin(ph * 2.0 + 0.6), 0, 0.05 * sin(ph))
+	_skirt.rotation = Vector3(0.05 * cos(ph * 2.0), 0, 0.07 * sin(ph))
 	_hips.position.y = 0.95 + 0.035 * cos(ph * 2.0)
 	_hips.rotation = Vector3(0.05, 0, 0)
 	_torso.rotation = Vector3(0.0, sin(ph) * 0.12, 0.0)
@@ -182,6 +206,8 @@ func _pose_walk(ph: float, carrying: bool) -> void:
 
 func _pose_idle() -> void:
 	var br := sin(_t * 1.6 + _phase)
+	_cloak.rotation = Vector3(0.04 + 0.02 * sin(_t * 0.9 + _phase), 0, 0.02 * sin(_t * 0.7))
+	_skirt.rotation = Vector3.ZERO
 	_hips.position.y = 0.95
 	_hips.rotation = Vector3.ZERO
 	_torso.rotation = Vector3(0.02 * br, 0, 0)
@@ -199,6 +225,8 @@ func _pose_idle() -> void:
 ## Working poses: a cycle per trade (the swing timing is eased - slow wind-up, fast strike).
 func _pose_work(a: String, t: float) -> void:
 	_torso.scale = Vector3.ONE
+	_cloak.rotation = Vector3(0.1 + 0.05 * sin(t * 2.0 + _phase), 0, 0)
+	_skirt.rotation = Vector3.ZERO
 	_tool.visible = true
 	for i in 2:
 		(_hp[i] as Node3D).rotation.x = 0.0
@@ -292,42 +320,119 @@ func _pose_work(a: String, t: float) -> void:
 
 # --------------------------------------------------------------------------- meshes
 
-func _torso_mesh(tunic: Color) -> Mesh:
-	var key := "torso_" + tunic.to_html()
+## The body from the waist up. Men: tunic with a belt and buckle. Women: the underdress's
+## sleeves and an apron dress over the chest held by two oval brooches with beads between.
+func _torso_mesh(cloth: Color, female: bool, under: Color) -> Mesh:
+	var key := "torso_%s_%s_%s" % [cloth.to_html(), female, under.to_html()]
 	if _parts.has(key):
 		return _parts[key]
 	var k := BuildingModels.Kit.new()
-	# Tunic skirt flaring over the hips, the body, shoulders; a belt.
-	k.frustum(Vector3(0, -0.22, 0), 0.24, 0.17, 0.26, tunic)
-	k.frustum(Vector3(0, 0.04, 0), 0.17, 0.2, 0.46, tunic)
-	k.frustum(Vector3(0, 0.0, 0), 0.18, 0.18, 0.07, Color(0.3, 0.2, 0.12))
-	k.box(Vector3(0.06, 0.03, -0.17), Vector3(0.07, 0.06, 0.03), BuildingModels.IRON)
-	k.frustum(Vector3(0, 0.5, 0), 0.2, 0.1, 0.1, tunic)
-	k.frustum(Vector3(0, 0.56, 0), 0.06, 0.06, 0.08, Color(0.85, 0.66, 0.54))
+	if female:
+		k.frustum(Vector3(0, -0.02, 0), 0.16, 0.18, 0.5, under, 14)
+		k.frustum(Vector3(0, 0.02, 0), 0.17, 0.185, 0.36, cloth, 14)
+		for sd: float in [-1.0, 1.0]:
+			k.sphere(Vector3(sd * 0.09, 0.36, -0.16), 0.045, Color(0.85, 0.66, 0.25), 4, 8)
+			k.box(Vector3(sd * 0.09, 0.42, -0.15), Vector3(0.025, 0.12, 0.02), cloth * 0.85)
+		for i in 5:
+			var x := -0.08 + i * 0.04
+			k.sphere(Vector3(x, 0.31 - 0.03 * (1.0 - absf(x) / 0.08), -0.175), 0.016, [Color(0.75, 0.2, 0.15), Color(0.2, 0.45, 0.7), Color(0.9, 0.75, 0.3)][i % 3], 3, 6)
+		k.frustum(Vector3(0, 0.5, 0), 0.17, 0.09, 0.1, under, 12)
+	else:
+		k.frustum(Vector3(0, 0.0, 0), 0.19, 0.23, 0.48, cloth, 14)
+		k.frustum(Vector3(0, -0.02, 0), 0.2, 0.2, 0.07, Color(0.3, 0.2, 0.12), 14)
+		k.box(Vector3(0.05, 0.015, -0.2), Vector3(0.08, 0.07, 0.03), Color(0.8, 0.65, 0.3))
+		# The neck opening, trimmed.
+		k.frustum(Vector3(0, 0.46, 0), 0.2, 0.1, 0.1, cloth * 0.9, 14)
+	k.frustum(Vector3(0, 0.54, 0), 0.06, 0.055, 0.1, Color(0.88, 0.69, 0.56), 8)
 	var m := k.commit()
 	_parts[key] = m
 	return m
 
 
-func _head_mesh(skin: Color, hair: Color, bearded: bool) -> Mesh:
-	var key := "head_%s_%s_%s" % [skin.to_html(), hair.to_html(), bearded]
+## From the waist down: the tunic's flared hem to the knee, or a dress to the ankle with the
+## apron dress over it.
+func _skirt_mesh(cloth: Color, female: bool, under: Color) -> Mesh:
+	var key := "skirt_%s_%s_%s" % [cloth.to_html(), female, under.to_html()]
 	if _parts.has(key):
 		return _parts[key]
 	var k := BuildingModels.Kit.new()
-	k.sphere(Vector3(0, 0.1, 0), 0.115, skin)
-	# Nose, eyes.
-	k.box(Vector3(0, 0.09, -0.115), Vector3(0.035, 0.05, 0.04), skin * 0.95)
-	for s: float in [-1.0, 1.0]:
-		k.box(Vector3(s * 0.04, 0.13, -0.105), Vector3(0.025, 0.018, 0.01), Color(0.12, 0.1, 0.08))
-	# Hair at the back and sides, and either a beard or braids.
-	k.box(Vector3(0, 0.12, 0.05), Vector3(0.24, 0.16, 0.14), hair)
-	if bearded:
-		k.frustum(Vector3(0, -0.05, -0.06), 0.03, 0.09, 0.12, hair)
+	if female:
+		k.frustum(Vector3(0, -0.84, 0), 0.3, 0.19, 0.86, under, 16)
+		k.frustum(Vector3(0, -0.66, 0), 0.27, 0.19, 0.68, cloth, 16)
 	else:
-		for s: float in [-1.0, 1.0]:
-			k.frustum(Vector3(s * 0.11, -0.12, 0.03), 0.025, 0.03, 0.22, hair)
-	# A hood in the owner's colour.
-	k.frustum(Vector3(0, 0.08, 0.02), 0.14, 0.015, 0.26, BuildingModels.TEAM)
+		k.frustum(Vector3(0, -0.36, 0), 0.27, 0.2, 0.36, cloth, 16)
+		k.frustum(Vector3(0, -0.37, 0), 0.275, 0.272, 0.04, cloth * 0.7, 16)
+	var m := k.commit()
+	_parts[key] = m
+	return m
+
+
+## A cloak (to the knee, wide at the hem) or a shawl (round the shoulders), in the owner's colour.
+func _cloak_mesh(female: bool) -> Mesh:
+	var key := "cloak_%s" % female
+	if _parts.has(key):
+		return _parts[key]
+	var k := BuildingModels.Kit.new()
+	var T := BuildingModels.TEAM
+	if female:
+		k.quad2(Vector3(-0.24, 0.02, -0.02), Vector3(0.24, 0.02, -0.02), Vector3(0.0, -0.42, 0.06), Vector3(0.0, -0.42, 0.06), T)
+		k.quad2(Vector3(-0.24, 0.02, -0.02), Vector3(-0.26, -0.2, -0.05), Vector3(-0.1, -0.3, 0.05), Vector3(0.0, -0.42, 0.06), T)
+		k.quad2(Vector3(0.24, 0.02, -0.02), Vector3(0.26, -0.2, -0.05), Vector3(0.1, -0.3, 0.05), Vector3(0.0, -0.42, 0.06), T)
+	else:
+		var top := [Vector3(-0.25, 0.0, -0.06), Vector3(-0.15, 0.03, 0.02), Vector3(0.15, 0.03, 0.02), Vector3(0.25, 0.0, -0.06)]
+		var hem := [Vector3(-0.36, -0.95, 0.02), Vector3(-0.17, -0.97, 0.12), Vector3(0.17, -0.97, 0.12), Vector3(0.36, -0.95, 0.02)]
+		for i in 3:
+			k.quad2(top[i], top[i + 1], hem[i + 1], hem[i], T)
+		# The ring brooch on the right shoulder.
+		k.cylinder(Vector3(0.2, 0.02, -0.08), 0.05, 0.02, Color(0.82, 0.66, 0.3), 10, Vector3.BACK)
+	var m := k.commit()
+	_parts[key] = m
+	return m
+
+
+## The head: face, hair in one of several styles; men bearded or not, some hooded; women with
+## a bun, long braids or a headscarf.
+func _head_mesh(skin: Color, hair: Color, female: bool, style: int) -> Mesh:
+	var key := "head_%s_%s_%s_%d" % [skin.to_html(), hair.to_html(), female, style]
+	if _parts.has(key):
+		return _parts[key]
+	var k := BuildingModels.Kit.new()
+	k.sphere(Vector3(0, 0.11, 0), 0.12, skin, 8, 12)
+	k.box(Vector3(0, 0.1, -0.12), Vector3(0.035, 0.055, 0.045), skin * 0.95)
+	for sd: float in [-1.0, 1.0]:
+		k.box(Vector3(sd * 0.042, 0.135, -0.108), Vector3(0.026, 0.02, 0.01), Color(0.12, 0.1, 0.08))
+		k.box(Vector3(sd * 0.042, 0.163, -0.11), Vector3(0.04, 0.012, 0.012), hair * 0.8)
+		k.sphere(Vector3(sd * 0.12, 0.11, 0.0), 0.025, skin * 0.95, 3, 6)
+	# Hair over the crown and down the back.
+	k.sphere(Vector3(0, 0.15, 0.025), 0.128, hair, 6, 12)
+	k.sphere(Vector3(0, 0.07, 0.06), 0.112, hair, 6, 12)
+	if female:
+		match style:
+			0:
+				# A bun at the back.
+				k.sphere(Vector3(0, 0.15, 0.15), 0.065, hair, 5, 8)
+			1:
+				# Two long braids over the shoulders.
+				for sd: float in [-1.0, 1.0]:
+					k.frustum(Vector3(sd * 0.1, -0.26, -0.02), 0.022, 0.034, 0.36, hair, 6)
+			_:
+				# A linen headscarf.
+				k.sphere(Vector3(0, 0.16, 0.03), 0.138, Color(0.9, 0.87, 0.8), 6, 12)
+				k.frustum(Vector3(0, -0.02, 0.07), 0.13, 0.12, 0.16, Color(0.9, 0.87, 0.8), 10)
+	else:
+		match style:
+			0:
+				# A full beard and moustache.
+				k.frustum(Vector3(0, -0.07, -0.06), 0.04, 0.1, 0.15, hair, 10)
+				k.box(Vector3(0, 0.07, -0.115), Vector3(0.1, 0.025, 0.03), hair)
+			1:
+				# A long braided beard, and a hood in the owner's colour.
+				k.frustum(Vector3(0, -0.16, -0.08), 0.025, 0.08, 0.24, hair, 8)
+				k.frustum(Vector3(0, 0.06, 0.02), 0.15, 0.02, 0.3, BuildingModels.TEAM, 12)
+			_:
+				# Clean-shaven but for a moustache, a ponytail.
+				k.box(Vector3(0, 0.07, -0.115), Vector3(0.1, 0.025, 0.03), hair)
+				k.frustum(Vector3(0, -0.12, 0.12), 0.02, 0.035, 0.2, hair, 6)
 	var m := k.commit()
 	_parts[key] = m
 	return m
@@ -351,8 +456,9 @@ func _forearm_mesh(tunic: Color, skin: Color) -> Mesh:
 	if _parts.has(key):
 		return _parts[key]
 	var k := BuildingModels.Kit.new()
-	k.frustum(Vector3(0, -0.22, 0), 0.045, 0.055, 0.22, tunic.lerp(skin, 0.5))
-	k.sphere(Vector3(0, -0.26, 0), 0.05, skin)
+	k.frustum(Vector3(0, -0.22, 0), 0.045, 0.056, 0.22, tunic, 10)
+	k.frustum(Vector3(0, -0.24, 0), 0.05, 0.05, 0.04, tunic * 0.75, 10)
+	k.sphere(Vector3(0, -0.28, -0.01), 0.048, skin, 5, 8)
 	var m := k.commit()
 	_parts[key] = m
 	return m
@@ -363,8 +469,12 @@ func _shin_mesh() -> Mesh:
 		return _parts["shin"]
 	var k := BuildingModels.Kit.new()
 	# Leg wrappings and a leather shoe.
-	k.frustum(Vector3(0, -0.42, 0), 0.05, 0.065, 0.42, Color(0.5, 0.44, 0.36))
-	k.box(Vector3(0, -0.45, -0.05), Vector3(0.11, 0.08, 0.24), Color(0.25, 0.17, 0.1))
+	k.frustum(Vector3(0, -0.42, 0), 0.05, 0.066, 0.42, Color(0.5, 0.44, 0.36), 10)
+	# The cross-gartering of the wraps.
+	for i in 3:
+		k.frustum(Vector3(0, -0.36 + i * 0.12, 0), 0.062 - i * 0.003, 0.064 - i * 0.003, 0.025, Color(0.3, 0.22, 0.15), 10)
+	k.box(Vector3(0, -0.45, -0.05), Vector3(0.11, 0.08, 0.25), Color(0.25, 0.17, 0.1))
+	k.box(Vector3(0, -0.41, 0.0), Vector3(0.1, 0.06, 0.12), Color(0.25, 0.17, 0.1))
 	var m := k.commit()
 	_parts["shin"] = m
 	return m
