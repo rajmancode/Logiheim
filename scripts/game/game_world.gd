@@ -42,6 +42,8 @@ var _infra: Infrastructure      # roads, hill roads and bridges
 var _infra_dirty := false
 var _reach := {}                # settlement index -> {cell: true} it can get to
 var _army_views := {}           # army id -> ArmyView
+var _expand_parent: Dictionary = {}   # the building an expansion being placed belongs to
+var _synergy_dirty := true
 var selected_army: Dictionary = {}
 
 ## The steepest a hex may be to walk across (without a hill road) and to build on; gatherers
@@ -160,6 +162,7 @@ func begin_placement(id: String) -> void:
 
 func cancel_placement() -> void:
 	placing = ""
+	_expand_parent = {}
 	_ghost.visible = false
 
 
@@ -172,6 +175,10 @@ func check(id: String, cell: int) -> Array:
 		return [false, "", 0]
 	if d.get("road", false):
 		return _check_road(s, cell)
+	if d.has("expansion_of"):
+		var why := _check_expansion(s, d, cell)
+		if why != "":
+			return [false, why, 0]
 	if d.get("outside", false):
 		var who := int(_owner.get(cell, -1))
 		if who >= 0 and who != active:
@@ -184,18 +191,22 @@ func check(id: String, cell: int) -> Array:
 		return [false, "Can't build on water", 0]
 	if l.river[cell] == 1:
 		return [false, "A river runs here", 0]
+	if _wet_share(cell) > (0.6 if (d.get("coast", false) or d.get("needs", null) is String) else 0.25):
+		return [false, "Too much of this hex is under water", 0]
 	if l.cave.size() > cell and l.cave[cell] >= 0:
 		return [false, "A cave mouth is here", 0]
 	if _occupied.has(cell):
 		return [false, "Already built on", 0]
-	var steep := GATHER_SLOPE if (d.category == "harvest" or d.has("near")) else WALK_SLOPE
+	var steep := GATHER_SLOPE if (d.category == "harvest" or d.has("near") or d.has("expansion_of")) else WALK_SLOPE
+	if d.get("flat", false):
+		steep = 0.6
 	if s.roads.get(cell, "") == "hill":
 		steep = maxf(steep, 1.5)
 	if s.roads.has(cell) and not d.get("road", false):
 		return [false, "A road runs here", 0]
 	if l.slope[cell] > steep:
 		return [false, "Too steep - lay a hill road here first" if steep < 1.5 else "Too steep", 0]
-	if not d.get("outside", false) and not _reachable(s, cell):
+	if not d.get("outside", false) and not d.has("expansion_of") and not _reachable(s, cell):
 		return [false, "No way to get there - lay a road (a bridge over a river, a hill road up a slope)", 0]
 	if d.get("unique", false) and s.count(id) > 0:
 		return [false, "You already have one", 0]
@@ -228,6 +239,20 @@ func check(id: String, cell: int) -> Array:
 	return [true, "", kind]
 
 
+## How much of a hex's middle lies at or under the sea (0..1), so buildings don't stand in the surf.
+func _wet_share(cell: int) -> float:
+	var c := lv().cell_center(cell)
+	var surf := hex_map.current_surface()
+	var wet := 0
+	var n := 0
+	for ring: float in [0.0, 0.3, 0.6]:
+		for k in (1 if ring == 0.0 else 8):
+			n += 1
+			if surf.sample(c + Vector2.from_angle(TAU * k / 8.0) * lv().hex_size * ring) < hex_map.sea_y + 0.4:
+				wet += 1
+	return float(wet) / float(n)
+
+
 ## The first of `kinds` on the hex or within `radius` hexes of it (0 if none).
 func _resource_near(cell: int, kinds: Array, radius: int) -> int:
 	var l := lv()
@@ -251,6 +276,30 @@ func _coastal(cell: int) -> bool:
 		if j >= 0 and HexMapGenerator.is_water(l.terrain[j]) and l.lake[j] == 0:
 			return true
 	return false
+
+
+## Where an expansion may go: beside its main building or one of its other parts, while the
+## building has room for more ("" if it may).
+func _check_expansion(s: Settlement, d: Dictionary, cell: int) -> String:
+	if _expand_parent.is_empty() or not (d.expansion_of as Array).has(String(_expand_parent.id)):
+		return "Expand it from its building's panel"
+	if s.expansions_of(_expand_parent).size() >= BuildingDefs.MAX_EXPANSIONS:
+		return "No room for more (%d at most)" % BuildingDefs.MAX_EXPANSIONS
+	var l := lv()
+	var cells := [int(_expand_parent.cell)]
+	for e: Dictionary in s.expansions_of(_expand_parent):
+		cells.append(int(e.cell))
+	for c: int in cells:
+		if HexCoords.distance(l.coords[c], l.coords[cell]) == 1:
+			return ""
+	return "Must join the %s or its other parts" % String(BuildingDefs.DEFS[_expand_parent.id].name).to_lower()
+
+
+## Starts placing an expansion of a building.
+func begin_expansion(parent: Dictionary, ext_id: String) -> void:
+	_expand_parent = parent
+	begin_placement(ext_id)
+	_expand_parent = parent
 
 
 ## Whether a road may go on this hex, and what kind: [ok, reason, 0, kind, cost].
@@ -532,6 +581,40 @@ func right_click() -> bool:
 	return false
 
 
+## Neighbour bonuses (BuildingDefs.SYNERGIES): each building's speed, and why; and how grand
+## each main building looks for the expansions it has.
+func _update_synergies() -> void:
+	var l := lv()
+	for s in settlements:
+		for b: Dictionary in s.buildings:
+			var bonus := 0.0
+			var why: Array = []
+			var rules: Array = BuildingDefs.SYNERGIES.get(b.id, [])
+			var produces: bool = not BuildingDefs.recipes(String(b.id)).is_empty() and not BuildingDefs.DEFS[b.id].has("influence")
+			var store := false
+			for o: Dictionary in s.buildings:
+				if o == b or not s.is_built(o):
+					continue
+				if HexCoords.distance(l.coords[int(b.cell)], l.coords[int(o.cell)]) > 2:
+					continue
+				for rule: Array in rules:
+					if (rule[0] as Array).has(String(o.id)) and not why.has(rule[2]):
+						bonus += float(rule[1])
+						why.append(rule[2])
+				if o.id == "warehouse" and produces:
+					store = true
+			if store:
+				bonus += 0.1
+				why.append("a storehouse close by")
+			b.bonus = 1.0 + minf(bonus, 0.6)
+			b.synergy = why
+		for b: Dictionary in s.buildings:
+			var v: BuildingView = _views.get(b.uid)
+			if v != null and not BuildingDefs.expansions_for(String(b.id)).is_empty():
+				var n := s.expansions_of(b).filter(func(e: Dictionary) -> bool: return s.is_built(e)).size()
+				v.set_level(n)
+
+
 func _fish_near(cell: int) -> bool:
 	var l := lv()
 	var a := l.coords[cell]
@@ -616,7 +699,7 @@ func click(cell: int) -> bool:
 			hover(cell)
 			return true
 		s.pay(d.cost)
-		var rec := _raise(s, placing, cell, false, int(r[2]))
+		var rec := _raise(s, placing, cell, false, int(r[2]), _expand_parent if d.has("expansion_of") else {})
 		message.emit("%s is being built." % String(d.name))
 		# Keep placing more of the same with shift held; otherwise done.
 		if not Input.is_key_pressed(KEY_SHIFT):
@@ -646,6 +729,8 @@ func demolish(rec: Dictionary) -> void:
 		return
 	var s: Settlement = settlements[_settlement_of(rec)]
 	var d: Dictionary = BuildingDefs.DEFS[rec.id]
+	for e: Dictionary in s.expansions_of(rec):
+		demolish(e)
 	s.refund(d.cost, 0.5 if s.is_built(rec) else 1.0)
 	s.remove_building(rec)
 	_occupied.erase(rec.cell)
@@ -656,6 +741,7 @@ func demolish(rec: Dictionary) -> void:
 		tw.tween_callback(v.queue_free)
 		_views.erase(rec.uid)
 		_ground_dirty = true
+		_synergy_dirty = true
 		_infra_dirty = true
 		_reach.clear()
 	if d.has("territory"):
@@ -685,7 +771,7 @@ func _settlement_of(rec: Dictionary) -> int:
 
 
 ## A building record and its view, on `cell`.
-func _raise(s: Settlement, id: String, cell: int, built: bool, kind := 0) -> Dictionary:
+func _raise(s: Settlement, id: String, cell: int, built: bool, kind := 0, parent: Dictionary = {}) -> Dictionary:
 	var c := lv().cell_center(cell)
 	var info := BuildingModels.shape(String(BuildingDefs.DEFS[id].model))
 	var pos := Vector3(c.x, _seat(c, info.size), c.y)
@@ -694,11 +780,17 @@ func _raise(s: Settlement, id: String, cell: int, built: bool, kind := 0) -> Dic
 	var v := BuildingView.new()
 	v.position = pos
 	v.rotation.y = _facing(c) if id != "town_hall" else _facing_sea(c)
+	if not parent.is_empty():
+		# An expansion turns to face its main building.
+		rec.parent = int(parent.uid)
+		var to := Vector2(parent.pos.x, parent.pos.z) - c
+		v.rotation.y = atan2(-to.x, -to.y)
 	v.set_meta("sea_y", hex_map.sea_y)
 	add_child(v)
 	v.setup(rec, s, ground)
 	_views[rec.uid] = v
 	_ground_dirty = true
+	_synergy_dirty = true
 	_infra_dirty = true
 	_reach.clear()
 	_clear_ground(c, maxf(info.size.x, info.size.y) * 0.75 + 4.0)
@@ -843,6 +935,9 @@ func _process(delta: float) -> void:
 	if _infra_dirty:
 		_infra_dirty = false
 		_infra.rebuild()
+	if _synergy_dirty:
+		_synergy_dirty = false
+		_update_synergies()
 	if paused:
 		return
 	var dt := delta * speed
@@ -854,6 +949,7 @@ func _process(delta: float) -> void:
 				(_views[rec.uid] as BuildingView).pop(e.gains, e.get("uses", {}))
 		for b: Dictionary in s.just_finished:
 			_ground_dirty = true
+			_synergy_dirty = true
 			if BuildingDefs.DEFS[b.id].has("territory"):
 				_territory_dirty = true
 			if s.index == active and b.id != "town_hall":

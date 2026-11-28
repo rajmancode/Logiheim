@@ -42,6 +42,8 @@ var _info_icon: TextureRect
 var _info_text: RichTextLabel
 var _info_bar: ProgressBar
 var _demolish: Button
+var _expand_box: HBoxContainer
+var _expand_key := ""
 var _toast: Label
 var _toast_box: PanelContainer
 var _team_style := {}
@@ -232,6 +234,9 @@ func _ready() -> void:
 	iv.add_child(_info_text)
 	_info_bar = _bar(Color(0.78, 0.58, 0.24))
 	iv.add_child(_info_bar)
+	_expand_box = HBoxContainer.new()
+	_expand_box.add_theme_constant_override("separation", 6)
+	iv.add_child(_expand_box)
 	_demolish = Button.new()
 	_demolish.text = "Pull down"
 	_demolish.focus_mode = Control.FOCUS_NONE
@@ -842,6 +847,17 @@ func _card_tip(id: String) -> String:
 		tip += "\nEvery %ds" % int(d.cycle)
 	if d.get("tools", false):
 		tip += "\nWears out tools (slow without them)"
+	if BuildingDefs.SYNERGIES.has(id):
+		var near := PackedStringArray()
+		for rule: Array in BuildingDefs.SYNERGIES[id]:
+			var names := PackedStringArray()
+			for o: String in rule[0]:
+				names.append(String(BuildingDefs.DEFS[o].name))
+			near.append("%s +%d%%" % [" or ".join(names), int(float(rule[1]) * 100.0)])
+		tip += "\nFaster within two hexes of: " + ", ".join(near)
+	var exts := BuildingDefs.expansions_for(id)
+	if not exts.is_empty():
+		tip += "\nCan grow up to %d %ss beside it (+%d%% output each)" % [BuildingDefs.MAX_EXPANSIONS, String(BuildingDefs.DEFS[exts[0]].name).to_lower(), int(BuildingDefs.EXPANSION_SHARE * 100.0)]
 	tip += "\nBuild time: %ds" % int(d.build_time)
 	return tip
 
@@ -1032,6 +1048,37 @@ func _update_info() -> void:
 			lines.append(mark + _recipe_bb(r, 20))
 	if d.get("tools", false):
 		lines.append("[color=#a09070]Wears out tools.[/color]")
+	# Neighbours and expansions.
+	if float(rec.get("bonus", 1.0)) > 1.001:
+		lines.append("[color=#8fd07a]Neighbours +%d%%:[/color] %s" % [int(round((float(rec.bonus) - 1.0) * 100.0)), ", ".join(rec.synergy)])
+	elif BuildingDefs.SYNERGIES.has(rec.id):
+		var near := PackedStringArray()
+		for rule: Array in BuildingDefs.SYNERGIES[rec.id]:
+			for o: String in rule[0]:
+				near.append(String(BuildingDefs.DEFS[o].name))
+		lines.append("[color=#a09070]Faster beside: %s[/color]" % ", ".join(near))
+	if d.has("expansion_of"):
+		lines.append("[color=#a09070]Part of a larger works: adds to its main building's output.[/color]")
+	var exts := BuildingDefs.expansions_for(String(rec.id))
+	var have := s.expansions_of(rec)
+	if not exts.is_empty():
+		var built := have.filter(func(e: Dictionary) -> bool: return s.is_built(e)).size()
+		lines.append("Expansions %d of %d   [color=#8fd07a]+%d%% output[/color]" % [have.size(), BuildingDefs.MAX_EXPANSIONS, int(round(built * BuildingDefs.EXPANSION_SHARE * 100.0))])
+	var key := "%d_%d_%s" % [int(rec.uid), have.size(), s == world.me()]
+	if key != _expand_key:
+		_expand_key = key
+		for c in _expand_box.get_children():
+			c.queue_free()
+		if s == world.me() and have.size() < BuildingDefs.MAX_EXPANSIONS:
+			for e: String in exts:
+				var b := Button.new()
+				b.text = "Add %s" % String(BuildingDefs.DEFS[e].name).to_lower()
+				b.focus_mode = Control.FOCUS_NONE
+				b.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+				b.tooltip_text = "%s\nCost: %s. Place it on a hex beside the building or its other parts." % [String(BuildingDefs.DEFS[e].desc), Goods.describe(BuildingDefs.DEFS[e].cost)]
+				var parent := rec
+				b.pressed.connect(func() -> void: world.begin_expansion(parent, e))
+				_expand_box.add_child(b)
 	if d.has("housing"):
 		lines.append("Homes for %d" % int(d.housing))
 	if d.has("storage"):

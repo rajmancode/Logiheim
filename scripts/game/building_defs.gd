@@ -167,6 +167,26 @@ const DEFS := {
 	"outpost": {"name": "Outpost", "category": "roads", "model": "outpost", "workers": 1, "outside": true,
 		"desc": "A fortified camp away from home: claims the land two hexes round it and keeps a small store, so you can gather resources far from the hall. Build within ten hexes of your land, on land nobody holds.",
 		"cost": {"wood": 40, "stone": 15}, "build_time": 35.0, "territory": 2, "storage": 100, "chimney": true},
+	# --- Expansions (built from a gatherer's panel onto a hex beside it or its other parts) ----------
+	"field": {"name": "Field", "category": "harvest", "model": "ext_field", "workers": 1, "expansion_of": ["farm"], "flat": true,
+		"desc": "Another field ploughed beside the farmstead.", "cost": {"wood": 6}, "build_time": 15.0},
+	"woodlot": {"name": "Wood Lot", "category": "harvest", "model": "ext_woodlot", "workers": 1, "expansion_of": ["woodcutter"],
+		"needs": [K.TIMBER, K.OAK, K.TAR], "desc": "Felling further into the woods.", "cost": {"wood": 8}, "build_time": 15.0},
+	"quarry_face": {"name": "Quarry Face", "category": "harvest", "model": "ext_quarry", "workers": 1, "expansion_of": ["quarry"],
+		"needs": [K.STONE, K.SOAPSTONE], "desc": "A new face opened in the rock.", "cost": {"wood": 10}, "build_time": 18.0},
+	"shaft": {"name": "Shaft", "category": "harvest", "model": "ext_shaft", "workers": 1, "expansion_of": ["mine"],
+		"needs": [K.IRON, K.BOG_IRON, K.LAKE_ORE, K.COAL, K.SILVER, K.GOLD, K.GEMS], "desc": "Another shaft sunk into the vein, with a winding frame.",
+		"cost": {"wood": 14, "stone": 6}, "build_time": 22.0},
+	"jetty": {"name": "Jetty", "category": "food", "model": "ext_jetty", "workers": 1, "expansion_of": ["fishing_hut"], "needs": "fish",
+		"desc": "A jetty and another boat on the fishing grounds.", "cost": {"wood": 10}, "build_time": 15.0},
+	"pasture": {"name": "Pasture", "category": "harvest", "model": "ext_pasture", "workers": 1, "expansion_of": ["sheepfold", "horse_farm"], "flat": true,
+		"desc": "More grazing, fenced, with a shelter.", "cost": {"wood": 8}, "build_time": 15.0},
+	"peat_bank": {"name": "Peat Bank", "category": "harvest", "model": "ext_peat", "workers": 1, "expansion_of": ["peat_cutter"],
+		"needs": [K.PEAT, K.BOG_IRON], "desc": "Another bank of peat being cut.", "cost": {"wood": 4}, "build_time": 10.0},
+	"clay_bank": {"name": "Clay Bank", "category": "harvest", "model": "ext_clay", "workers": 1, "expansion_of": ["clay_pit"],
+		"needs": [K.CLAY], "desc": "Another clay pit dug.", "cost": {"wood": 4}, "build_time": 10.0},
+	"reed_bed": {"name": "Reed Bed", "category": "harvest", "model": "ext_reeds", "workers": 1, "expansion_of": ["reed_cutter"],
+		"needs": [K.REEDS], "desc": "More reeds cut and stooked.", "cost": {"wood": 4}, "build_time": 10.0},
 	# --- Military ------------------------------------------------------------------------------
 	"watchtower": {"name": "Watchtower", "category": "military", "model": "tower", "workers": 1,
 		"desc": "Keeps watch and claims the land around it for your settlement.",
@@ -183,6 +203,51 @@ const DEFS := {
 }
 
 
+## Up to how many expansions a gatherer may have, and what each adds to its output.
+const MAX_EXPANSIONS := 3
+const EXPANSION_SHARE := 0.6
+
+## Buildings working faster beside others: id -> [[neighbours (any of), bonus, why]]. Within two
+## hexes; bonuses add up (to +60% at most). Any producer also gains from a storehouse close by.
+const SYNERGIES := {
+	"bakery": [[["farm"], 0.15, "grain fresh from the farm"], [["brewery"], 0.05, "a shared fire"]],
+	"brewery": [[["farm"], 0.15, "grain fresh from the farm"], [["tavern"], 0.1, "the mead hall at its door"]],
+	"smokehouse": [[["fishing_hut"], 0.2, "the catch straight off the boats"], [["salt_works"], 0.15, "salt to hand"]],
+	"bloomery": [[["mine"], 0.2, "ore straight from the mine"], [["charcoal"], 0.15, "charcoal to hand"]],
+	"smithy": [[["bloomery"], 0.2, "iron hot from the bloomery"], [["charcoal", "mine"], 0.1, "fuel to hand"]],
+	"weaponsmith": [[["bloomery"], 0.2, "iron hot from the bloomery"], [["barracks"], 0.1, "warriors to try the blades"]],
+	"tannery": [[["hunting_lodge", "sealer"], 0.15, "hides fresh from the hunt"], [["salt_works"], 0.1, "salt to hand"]],
+	"tailor": [[["weaver"], 0.15, "cloth off the loom"], [["tannery"], 0.1, "leather to hand"]],
+	"weaver": [[["sheepfold"], 0.15, "wool from the fold"]],
+	"potter": [[["clay_pit"], 0.2, "clay dug at the door"], [["peat_cutter", "charcoal"], 0.1, "fuel for the kiln"]],
+	"jeweller": [[["trading_post"], 0.15, "merchants' gold and amber"], [["mine"], 0.1, "metal from the mine"]],
+	"fletcher": [[["reed_cutter"], 0.15, "reeds fresh cut"], [["woodcutter"], 0.1, "wood to hand"]],
+	"shipyard": [[["woodcutter"], 0.15, "timber from the woods"], [["tar_kiln"], 0.15, "tar to hand"], [["weaver"], 0.1, "sailcloth"]],
+	"trading_post": [[["warehouse"], 0.15, "goods ready in store"], [["shipyard"], 0.1, "ships coming and going"]],
+	"charcoal": [[["woodcutter"], 0.15, "wood straight from the woods"]],
+	"tar_kiln": [[["woodcutter"], 0.1, "wood straight from the woods"]],
+	"tavern": [[["longhouse"], 0.1, "neighbours to drink with"], [["brewery"], 0.1, "ale fresh from the brewery"]],
+	"hof": [[["tavern"], 0.1, "feasts after the offerings"]],
+	"barracks": [[["weaponsmith"], 0.15, "arms fresh from the forge"], [["watchtower"], 0.05, "watch kept close"]],
+	"salt_works": [[["peat_cutter"], 0.15, "peat for the fires"]],
+	"farm": [[["sheepfold", "horse_farm"], 0.1, "dung for the fields"]],
+	"whaler": [[["smokehouse", "salt_works"], 0.1, "the catch kept"]],
+}
+
+
+static func is_expansion(id: String) -> bool:
+	return DEFS.has(id) and DEFS[id].has("expansion_of")
+
+
+## The expansions a building can grow.
+static func expansions_for(id: String) -> Array:
+	var out: Array = []
+	for k in DEFS:
+		if DEFS[k].has("expansion_of") and (DEFS[k].expansion_of as Array).has(id):
+			out.append(k)
+	return out
+
+
 ## The building's tile (assets/icons/buildings, made by tools/make_game_icons.py).
 static func icon(id: String) -> Texture2D:
 	var path := "res://assets/icons/buildings/%s.png" % id
@@ -196,7 +261,7 @@ static func get_def(id: String) -> Dictionary:
 static func in_category(cat: String) -> Array:
 	var out: Array = []
 	for id in DEFS:
-		if DEFS[id].category == cat and id != "town_hall":
+		if DEFS[id].category == cat and id != "town_hall" and not DEFS[id].has("expansion_of"):
 			out.append(id)
 	return out
 

@@ -829,6 +829,121 @@ static func shape(kind: String) -> Dictionary:
 			info.chimney = Vector3(-3.0, 4.6, 2.5)
 			info.door = Vector3(0, 0, -R)
 			info.work = Vector3(0, 0, -R - 2.0)
+		"ext_field":
+			# Furrowed strips of ripe grain behind a wattle fence, a stook or two.
+			for i in 7:
+				var x := -5.0 + i * 1.65
+				k.box(Vector3(x, 0.12, 0), Vector3(1.2, 0.24, 9.0), EARTH * 0.9)
+				for j in 9:
+					k.cone(Vector3(x + (j % 2) * 0.25 - 0.12, 0.2, -4.0 + j * 1.0), 0.45, 0.9, Color(0.86, 0.72, 0.36) * (0.92 + 0.08 * float((i + j) % 3)), 6)
+			for side: float in [-1.0, 1.0]:
+				_fence(k, Vector3(0, 0, side * 5.2), 11.5, 0.0)
+			for i in 2:
+				k.cone(Vector3(5.6, 0, -2.5 + i * 3.5), 0.6, 1.4, Color(0.82, 0.7, 0.36), 10)
+			info.height = 2.5
+			info.size = Vector2(13, 11)
+			info.door = Vector3(0, 0, -5.5)
+			info.work = Vector3(0, 0, 0)
+		"ext_woodlot":
+			# Stumps of felled trees, trunks waiting to be hauled, a sawbuck and a cart path.
+			for i in 7:
+				var a := TAU * i / 7.0
+				k.cylinder(Vector3(cos(a) * 3.5, 0, sin(a) * 3.0), 0.35 + 0.08 * float(i % 3), 0.5, WOOD, 9)
+				k.cylinder(Vector3(cos(a) * 3.5, 0.5, sin(a) * 3.0), 0.3, 0.02, PALE_WOOD * 1.1, 9)
+			for row in 2:
+				for i in 4 - row:
+					k.log(Vector3(-1.0, 0.35 + row * 0.62, -1.2 + i * 0.7 + row * 0.35), 0.32, 6.0, WOOD, Vector3.RIGHT)
+			for s: float in [-1.0, 1.0]:
+				k.box(Vector3(2.5 + s * 0.5, 0.5, 1.5), Vector3(0.08, 1.1, 0.08), DARK_WOOD, Vector3(0, 0, s * 0.45))
+			k.log(Vector3(2.5, 0.95, 1.5), 0.18, 2.6, PALE_WOOD, Vector3.BACK)
+			info.height = 3.0
+			info.size = Vector2(10, 9)
+			info.door = Vector3(0, 0, -4.0)
+			info.work = Vector3(2.0, 0, 0)
+		"ext_quarry":
+			# A stepped face of cut rock, blocks on a sled, a ramp of timbers.
+			for i in 4:
+				k.box(Vector3(0, 0.75 + i * 0.75, 2.0 + i * 0.9), Vector3(8.0 - i * 1.4, 1.5, 1.8), DARK_STONE * (0.95 + 0.05 * float(i % 2)), Vector3(0, 0.04 * i, 0))
+			for i in 6:
+				k.box(Vector3(-2.4 + (i % 3) * 1.2, 0.38 + (i / 3) * 0.76, -1.5), Vector3(1.05, 0.72, 0.85), STONE)
+			k.box(Vector3(2.6, 0.12, -1.6), Vector3(1.4, 0.15, 2.2), WOOD)
+			k.box(Vector3(2.6, 0.55, -1.6), Vector3(1.0, 0.7, 0.9), STONE)
+			info.height = 4.5
+			info.size = Vector2(10, 9)
+			info.door = Vector3(0, 0, -4.0)
+			info.work = Vector3(0, 0, -0.5)
+		"ext_shaft":
+			# A winding frame over a timbered shaft, a windlass, a spoil heap, an ore bucket.
+			k.box(Vector3(0, 0.3, 0), Vector3(3.0, 0.6, 3.0), DARK_WOOD)
+			k.box(Vector3(0, 0.62, 0), Vector3(2.0, 0.06, 2.0), Color(0.04, 0.035, 0.03))
+			for x in [-1.4, 1.4]:
+				for z in [-1.4, 1.4]:
+					k.log(Vector3(x * 0.7, 2.4, z * 0.7), 0.13, 5.0, DARK_WOOD, Vector3(-x * 0.12, 1, -z * 0.12).normalized())
+			k.box(Vector3(0, 4.7, 0), Vector3(2.4, 0.3, 0.3), DARK_WOOD)
+			k.cylinder(Vector3(0, 4.9, -0.0), 0.35, 0.2, WOOD, 10, Vector3.RIGHT)
+			k.log(Vector3(0, 2.7, 0), 0.015, 4.0, Color(0.55, 0.48, 0.35), Vector3.UP)
+			k.barrel(Vector3(0, 1.0, 0), 0.3, 0.5)
+			k.cone(Vector3(3.6, 0, 1.5), 2.0, 1.6, Color(0.42, 0.36, 0.3), 9)
+			for s: float in [-1.0, 1.0]:
+				k.post(Vector3(-2.6, 0, s * 0.8), 1.2, 0.08, DARK_WOOD)
+			k.log(Vector3(-2.6, 1.1, 0), 0.16, 1.8, WOOD, Vector3.BACK)
+			info.height = 6.0
+			info.size = Vector2(10, 8)
+			info.door = Vector3(0, 0, -2.0)
+			info.work = Vector3(-1.6, 0, -1.4)
+		"ext_jetty":
+			# A plank jetty out over the water on posts, a boat moored, nets drying.
+			for i in 8:
+				k.box(Vector3(0, 0.55, -4.0 + i * 1.15), Vector3(2.2, 0.12, 1.05), PALE_WOOD * (0.9 + 0.05 * float(i % 3)))
+			for i in 5:
+				for s: float in [-1.0, 1.0]:
+					k.post(Vector3(s * 1.05, -2.0, -4.0 + i * 2.1), 2.7, 0.11, DARK_WOOD)
+			var hull := [Vector3(2.0, 0.6, -1.5), Vector3(2.6, 0.1, -0.5), Vector3(2.6, 0.1, 2.5), Vector3(2.0, 0.6, 3.5), Vector3(3.4, 0.1, 2.5), Vector3(3.4, 0.1, -0.5)]
+			for i in 6:
+				var ha: Vector3 = hull[i]
+				var hb: Vector3 = hull[(i + 1) % 6]
+				k.quad2(ha, hb, Vector3(3.0, -0.3, hb.z * 0.9), Vector3(3.0, -0.3, ha.z * 0.9), WOOD)
+			for x in [-2.0, -2.0]:
+				k.post(Vector3(x, 0, -4.5), 2.2, 0.06, DARK_WOOD)
+			k.post(Vector3(-2.0, 0, -2.2), 2.2, 0.06, DARK_WOOD)
+			k.quad2(Vector3(-2.0, 2.1, -4.5), Vector3(-2.0, 2.1, -2.2), Vector3(-2.05, 0.7, -2.4), Vector3(-2.05, 0.7, -4.3), Color(0.45, 0.42, 0.36))
+			info.height = 3.0
+			info.size = Vector2(8, 10)
+			info.door = Vector3(0, 0, -5.0)
+			info.work = Vector3(0, 0, 2.5)
+		"ext_pasture":
+			# A fenced pasture with a field shelter and a hay rack.
+			for side in 4:
+				var ang := PI * 0.5 * side
+				_fence(k, Vector3(cos(ang), 0, sin(ang)) * 5.0, 10.0, ang + PI * 0.5)
+			_lean_to(k, Vector3(2.8, 0, 2.6), 3.6, 2.6, 2.4)
+			k.cone(Vector3(-2.0, 0, -1.5), 1.0, 1.6, Color(0.82, 0.7, 0.36), 10)
+			for s: float in [-1.0, 1.0]:
+				k.box(Vector3(-2.0 + s * 0.9, 0.7, -1.5), Vector3(0.08, 1.4, 0.08), DARK_WOOD, Vector3(0, 0, s * 0.3))
+			k.box(Vector3(1.0, 0.3, -3.2), Vector3(1.8, 0.5, 0.6), WOOD)
+			info.height = 3.0
+			info.size = Vector2(11, 11)
+			info.door = Vector3(0, 0, -5.0)
+			info.work = Vector3(0, 0, 0)
+		"ext_peat", "ext_clay", "ext_reeds":
+			# A worked bank: dug ground, stacks drying, a barrow.
+			k.box(Vector3(0, 0.03, 0), Vector3(6.0, 0.06, 4.0), Color(0.24, 0.17, 0.12) if kind != "ext_reeds" else Color(0.35, 0.4, 0.22))
+			var col := Color(0.32, 0.23, 0.16) if kind == "ext_peat" else (Color(0.7, 0.45, 0.32) if kind == "ext_clay" else Color(0.74, 0.68, 0.42))
+			for i in 5:
+				var c := Vector3(-3.0 + i * 1.5, 0, 3.0 + (i % 2) * 0.8)
+				if kind == "ext_reeds":
+					for j in 6:
+						var a := TAU * j / 6.0
+						k.log(c + Vector3(cos(a) * 0.25, 1.0, sin(a) * 0.25), 0.07, 2.0, col, Vector3(-cos(a) * 0.15, 1, -sin(a) * 0.15).normalized())
+				else:
+					for lv in 3:
+						k.box(c + Vector3(0, 0.15 + lv * 0.28, 0), Vector3(0.9 - lv * 0.2, 0.25, 0.5), col * (0.9 + 0.05 * lv))
+			k.box(Vector3(3.2, 0.35, -1.5), Vector3(0.7, 0.3, 1.1), WOOD)
+			k.cylinder(Vector3(3.2, 0.2, -2.1), 0.2, 0.08, DARK_WOOD, 10, Vector3.RIGHT)
+			info.height = 2.5
+			info.size = Vector2(9, 8)
+			info.door = Vector3(0, 0, -4.0)
+			info.work = Vector3(0, 0, 0)
 	# (The footing down to the ground is built per building, to fit where it stands:
 	# BuildingView.make_foundation.)
 	info.mesh = k.commit()

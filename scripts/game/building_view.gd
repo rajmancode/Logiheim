@@ -296,6 +296,66 @@ func _make_flag() -> void:
 
 
 var _pole: MeshInstance3D
+var _level := 0
+var _enhance: MeshInstance3D
+
+
+## A main building with expansions grows grander: at one, stacks of what it makes piled in its
+## yard; at two, a lean-to store and more stacks; at three, carved gateposts hung with the
+## clan's banners and a second flag.
+func set_level(n: int) -> void:
+	if n == _level:
+		return
+	_level = n
+	if _enhance != null:
+		_enhance.queue_free()
+		_enhance = null
+	if n <= 0:
+		return
+	var k := BuildingModels.Kit.new()
+	var hx := float(info.size.x) * 0.5
+	var hz := float(info.size.y) * 0.5
+	var recs := BuildingDefs.recipes(String(record.id))
+	var product := ""
+	if not recs.is_empty() and not (recs[0].makes as Dictionary).is_empty():
+		product = String((recs[0].makes as Dictionary).keys()[0])
+	var spots := [Vector3(hx * 0.82, 0, -hz * 0.85), Vector3(-hx * 0.82, 0, -hz * 0.85), Vector3(hx * 0.85, 0, hz * 0.4), Vector3(-hx * 0.85, 0, hz * 0.4)]
+	var piles := mini(2 * n, spots.size())
+	var gm: ArrayMesh = GoodsModels.mesh(product) if product != "" else null
+	if gm != null:
+		var arrays := gm.surface_get_arrays(0)
+		var verts: PackedVector3Array = arrays[Mesh.ARRAY_VERTEX]
+		var cols: PackedColorArray = arrays[Mesh.ARRAY_COLOR]
+		var norms: PackedVector3Array = arrays[Mesh.ARRAY_NORMAL]
+		for pi in piles:
+			var at: Vector3 = spots[pi]
+			at.y = ground_shift(at)
+			for i in range(0, verts.size(), 3):
+				var tri := [verts[i] * 1.3 + at, verts[i + 1] * 1.3 + at, verts[i + 2] * 1.3 + at]
+				k.tri(tri[0], tri[1], tri[2], norms[i], cols[i] if i < cols.size() else Color.WHITE)
+	if n >= 2:
+		var c := Vector3(-hx * 0.85, ground_shift(Vector3(-hx * 0.85, 0, -hz * 0.2)), -hz * 0.2)
+		for x in [-1.2, 1.2]:
+			for z in [-1.0, 1.0]:
+				k.post(c + Vector3(x, 0, z), 2.6 if z > 0 else 2.0, 0.1, BuildingModels.DARK_WOOD)
+		k.roof(c + Vector3(0, 2.2, 0), 3.2, 2.8, 0.8, BuildingModels.SHINGLE)
+		for i in 3:
+			k.barrel(c + Vector3(-0.7 + i * 0.7, 0, 0.2), 0.32, 0.75)
+	if n >= 3:
+		for sd: float in [-1.0, 1.0]:
+			var g := Vector3(sd * 2.2, 0, -hz - 1.5)
+			g.y = ground_shift(g)
+			k.box(g + Vector3(0, 0.25, 0), Vector3(0.8, 0.5, 0.8), BuildingModels.STONE)
+			k.post(g + Vector3(0, 0.5, 0), 3.6, 0.2, BuildingModels.DARK_WOOD)
+			for y in [1.2, 2.4, 3.4]:
+				k.box(g + Vector3(0, 0.5 + y, 0), Vector3(0.46, 0.14, 0.46), BuildingModels.TEAM)
+			k.quad2(g + Vector3(-0.35, 3.9, -0.25), g + Vector3(0.35, 3.9, -0.25), g + Vector3(0.35, 2.3, -0.25), g + Vector3(-0.35, 2.3, -0.25), BuildingModels.TEAM)
+	_enhance = MeshInstance3D.new()
+	_enhance.mesh = k.commit()
+	_enhance.material_override = _mat
+	add_child(_enhance)
+	# A burst of dust and a flash as it grows.
+	_flash = 1.0
 
 
 func _make_fires() -> void:

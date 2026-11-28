@@ -98,13 +98,22 @@ func rebuild(views: Array) -> void:
 		mine.sort_custom(func(a: BuildingView, b: BuildingView) -> bool:
 			return Vector2(a.position.x, a.position.z).distance_to(hp) < Vector2(b.position.x, b.position.z).distance_to(hp))
 		var reached: Array = [hall]
+		var by_uid := {}
+		for bv: BuildingView in mine:
+			by_uid[int(bv.record.uid)] = bv
 		for bv: BuildingView in mine:
 			if bv == hall:
 				continue
 			var a := _front(bv)
 			var best: BuildingView = hall
 			var bd := INF
+			if by_uid.has(int(bv.record.get("parent", -1))):
+				# An expansion: a track to its main building.
+				best = by_uid[int(bv.record.parent)]
+				bd = -1.0
 			for r: BuildingView in reached:
+				if bd < 0.0:
+					break
 				var d := _front(r).distance_to(a)
 				if d < bd:
 					bd = d

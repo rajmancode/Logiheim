@@ -76,7 +76,7 @@ func _init(p_index: int, p_name: String, p_color: Color) -> void:
 func add_building(id: String, cell: int, pos: Vector3, resource_kind := 0, built := false) -> Dictionary:
 	var b := {"uid": _next_id, "id": id, "cell": cell, "pos": pos, "kind": resource_kind,
 		"progress": 1.0 if built else 0.0, "timer": 0.0, "staff": 0, "status": "", "node": null,
-		"working": false}
+		"working": false, "parent": -1, "bonus": 1.0, "synergy": []}
 	_next_id += 1
 	buildings.append(b)
 	if id == "town_hall":
@@ -204,13 +204,21 @@ func tick(dt: float) -> Array:
 				b.status = "Finished"
 				just_finished.append(b)
 				changed.emit()
-	# Work.
+	# Work. Each built, staffed expansion adds to its main building's output.
 	var tools_left := float(stock.get("tools", 0)) >= 1.0
+	var ext := {}
+	for b: Dictionary in buildings:
+		if int(b.get("parent", -1)) >= 0 and is_built(b) and int(b.staff) > 0:
+			ext[int(b.parent)] = int(ext.get(int(b.parent), 0)) + 1
 	for b: Dictionary in buildings:
 		if not is_built(b):
 			continue
 		var d: Dictionary = BuildingDefs.DEFS[b.id]
 		var recs := BuildingDefs.recipes(b.id, int(b.kind))
+		if d.has("expansion_of"):
+			b.working = int(b.staff) > 0
+			b.status = "Working for its %s" % _parent_name(b) if b.working else "Idle - no one to work here"
+			continue
 		if recs.is_empty():
 			b.working = int(b.staff) > 0 or int(d.get("workers", 0)) == 0
 			if b.status == "Finished" or b.status.begins_with("Being"):
@@ -239,8 +247,12 @@ func tick(dt: float) -> Array:
 			if d.has("influence"):
 				b.status = _passive_status(d)
 			continue
+		var share := 1.0 + BuildingDefs.EXPANSION_SHARE * float(ext.get(int(b.uid), 0))
 		var uses: Dictionary = r.uses
 		var gains: Dictionary = r.makes
+		if share > 1.0:
+			uses = _scaled(uses, share)
+			gains = _scaled(gains, share)
 		# Full stores stop only what would add to them (a workshop turning many goods into
 		# fewer, or a merchant selling, still frees room).
 		var net := 0.0
@@ -257,6 +269,7 @@ func tick(dt: float) -> Array:
 		b.working = true
 		var speed := float(b.staff) / float(need) if need > 0 else 1.0
 		speed *= 0.85 + 0.3 * contentment
+		speed *= float(b.get("bonus", 1.0))
 		var slow: bool = d.get("tools", false) and not tools_left
 		if slow:
 			speed *= 0.6
@@ -328,6 +341,25 @@ func tick(dt: float) -> Array:
 		else:
 			_hungry = 0
 	return events
+
+
+static func _scaled(d: Dictionary, k: float) -> Dictionary:
+	var out := {}
+	for g in d:
+		out[g] = snappedf(float(d[g]) * k, 0.1) if g != "influence" else d[g]
+	return out
+
+
+func _parent_name(b: Dictionary) -> String:
+	for o: Dictionary in buildings:
+		if int(o.uid) == int(b.get("parent", -1)):
+			return String(BuildingDefs.DEFS[o.id].name).to_lower()
+	return "building"
+
+
+## The expansions of a building.
+func expansions_of(b: Dictionary) -> Array:
+	return buildings.filter(func(o: Dictionary) -> bool: return int(o.get("parent", -1)) == int(b.uid))
 
 
 ## The first recipe with everything it uses in stock, or {}.
