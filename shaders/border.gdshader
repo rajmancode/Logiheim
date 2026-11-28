@@ -10,8 +10,23 @@
 shader_type spatial;
 render_mode unshaded, cull_disabled, blend_mix, depth_draw_never, shadows_disabled, fog_disabled;
 
+#include "res://shaders/include/environment.gdshaderinc"
+#include "res://shaders/include/sea_motion.gdshaderinc"
+
 uniform int style = 0;
 uniform float strength = 1.0;
+// The sea under a border (BorderRibbon.set_sea): where the ribbon runs out over the water it
+// rides the same waves as the sea surface, so the swell never washes over it.
+uniform bool on_sea = false;
+uniform float sea_level = 0.0;
+uniform sampler2D terrain_height : filter_linear, repeat_disable;
+uniform vec2 terrain_size = vec2(2048.0);
+uniform float terrain_min = -40.0;
+uniform float terrain_range = 300.0;
+uniform float wave_height = 0.35;
+uniform float swell = 0.55;
+uniform float surf = 1.0;
+uniform float surf_period = 8.0;
 
 varying float v_line;
 varying float v_width;
@@ -21,6 +36,19 @@ void vertex() {
 	v_line = UV2.x;
 	v_width = UV2.y;
 	v_world = (MODEL_MATRIX * vec4(VERTEX, 1.0)).xyz;
+	// A ribbon is laid at sea level over water: there it floats on the waves.
+	if (on_sea && v_world.y < sea_level + 1.2) {
+		float ground = sea_ground(terrain_height, v_world.xz, terrain_size, terrain_min, terrain_range);
+		float wet = 1.0 - smoothstep(sea_level - 0.6, sea_level + 0.1, ground);
+		if (wet > 0.0) {
+			vec3 nrm;
+			vec3 off = sea_offset(vec3(v_world.x, sea_level, v_world.z), true, ground, wave_height, swell, surf, surf_period, 1.0, nrm);
+			// A little over the crest: the sea mesh between its vertices can sit a touch higher.
+			off.y += 0.3;
+			VERTEX += off * wet;
+			v_world = (MODEL_MATRIX * vec4(VERTEX, 1.0)).xyz;
+		}
+	}
 }
 
 void fragment() {

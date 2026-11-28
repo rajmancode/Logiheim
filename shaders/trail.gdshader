@@ -15,6 +15,9 @@ render_mode blend_mix, depth_draw_opaque, cull_disabled, diffuse_burley, specula
 uniform sampler2DArray albedo_array : source_color, filter_linear_mipmap_anisotropic, repeat_enable;
 uniform sampler2DArray normal_array : filter_linear_mipmap_anisotropic, repeat_enable;
 uniform float trail_width = 3.5;
+// 1 on a clan's made roads (scripts/game/infrastructure.gd): darker, packed and with a dark
+// edge either side, so they read from afar over any ground.
+uniform float made = 0.0;
 const float T_SAND = 0.0;
 const float T_PEBBLES = 3.0;
 const float T_GRASS = 4.0;
@@ -138,6 +141,11 @@ void fragment() {
 	}
 
 	col = mix(col, mix(col, mud, 0.6), rut * wetness * (1.0 - snow));
+	if (made > 0.0) {
+		float e = abs(UV.x * 2.0 - 1.0);
+		col = mix(col, col * vec3(0.62, 0.56, 0.5), made);
+		col = mix(col, vec3(0.08, 0.06, 0.04), smoothstep(0.62, 0.78, e) * (1.0 - smoothstep(0.9, 1.0, e)) * 0.75 * made);
+	}
 	col *= cloud_shadow(v_world_pos) * (1.0 - 0.3 * wetness);
 	ALBEDO = col;
 	ROUGHNESS = mix(rough, 0.35, wetness * rut);

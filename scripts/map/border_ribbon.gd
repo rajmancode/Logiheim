@@ -133,10 +133,35 @@ static func add_ribbons(data: MeshData, loops_in: Array, surface: TerrainSurface
 			prev_u = along
 
 
+## The sea the ribbons float on (HexMap sets it with the sea): sea level and the terrain
+## height map the sea reads its depth from. Every ribbon material made gets it.
+static var _sea := {}
+static var _mats: Array[WeakRef] = []
+
+
+static func set_sea(params: Dictionary) -> void:
+	_sea = params
+	var live: Array[WeakRef] = []
+	for w in _mats:
+		var m := w.get_ref() as ShaderMaterial
+		if m != null:
+			_apply_sea(m)
+			live.append(w)
+	_mats = live
+
+
+static func _apply_sea(m: ShaderMaterial) -> void:
+	for k in _sea:
+		m.set_shader_parameter(k, _sea[k])
+	m.set_shader_parameter("on_sea", not _sea.is_empty())
+
+
 ## The material for a ribbon: style 0 a settlement's border, 1 a resource deposit's outline.
 static func material(style: int, priority := 4) -> ShaderMaterial:
 	var m := ShaderMaterial.new()
 	m.shader = load("res://shaders/border.gdshader")
 	m.set_shader_parameter("style", style)
 	m.render_priority = priority
+	_apply_sea(m)
+	_mats.append(weakref(m))
 	return m

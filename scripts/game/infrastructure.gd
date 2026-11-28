@@ -16,6 +16,12 @@ var _road_mat: ShaderMaterial
 var _roads: MeshInstance3D
 var _bridges: MeshInstance3D
 var _walls: MeshInstance3D
+var _lamps: MeshInstance3D       # posts, lanterns and kerb stones along the roads
+var _glass: MeshInstance3D       # the lanterns' panes, glowing at night
+var _pools: MeshInstance3D       # warm light on the road under each lantern at night
+var _glass_mat: StandardMaterial3D
+var _pool_mat: StandardMaterial3D
+const LAMP_STEP := 18.0          # metres between lanterns along a road
 
 
 func setup(p_world: GameWorld) -> void:
@@ -33,9 +39,57 @@ func setup(p_world: GameWorld) -> void:
 	_bridges = MeshInstance3D.new()
 	_bridges.name = "Bridges"
 	add_child(_bridges)
+	_road_mat.set_shader_parameter("made", 1.0)
 	_walls = MeshInstance3D.new()
 	_walls.name = "Walls"
 	add_child(_walls)
+	_lamps = MeshInstance3D.new()
+	_lamps.name = "Lamps"
+	add_child(_lamps)
+	_glass_mat = StandardMaterial3D.new()
+	_glass_mat.albedo_color = Color(0.35, 0.25, 0.12)
+	_glass_mat.emission_enabled = true
+	_glass_mat.emission = Color(1.0, 0.68, 0.3)
+	_glass = MeshInstance3D.new()
+	_glass.name = "LampGlass"
+	_glass.material_override = _glass_mat
+	_glass.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+	add_child(_glass)
+	_pool_mat = StandardMaterial3D.new()
+	_pool_mat.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+	_pool_mat.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
+	_pool_mat.blend_mode = BaseMaterial3D.BLEND_MODE_ADD
+	_pool_mat.depth_draw_mode = BaseMaterial3D.DEPTH_DRAW_DISABLED
+	_pool_mat.vertex_color_use_as_albedo = true
+	_pool_mat.albedo_texture = _pool_texture()
+	_pools = MeshInstance3D.new()
+	_pools.name = "LampLight"
+	_pools.material_override = _pool_mat
+	_pools.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+	add_child(_pools)
+
+
+## The lanterns brighten as night falls.
+func _process(_delta: float) -> void:
+	if _glass_mat == null:
+		return
+	var night := Atmosphere.night
+	var t := Time.get_ticks_msec() * 0.001
+	var flick := 0.92 + 0.08 * sin(t * 9.0) * sin(t * 5.3)
+	_glass_mat.emission_energy_multiplier = (0.25 + 3.5 * night) * flick
+	_pool_mat.albedo_color = Color(1, 1, 1, clampf(night * 1.3, 0.0, 1.0) * flick)
+	_pools.visible = night > 0.05
+
+
+## A soft round spot of light, bright in the middle.
+static func _pool_texture() -> Texture2D:
+	var img := Image.create(64, 64, false, Image.FORMAT_RGBA8)
+	for y in 64:
+		for x in 64:
+			var d := Vector2(x - 31.5, y - 31.5).length() / 31.5
+			var a := pow(clampf(1.0 - d, 0.0, 1.0), 1.6)
+			img.set_pixel(x, y, Color(1, 1, 1, a))
+	return ImageTexture.create_from_image(img)
 
 
 func clear() -> void:
@@ -43,6 +97,9 @@ func clear() -> void:
 		_roads.mesh = null
 		_bridges.mesh = null
 		_walls.mesh = null
+		_lamps.mesh = null
+		_glass.mesh = null
+		_pools.mesh = null
 
 
 ## What kind of road a hex needs: "bridge" over a river, "hill" up a steep slope, else "road".
@@ -75,11 +132,15 @@ func rebuild() -> void:
 	var bridges := MeshData.new()
 	var walls := BuildingModels.Kit.new()
 	var any_wall := false
+	var lamps := BuildingModels.Kit.new()
+	var glass := BuildingModels.Kit.new()
+	var pools := MeshData.new()
 	for s in world.settlements:
 		# Plain roads run as smooth curves through their hexes (see _road_chains); hill roads
 		# and bridges are built hex by hex below and the curves meet them at the hex edge.
 		for pts: PackedVector2Array in _road_chains(s, l):
 			road.add(pts, surface, sea)
+			_add_furniture(lamps, glass, pools, pts, surface, sea)
 		for cell: int in s.roads:
 			var kind := String(s.roads[cell])
 			if kind == "road":
@@ -119,6 +180,10 @@ func rebuild() -> void:
 	_bridges.mesh = bridges.to_mesh() if not bridges.verts.is_empty() else null
 	_bridges.material_override = ResourceProps._material("body")
 	_walls.mesh = walls.commit() if any_wall else null
+	_lamps.mesh = lamps.commit()
+	_lamps.material_override = BuildingView.building_material(Color.WHITE)
+	_glass.mesh = glass.commit()
+	_pools.mesh = pools.to_mesh() if not pools.verts.is_empty() else null
 	_walls.material_override = BuildingView.building_material(Color.WHITE)
 
 
@@ -212,6 +277,65 @@ func _road_chains(s: Settlement, l: HexLevel) -> Array:
 	for pts: PackedVector2Array in out:
 		smooth.append(_densify(_chaikin(pts, 3), 1.6))
 	return smooth
+
+
+## What lines a made road: low kerb stones along both edges, and every LAMP_STEP metres a
+## lantern on a post (on alternate sides) whose panes glow at night and throw a warm pool of
+## light on the road - so a clan's roads stand out by day and shine by night.
+func _add_furniture(k: BuildingModels.Kit, glass: BuildingModels.Kit, pools: MeshData, pts: PackedVector2Array, surface: TerrainSurface, sea: float) -> void:
+	var occ: Dictionary = world.get("_occupied")
+	var l := world.lv()
+	var along := 0.0
+	var next_kerb := 0.8
+	var next_lamp := LAMP_STEP * 0.5
+	var side := 1.0
+	for i in pts.size() - 1:
+		var a := pts[i]
+		var b := pts[i + 1]
+		var seg := a.distance_to(b)
+		if seg < 0.01:
+			continue
+		var d := (b - a) / seg
+		var n := Vector2(-d.y, d.x)
+		while next_kerb <= along + seg:
+			var p := a + d * (next_kerb - along)
+			for sd: float in [-1.0, 1.0]:
+				var q := p + n * sd * (WIDTH * 0.5 + 0.25)
+				var y := maxf(surface.sample_mesh(q), sea)
+				var sh := 0.85 + 0.15 * sin(q.x * 3.1 + q.y * 1.7)
+				k.box(Vector3(q.x, y + 0.06, q.y), Vector3(0.45, 0.26, 0.75), BuildingModels.STONE * sh, Vector3(0, atan2(d.x, d.y), 0))
+			next_kerb += 1.7
+		while next_lamp <= along + seg:
+			var p := a + d * (next_lamp - along)
+			var sd0 := side
+			var q := p + n * sd0 * (WIDTH * 0.5 + 0.75)
+			next_lamp += LAMP_STEP
+			# Not in a building's yard.
+			var cell := l.nearest_cell(q)
+			if occ.has(cell) or surface.sample_mesh(q) < sea + 0.2:
+				continue
+			side = -side
+			var y := surface.sample_mesh(q)
+			var base := Vector3(q.x, y - 0.2, q.y)
+			k.post(base, 3.1, 0.09, BuildingModels.DARK_WOOD)
+			# An arm out over the road with the lantern hanging from it.
+			var out := Vector3(-n.x * sd0, 0, -n.y * sd0)
+			var arm_end := base + Vector3(0, 3.1, 0) + out * 0.9
+			k.log(base + Vector3(0, 3.05, 0) + out * 0.45, 0.05, 1.0, BuildingModels.DARK_WOOD, out)
+			var lc := arm_end + Vector3(0, -0.45, 0)
+			k.box(lc + Vector3(0, 0.3, 0), Vector3(0.42, 0.08, 0.42), Color(0.16, 0.15, 0.15))
+			k.box(lc - Vector3(0, 0.3, 0), Vector3(0.36, 0.06, 0.36), Color(0.16, 0.15, 0.15))
+			k.cone(lc + Vector3(0, 0.34, 0), 0.3, 0.22, Color(0.16, 0.15, 0.15), 4)
+			glass.box(lc, Vector3(0.3, 0.52, 0.3), Color.WHITE)
+			# The pool of light on the ground beneath.
+			var r := 4.5
+			var g := maxf(surface.sample_mesh(Vector2(lc.x, lc.z)), sea) + 0.35
+			var c3 := Vector3(lc.x, g, lc.z)
+			var col := Color(1.0, 0.62, 0.28, 0.55)
+			var v := [c3 + Vector3(-r, 0, -r), c3 + Vector3(r, 0, -r), c3 + Vector3(r, 0, r), c3 + Vector3(-r, 0, r)]
+			pools.tri(v[0], v[1], v[2], Vector2(0, 0), Vector2(1, 0), Vector2(1, 1), Vector3.UP, Vector2.ZERO, col)
+			pools.tri(v[0], v[2], v[3], Vector2(0, 0), Vector2(1, 1), Vector2(0, 1), Vector3.UP, Vector2.ZERO, col)
+		along += seg
 
 
 ## Rounds a polyline's corners off, keeping its two ends.

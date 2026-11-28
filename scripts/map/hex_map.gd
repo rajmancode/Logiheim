@@ -420,6 +420,8 @@ func _build_water() -> void:
 		_water_material.set_shader_parameter("terrain_min", lo)
 		_water_material.set_shader_parameter("terrain_range", maxf(hi - lo, 1.0))
 		_water_material.set_shader_parameter("use_terrain", true)
+		BorderRibbon.set_sea({"sea_level": sea_y, "terrain_height": _water_material.get_shader_parameter("terrain_height"),
+			"terrain_size": Vector2((s0.nx - 1) * s0.spacing, (s0.nz - 1) * s0.spacing), "terrain_min": lo, "terrain_range": maxf(hi - lo, 1.0)})
 	# River mouths for the sea's plumes: where each river reaches sea level, its flow
 	# direction and width (the widest 32).
 	var mouth_list: Array = []
