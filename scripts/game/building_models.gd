@@ -789,6 +789,46 @@ static func shape(kind: String) -> Dictionary:
 			info.chimney = Vector3(-2.0, 7.6, 3.0)
 			info.door = Vector3(0, 0, -0.8)
 			info.work = Vector3(0, 0, -5.4)
+		"roadsign":
+			# A paved stretch of road, a waymark stone and a signpost.
+			for i in 7:
+				for j in 3:
+					k.box(Vector3(-4.2 + i * 1.4 + (j % 2) * 0.5, 0.08, -1.0 + j * 1.0), Vector3(1.25, 0.2, 0.9), STONE * (0.85 + 0.05 * ((i + j) % 3)))
+			_rune_stone(k, Vector3(2.5, 0, 2.2), 0.2)
+			k.post(Vector3(-2.5, 0, 2.0), 3.0, 0.1, DARK_WOOD)
+			k.box(Vector3(-1.9, 2.6, 2.0), Vector3(1.3, 0.3, 0.08), PALE_WOOD, Vector3(0, 0, 0.1))
+			k.box(Vector3(-3.1, 2.1, 2.0), Vector3(1.3, 0.3, 0.08), PALE_WOOD, Vector3(0, 0, -0.1))
+			info.height = 4.0
+			info.size = Vector2(10, 6)
+			info.door = Vector3(0, 0, -2.0)
+		"outpost":
+			# A stockade of sharpened stakes round a hut and a watch platform, a gate in front.
+			var R := 7.0
+			for i in 40:
+				var a := TAU * i / 40.0
+				if absf(wrapf(a - PI * 1.5, -PI, PI)) < 0.22:
+					continue
+				var p := Vector3(cos(a) * R, 0, sin(a) * R)
+				var h := 2.6 + 0.3 * float(i % 3)
+				k.post(p, h, 0.16, WOOD * (0.9 + 0.05 * float(i % 3)))
+				k.cone(p + Vector3(0, h, 0), 0.17, 0.4, WOOD, 5)
+			for s: float in [-1.0, 1.0]:
+				k.post(Vector3(s * 1.6, 0, -R), 3.6, 0.22, DARK_WOOD)
+			k.box(Vector3(0, 3.5, -R), Vector3(3.6, 0.3, 0.3), DARK_WOOD)
+			_house(k, Vector3(-1.5, 0, 2.5), 6.0, 4.4, 2.2, TURF)
+			for x in [2.6, 5.0]:
+				for z in [-3.0, -0.6]:
+					k.post(Vector3(x, 0, z), 4.2, 0.12, DARK_WOOD)
+			k.box(Vector3(3.8, 4.2, -1.8), Vector3(3.2, 0.2, 3.0), WOOD)
+			_brazier(k, Vector3(3.8, 4.3, -1.8))
+			k.post(Vector3(5.2, 4.3, -3.2), 5.0, 0.07, DARK_WOOD)
+			info.flag = Vector3(5.2, 9.0, -3.2)
+			_woodpile(k, Vector3(-4.0, 0, -2.0), 2.5, 0.0)
+			info.height = 9.5
+			info.size = Vector2(15, 15)
+			info.chimney = Vector3(-3.0, 4.6, 2.5)
+			info.door = Vector3(0, 0, -R)
+			info.work = Vector3(0, 0, -R - 2.0)
 	# (The footing down to the ground is built per building, to fit where it stands:
 	# BuildingView.make_foundation.)
 	info.mesh = k.commit()

@@ -102,6 +102,83 @@ static func find(hm: HexMap, count := 10) -> LandingSites:
 	return ls
 
 
+## Every landing gets what a settlement cannot start without, within its first lands (4 hexes):
+## timber, stone and farmland on the land, fish in the water. Whatever is missing is laid down
+## as a small deposit on free, suitable ground nearby (before the map's props, icons and
+## trails are made, so it looks and works like any other).
+static func ensure_basics(lv: HexLevel, sites: Array) -> void:
+	const K := NaturalResources.Kind
+	const R := 4
+	for site: Dictionary in sites:
+		var a0 := lv.coords[int(site.cell)]
+		var land: Array = []
+		var sea: Array = []
+		var have := {}
+		for dq in range(-R, R + 1):
+			for dr in range(maxi(-R, -dq - R), mini(R, -dq + R) + 1):
+				var j := lv.index_of(a0 + Vector2i(dq, dr))
+				if j < 0:
+					continue
+				for r in [lv.resource[j], lv.resource2[j] if lv.resource2.size() > j else 0]:
+					if r != 0:
+						have[r] = true
+				var dist := HexCoords.distance(a0, lv.coords[j])
+				if HexMapGenerator.is_water(lv.terrain[j]) and lv.lake[j] == 0:
+					if dist <= 3 and lv.resource[j] == 0:
+						sea.append(j)
+				elif lv.lake[j] == 0 and lv.river[j] == 0 and lv.resource[j] == 0 and dist >= 2 and lv.slope[j] < 1.2 						and (lv.cave.size() <= j or lv.cave[j] < 0):
+					land.append(j)
+		var added := {}
+		for kind: int in [K.TIMBER, K.STONE, K.FARMLAND]:
+			if have.has(kind) or land.is_empty():
+				continue
+			# Timber on the wooded or higher ground, stone on the highest and roughest, farmland
+			# on the flattest.
+			var best := -1
+			var bs := -INF
+			for j: int in land:
+				if lv.resource[j] != 0:
+					continue
+				var sc := 0.0
+				match kind:
+					K.TIMBER:
+						sc = (2.0 if lv.terrain[j] == HexMapGenerator.Terrain.FOREST else 0.0) + lv.height[j] * 2.0 - lv.slope[j] * 0.3
+					K.STONE:
+						sc = lv.height[j] * 4.0 + lv.slope[j] + (2.0 if lv.terrain[j] == HexMapGenerator.Terrain.ROCK else 0.0)
+					K.FARMLAND:
+						sc = -lv.slope[j] * 3.0 + (1.0 if lv.terrain[j] == HexMapGenerator.Terrain.GRASS else 0.0)
+				if sc > bs:
+					bs = sc
+					best = j
+			if best < 0:
+				continue
+			var cells := PackedInt32Array([best])
+			lv.resource[best] = kind
+			var head := 0
+			var target := 3 if kind == K.STONE else 4
+			while head < cells.size() and cells.size() < target:
+				var c := cells[head]
+				head += 1
+				for k in 6:
+					var j := lv.index_of(HexCoords.neighbor(lv.coords[c], k))
+					if j >= 0 and land.has(j) and lv.resource[j] == 0 and cells.size() < target:
+						lv.resource[j] = kind
+						cells.append(j)
+			NaturalResources._commit(lv, kind, cells)
+			added[kind] = cells.size()
+		if not have.has(K.FISH) and not sea.is_empty():
+			sea.sort_custom(func(x: int, y: int) -> bool: return HexCoords.distance(a0, lv.coords[x]) < HexCoords.distance(a0, lv.coords[y]))
+			var cells := PackedInt32Array()
+			for j: int in sea.slice(0, 3):
+				cells.append(j)
+			NaturalResources._commit(lv, K.FISH, cells)
+			added[K.FISH] = cells.size()
+		for k in added:
+			site.resources[k] = int(site.resources.get(k, 0)) + int(added[k])
+			if not (site.tags as PackedStringArray).has(NaturalResources.display_name(k)):
+				(site.tags as PackedStringArray).append(NaturalResources.display_name(k))
+
+
 static func _score(lv: HexLevel, s: TerrainSurface, sea: PackedByteArray, i: int, c: Vector2, h: float, sea_nb: int) -> Dictionary:
 	var res := {}
 	var water := false

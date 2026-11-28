@@ -7,6 +7,11 @@ extends Node3D
 ## Hair, beards, braids, buns, hoods and headscarves vary from one to the next. Arms bend at
 ## the elbow and legs at the knee; cloaks and skirts swing as they walk.
 ##
+## Soldiers (setup(..., soldier = true)) wear an iron helmet with a nose guard, carry a round
+## shield in the owner's colour on the left arm and a long spear. They march to a place given
+## by march_to() (their spot in an army's formation) and stand there in a stance: "guard"
+## (spear upright, shield at the side) or "brace" (shields up, spears levelled: a shield wall).
+##
 ## Walking: a real gait - legs swing and the knee bends as each foot lifts, the arms swing
 ## against the legs, the hips bob and the shoulders turn a little. At work each trade has its
 ## own motion and tool: chopping with an axe (raised over the shoulder and brought down with a
@@ -42,20 +47,30 @@ var _phase := 0.0
 var _walk := 0.0
 var _mat: ShaderMaterial
 var _rng := RandomNumberGenerator.new()
+var soldier := false
+var _shield: MeshInstance3D
+## Marching (soldiers): where to go, which way to face there, and how to stand.
+var marching := false
+var goal := Vector2.ZERO
+var goal_face := 0.0
+var stance := "guard"
 
 static var _parts := {}
 
 
-func setup(_team: Color, tunic: Color, mat: ShaderMaterial, ground: Callable, p_act := "idle") -> void:
+func setup(_team: Color, tunic: Color, mat: ShaderMaterial, ground: Callable, p_act := "idle", p_soldier := false) -> void:
 	height_at = ground
 	_mat = mat
 	act = p_act
+	soldier = p_soldier
+	if soldier:
+		act = "spear"
 	_rng.randomize()
 	_phase = _rng.randf() * TAU
 	speed = _rng.randf_range(1.3, 1.7)
 	var skin := Color(0.9, 0.73, 0.6).lerp(Color(0.74, 0.54, 0.42), _rng.randf())
 	var hair: Color = [Color(0.86, 0.72, 0.42), Color(0.92, 0.82, 0.55), Color(0.55, 0.35, 0.18), Color(0.3, 0.2, 0.12), Color(0.72, 0.36, 0.14), Color(0.8, 0.78, 0.72)][_rng.randi() % 6]
-	_female = _rng.randf() < 0.45
+	_female = _rng.randf() < 0.45 and not soldier
 	# Clothes: plant-dyed wool and linen; men's tunics as given, women's dresses varied.
 	var dress: Color = [Color(0.62, 0.22, 0.16), Color(0.28, 0.36, 0.55), Color(0.4, 0.5, 0.3), Color(0.7, 0.58, 0.32), Color(0.5, 0.36, 0.5)][_rng.randi() % 5]
 	var under := Color(0.86, 0.82, 0.72).lerp(Color(0.72, 0.66, 0.55), _rng.randf())
@@ -72,6 +87,8 @@ func setup(_team: Color, tunic: Color, mat: ShaderMaterial, ground: Callable, p_
 	_head.position = Vector3(0, 0.62, 0)
 	_torso.add_child(_head)
 	_mesh(_head, _head_mesh(skin, hair, _female, style))
+	if soldier:
+		_mesh(_head, _helmet_mesh())
 	# A skirt (or the tunic's hem) that hangs from the hips and swings as the legs move.
 	_skirt = Node3D.new()
 	_skirt.position = Vector3(0, -0.02, 0)
@@ -114,6 +131,12 @@ func setup(_team: Color, tunic: Color, mat: ShaderMaterial, ground: Callable, p_
 	_load.position = Vector3(-0.12, 0.62, 0.05)
 	_load.visible = false
 	_torso.add_child(_load)
+	if soldier:
+		_shield = MeshInstance3D.new()
+		_shield.mesh = _shield_mesh()
+		_shield.material_override = mat
+		_shield.position = Vector3(-0.02, -0.16, -0.1)
+		(_el[0] as Node3D).add_child(_shield)
 	scale = Vector3.ONE * 1.3
 
 
@@ -134,8 +157,19 @@ func set_round(points: Array) -> void:
 		position = Vector3(p.x, height_at.call(p), p.y)
 
 
+## Soldiers: go to `p` and face `face` (radians) there, standing in `how` ("guard"/"brace").
+func march_to(p: Vector2, face: float, how := "guard") -> void:
+	marching = true
+	goal = p
+	goal_face = face
+	stance = how
+
+
 func _process(delta: float) -> void:
 	_t += delta
+	if marching:
+		_march(delta)
+		return
 	if round_points.is_empty():
 		_pose_idle()
 		return
@@ -169,6 +203,69 @@ func _process(delta: float) -> void:
 	if _working >= float(stop.get("work", 2.0)):
 		_i = (_i + 1) % round_points.size()
 		_working = 0.0
+
+
+func _march(delta: float) -> void:
+	var here := Vector2(position.x, position.z)
+	var to := goal - here
+	var dist := to.length()
+	if dist > 0.25:
+		var spd := clampf(dist * 1.6, 0.6, 3.6)
+		here += to.normalized() * minf(spd * delta, dist)
+		var face := atan2(-to.x, -to.y) if dist > 1.2 else goal_face
+		rotation.y = lerp_angle(rotation.y, face, minf(delta * 6.0, 1.0))
+		_walk += delta * spd * 3.0
+		_pose_walk(_walk, false)
+		# Spear sloped on the shoulder, shield on the arm.
+		(_sh[1] as Node3D).rotation = Vector3(-0.25, 0, 0.12)
+		(_el[1] as Node3D).rotation.x = -1.3
+		_tool.rotation.x = PI * 0.5 - 0.35
+		(_sh[0] as Node3D).rotation = Vector3(-0.4 + sin(_walk) * 0.1, 0, -0.2)
+		(_el[0] as Node3D).rotation.x = -1.0
+		if _shield != null:
+			_shield.rotation.x = 1.0
+		position = Vector3(here.x, height_at.call(here), here.y)
+	else:
+		rotation.y = lerp_angle(rotation.y, goal_face, minf(delta * 5.0, 1.0))
+		_pose_stance()
+
+
+## Standing in formation: on guard, or braced in the shield wall.
+func _pose_stance() -> void:
+	var br := sin(_t * 1.6 + _phase)
+	_cloak.rotation = Vector3(0.04 + 0.02 * br, 0, 0)
+	_skirt.rotation = Vector3.ZERO
+	_tool.visible = true
+	for i in 2:
+		(_hp[i] as Node3D).rotation.x = 0.0
+		(_kn[i] as Node3D).rotation.x = 0.0
+	_head.rotation = Vector3.ZERO
+	if stance == "brace":
+		# Crouched a little, shield up in front, spear levelled over it.
+		_hips.position.y = 0.88
+		_hips.rotation = Vector3(0.12, 0, 0)
+		(_hp[0] as Node3D).rotation.x = 0.35
+		(_kn[0] as Node3D).rotation.x = -0.45
+		(_hp[1] as Node3D).rotation.x = -0.15
+		(_kn[1] as Node3D).rotation.x = -0.2
+		(_sh[0] as Node3D).rotation = Vector3(-1.2, 0, -0.1)
+		(_el[0] as Node3D).rotation.x = -0.5
+		if _shield != null:
+			_shield.rotation.x = 1.7
+		(_sh[1] as Node3D).rotation = Vector3(-1.4, 0, 0.15)
+		(_el[1] as Node3D).rotation.x = 0.0
+		_tool.rotation.x = -1.45
+	else:
+		# Spear upright at the side, shield on the arm.
+		_hips.position.y = 0.95 + 0.004 * br
+		_hips.rotation = Vector3.ZERO
+		(_sh[0] as Node3D).rotation = Vector3(-0.35, 0, -0.2)
+		(_el[0] as Node3D).rotation.x = -1.1
+		if _shield != null:
+			_shield.rotation.x = 1.45
+		(_sh[1] as Node3D).rotation = Vector3(-0.15, 0, 0.12)
+		(_el[1] as Node3D).rotation.x = -1.4
+		_tool.rotation.x = PI * 0.5 - 0.1
 
 
 func _set_load(kind: String) -> void:
@@ -481,6 +578,33 @@ func _shin_mesh() -> Mesh:
 
 
 ## The tool for a trade, held in the right hand (along -y from the hand, head forward).
+## An iron helmet: a rounded cap with a rim and a nose guard.
+func _helmet_mesh() -> Mesh:
+	if _parts.has("helmet"):
+		return _parts["helmet"]
+	var k := BuildingModels.Kit.new()
+	var iron := Color(0.5, 0.5, 0.53)
+	k.sphere(Vector3(0, 0.16, 0.0), 0.138, iron, 6, 12)
+	k.frustum(Vector3(0, 0.12, 0), 0.142, 0.142, 0.035, iron * 0.8, 14)
+	k.box(Vector3(0, 0.08, -0.135), Vector3(0.03, 0.11, 0.02), iron * 0.9)
+	k.box(Vector3(0, 0.22, 0), Vector3(0.025, 0.12, 0.28), iron * 0.85)
+	var m := k.commit()
+	_parts["helmet"] = m
+	return m
+
+
+## A round shield in the owner's colour, an iron boss, a dark rim; facing -Z.
+func _shield_mesh() -> Mesh:
+	if _parts.has("shield"):
+		return _parts["shield"]
+	var k := BuildingModels.Kit.new()
+	k.cylinder(Vector3(0, 0, 0.02), 0.44, 0.04, BuildingModels.DARK_WOOD, 16, Vector3(0, 0, -1))
+	k.disc(Vector3(0, 0, -0.025), 0.41, BuildingModels.TEAM, Vector3(0, 0, -1))
+	var m := k.commit()
+	_parts["shield"] = m
+	return m
+
+
 static func _tool_mesh(a: String) -> Mesh:
 	var key := "tool_" + a
 	if _parts.has(key):
@@ -505,6 +629,10 @@ static func _tool_mesh(a: String) -> Mesh:
 			k.box(Vector3(0.07, 0, -0.24), Vector3(0.16, 0.015, 0.04), BuildingModels.IRON)
 		"net":
 			k.box(Vector3(0, -0.15, -0.1), Vector3(0.35, 0.3, 0.02), Color(0.55, 0.5, 0.4))
+		"spear":
+			# Held near its middle: a long ash shaft, an iron head forward.
+			k.box(Vector3(0, 0, -0.35), Vector3(0.035, 0.035, 2.4), haft)
+			k.cone(Vector3(0, 0, 0), 0.04, 0.3, BuildingModels.IRON, 6)
 		"stir":
 			k.box(Vector3(0, 0, -0.5), Vector3(0.035, 0.035, 1.1), haft)
 			k.box(Vector3(0, 0, -1.05), Vector3(0.12, 0.02, 0.2), haft)

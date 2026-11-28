@@ -21,9 +21,9 @@ extends RefCounted
 ##   unique: only one per settlement     chimney: smoke while working
 
 const K := NaturalResources.Kind
-const CATEGORIES := ["harvest", "food", "industry", "crafts", "sea", "people", "military"]
+const CATEGORIES := ["harvest", "food", "industry", "crafts", "sea", "people", "roads", "military"]
 const CATEGORY_NAMES := {"harvest": "Gather", "food": "Food", "industry": "Industry", "crafts": "Crafts",
-	"sea": "Sea & Trade", "people": "People", "military": "Military"}
+	"sea": "Sea & Trade", "people": "People", "roads": "Roads & Outposts", "military": "Military"}
 
 const DEFS := {
 	# --- People and the town --------------------------------------------------------------
@@ -160,6 +160,13 @@ const DEFS := {
 			{"uses": {"furs": 3}, "makes": {"silver": 1}}, {"uses": {"oil": 3}, "makes": {"silver": 1}},
 			{"uses": {"tar": 3}, "makes": {"silver": 1}}, {"uses": {"stockfish": 8}, "makes": {"silver": 1}},
 			{"uses": {"salt": 5}, "makes": {"silver": 1}}, {"uses": {"amber": 2}, "makes": {"silver": 1}}]},
+	# --- Roads and outposts ---------------------------------------------------------------------
+	"road": {"name": "Road", "category": "roads", "model": "roadsign", "road": true,
+		"desc": "Lay a road hex by hex from land you can reach. On a river it becomes a bridge, up a steep slope a hill road climbing in switchbacks: the way across rivers and up onto hills, so you can build there. Keeps placing until you stop (right-click or Esc).",
+		"cost": {"wood": 1, "stone": 1}, "build_time": 0.0},
+	"outpost": {"name": "Outpost", "category": "roads", "model": "outpost", "workers": 1, "outside": true,
+		"desc": "A fortified camp away from home: claims the land two hexes round it and keeps a small store, so you can gather resources far from the hall. Build within ten hexes of your land, on land nobody holds.",
+		"cost": {"wood": 40, "stone": 15}, "build_time": 35.0, "territory": 2, "storage": 100, "chimney": true},
 	# --- Military ------------------------------------------------------------------------------
 	"watchtower": {"name": "Watchtower", "category": "military", "model": "tower", "workers": 1,
 		"desc": "Keeps watch and claims the land around it for your settlement.",

@@ -16,6 +16,8 @@ signal chart_layer(image: Image, layer: int)
 
 @export var settings: HexMapSettings
 
+## The landing sites, found during the build (basics guaranteed at each).
+var landing: LandingSites
 var source: TerrainSource
 var levels: Array[HexLevel] = []
 var surfaces: Array[TerrainSurface] = []
@@ -79,6 +81,7 @@ func load_map(map_dir: String) -> bool:
 
 ## Rebuilds all levels from the current source and settings (e.g. after changing hex size).
 func rebuild() -> void:
+	landing = null
 	if source == null:
 		return
 	# Border tests anywhere in the build use this map's heightmap.
@@ -248,6 +251,9 @@ func _build_data() -> void:
 		NaturalResources.place(levels, source, sea_y, settings.resource_abundance, settings.mask_threshold, surfaces[0])
 		if cave_plan != null:
 			cave_plan.place_resources(levels)
+		# Where players may land, and the basics guaranteed at each (before props and trails).
+		landing = LandingSites.find(self, 10)
+		LandingSites.ensure_basics(levels[0], landing.sites)
 	var dests: Array = []
 	for sy: Dictionary in caves.systems:
 		for e: Dictionary in sy.entrances:

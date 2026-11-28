@@ -100,6 +100,7 @@ func setup(p_record: Dictionary, p_settlement: Settlement, ground: Callable) -> 
 		_light.light_energy = 0.0
 		_light.position = (info.work as Vector3) + Vector3(0, 1.5, 0) if record.id in ["smithy", "weaponsmith", "bakery"] else Vector3(0, 2.0, -float(info.size.y) * 0.5 - 0.8)
 		add_child(_light)
+	conform()
 	_make_fires()
 	make_foundation()
 	# Builders at the site while it goes up.
@@ -124,6 +125,7 @@ const TRADES := {
 	"tannery": ["stir", "sack"], "tailor": ["stir", ""], "jeweller": ["hammer", ""],
 	"fletcher": ["hammer", ""], "whaler": ["chop", "sack"], "sealer": ["chop", "sack"],
 	"shipyard": ["hammer", "log"], "trading_post": ["idle", "sack"],
+	"outpost": ["idle", "sack"],
 }
 
 
@@ -188,6 +190,61 @@ func make_foundation() -> void:
 ## How much of the footprint the footing walls go round (the rest is yard).
 const FOOT := 0.82
 
+var _shift_grid := PackedFloat32Array()
+var _shift_o := Vector2.ZERO
+var _shift_n := Vector2i.ZERO
+const SHIFT_STEP := 1.5
+
+
+## Everything outside the footing - fences, woodpiles, racks, stacks, the yard's clutter -
+## follows the ground it stands on instead of the floor's level: each vertex is moved up or
+## down to the ground under it (so a fence's posts stay upright and its rails run with the
+## slope). Inside the footing the building stands level on its terrace. Redone when the
+## building is re-seated.
+func conform() -> void:
+	if not is_inside_tree():
+		return
+	var src: ArrayMesh = info.mesh
+	var box := src.get_aabb()
+	_shift_o = Vector2(box.position.x - SHIFT_STEP, box.position.z - SHIFT_STEP)
+	_shift_n = Vector2i(int(ceil(box.size.x / SHIFT_STEP)) + 3, int(ceil(box.size.z / SHIFT_STEP)) + 3)
+	_shift_grid.resize(_shift_n.x * _shift_n.y)
+	for j in _shift_n.y:
+		for i in _shift_n.x:
+			_shift_grid[j * _shift_n.x + i] = _ground_local(Vector3(_shift_o.x + i * SHIFT_STEP, 0, _shift_o.y + j * SHIFT_STEP))
+	var arrays := src.surface_get_arrays(0)
+	var verts: PackedVector3Array = arrays[Mesh.ARRAY_VERTEX]
+	for vi in verts.size():
+		var p := verts[vi]
+		var dy := ground_shift(p)
+		if dy != 0.0:
+			verts[vi] = Vector3(p.x, p.y + dy, p.z)
+	arrays[Mesh.ARRAY_VERTEX] = verts
+	var m := ArrayMesh.new()
+	m.add_surface_from_arrays(Mesh.PRIMITIVE_TRIANGLES, arrays)
+	_model.mesh = m
+
+
+## How far a point of the model (local) is moved to follow the ground (0 inside the footing).
+func ground_shift(p: Vector3) -> float:
+	if _shift_grid.is_empty():
+		return 0.0
+	var hx := float(info.size.x) * 0.5 * FOOT
+	var hz := float(info.size.y) * 0.5 * FOOT
+	var out := maxf(absf(p.x) - hx, absf(p.z) - hz)
+	if out <= 0.0:
+		return 0.0
+	var w := clampf(out / 1.5, 0.0, 1.0)
+	var fx := clampf((p.x - _shift_o.x) / SHIFT_STEP, 0.0, _shift_n.x - 1.001)
+	var fz := clampf((p.z - _shift_o.y) / SHIFT_STEP, 0.0, _shift_n.y - 1.001)
+	var i := int(fx)
+	var j := int(fz)
+	var tx := fx - i
+	var tz := fz - j
+	var g := lerpf(lerpf(_shift_grid[j * _shift_n.x + i], _shift_grid[j * _shift_n.x + i + 1], tx),
+		lerpf(_shift_grid[(j + 1) * _shift_n.x + i], _shift_grid[(j + 1) * _shift_n.x + i + 1], tx), tz)
+	return g * w
+
 
 ## Ground height under a point in the building's own space, relative to its floor.
 func _ground_local(p: Vector3) -> float:
@@ -246,7 +303,7 @@ func _make_fires() -> void:
 	for f: Array in info.get("fires", []):
 		var kind := String(f[1])
 		var root := Node3D.new()
-		root.position = f[0]
+		root.position = (f[0] as Vector3) + Vector3(0, ground_shift(f[0]), 0)
 		add_child(root)
 		var big := kind in ["brazier", "forge"]
 		var flame := CPUParticles3D.new()

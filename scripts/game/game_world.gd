@@ -13,6 +13,8 @@ extends Node3D
 ## the mouse, green where it may go and red (with the reason) where it may not.
 
 signal selection_changed(record: Dictionary)
+## An army was selected or let go ({} when none).
+signal army_selected(army: Dictionary)
 signal message(text: String)
 
 var hex_map: HexMap
@@ -36,6 +38,17 @@ var _ghost_ok := false
 var _territory_dirty := true
 var _ground: SettlementGround   # plots and paths worn into the land
 var _ground_dirty := false
+var _infra: Infrastructure      # roads, hill roads and bridges
+var _infra_dirty := false
+var _reach := {}                # settlement index -> {cell: true} it can get to
+var _army_views := {}           # army id -> ArmyView
+var selected_army: Dictionary = {}
+
+## The steepest a hex may be to walk across (without a hill road) and to build on; gatherers
+## work steeper ground (a mine up the hillside), anything may stand on a terraced hill road hex.
+const WALK_SLOPE := 0.75
+const GATHER_SLOPE := 1.7
+const ROAD_SLOPE := 2.4
 
 
 func _ready() -> void:
@@ -43,6 +56,10 @@ func _ready() -> void:
 	_ground.name = "SettlementGround"
 	add_child(_ground)
 	_ground.setup(self)
+	_infra = Infrastructure.new()
+	_infra.name = "Infrastructure"
+	add_child(_infra)
+	_infra.setup(self)
 	_ghost = MeshInstance3D.new()
 	_ghost_mat = StandardMaterial3D.new()
 	_ghost_mat.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
@@ -99,6 +116,13 @@ func clear() -> void:
 	_occupied.clear()
 	if _ground != null:
 		_ground.clear()
+	if _infra != null:
+		_infra.clear()
+	_reach.clear()
+	for v in _army_views.values():
+		(v as Node).queue_free()
+	_army_views.clear()
+	selected_army = {}
 	if _ghost != null:
 		_ghost.visible = false
 
@@ -120,7 +144,15 @@ func set_active(i: int) -> void:
 func begin_placement(id: String) -> void:
 	placing = id
 	var d: Dictionary = BuildingDefs.DEFS[id]
-	_ghost.mesh = BuildingModels.shape(String(d.model)).mesh
+	if d.get("road", false):
+		var hexm := CylinderMesh.new()
+		hexm.radial_segments = 6
+		hexm.top_radius = lv().hex_size * 0.92
+		hexm.bottom_radius = lv().hex_size * 0.92
+		hexm.height = 0.6
+		_ghost.mesh = hexm
+	else:
+		_ghost.mesh = BuildingModels.shape(String(d.model)).mesh
 	_ghost.visible = false
 	_ghost_cell = -1
 	select({})
@@ -138,7 +170,15 @@ func check(id: String, cell: int) -> Array:
 	var l := lv()
 	if cell < 0:
 		return [false, "", 0]
-	if int(_owner.get(cell, -1)) != active:
+	if d.get("road", false):
+		return _check_road(s, cell)
+	if d.get("outside", false):
+		var who := int(_owner.get(cell, -1))
+		if who >= 0 and who != active:
+			return [false, "Another clan holds this land", 0]
+		if who < 0 and _steps_from_land(s, cell) > 10:
+			return [false, "Too far from your land (ten hexes at most)", 0]
+	elif int(_owner.get(cell, -1)) != active:
 		return [false, "Outside your land", 0]
 	if HexMapGenerator.is_water(l.terrain[cell]) or l.lake[cell] == 1:
 		return [false, "Can't build on water", 0]
@@ -148,8 +188,15 @@ func check(id: String, cell: int) -> Array:
 		return [false, "A cave mouth is here", 0]
 	if _occupied.has(cell):
 		return [false, "Already built on", 0]
-	if l.slope[cell] > 0.75:
-		return [false, "Too steep", 0]
+	var steep := GATHER_SLOPE if (d.category == "harvest" or d.has("near")) else WALK_SLOPE
+	if s.roads.get(cell, "") == "hill":
+		steep = maxf(steep, 1.5)
+	if s.roads.has(cell) and not d.get("road", false):
+		return [false, "A road runs here", 0]
+	if l.slope[cell] > steep:
+		return [false, "Too steep - lay a hill road here first" if steep < 1.5 else "Too steep", 0]
+	if not d.get("outside", false) and not _reachable(s, cell):
+		return [false, "No way to get there - lay a road (a bridge over a river, a hill road up a slope)", 0]
 	if d.get("unique", false) and s.count(id) > 0:
 		return [false, "You already have one", 0]
 	var kind := 0
@@ -206,6 +253,285 @@ func _coastal(cell: int) -> bool:
 	return false
 
 
+## Whether a road may go on this hex, and what kind: [ok, reason, 0, kind, cost].
+func _check_road(s: Settlement, cell: int) -> Array:
+	var l := lv()
+	if int(_owner.get(cell, -1)) != active:
+		return [false, "Outside your land", 0]
+	if (HexMapGenerator.is_water(l.terrain[cell]) and l.river[cell] == 0) or l.lake[cell] == 1:
+		return [false, "Can't lay a road on open water", 0]
+	if s.roads.has(cell):
+		return [false, "There is a road here", 0]
+	if _occupied.has(cell):
+		return [false, "A building stands here", 0]
+	if l.slope[cell] > ROAD_SLOPE:
+		return [false, "Too steep even for a hill road", 0]
+	if not _reachable(s, cell):
+		return [false, "Start from land you can reach", 0]
+	var kind := Infrastructure.kind_for(l, cell)
+	var cost := Infrastructure.cost_for(kind)
+	if not s.can_afford(cost):
+		return [false, "Not enough: %s" % Goods.describe(_missing(s, cost)), 0, kind, cost]
+	return [true, "", 0, kind, cost]
+
+
+## Whether the clan can get to a hex: it, or a hex beside it, is reached from the hall or an
+## outpost over its own land that can be walked - not a river without a bridge, not a slope
+## too steep without a hill road.
+func _reachable(s: Settlement, cell: int) -> bool:
+	var r := _reach_of(s)
+	if r.has(cell):
+		return true
+	var l := lv()
+	for k in 6:
+		var j := l.index_of(HexCoords.neighbor(l.coords[cell], k))
+		if j >= 0 and r.has(j):
+			return true
+	return false
+
+
+func _reach_of(s: Settlement) -> Dictionary:
+	if _reach.has(s.index):
+		return _reach[s.index]
+	var l := lv()
+	var out := {}
+	var queue: Array = []
+	for b: Dictionary in s.buildings:
+		if b.id == "town_hall" or (b.id == "outpost" and s.is_built(b)):
+			out[b.cell] = true
+			queue.append(b.cell)
+	var head := 0
+	while head < queue.size():
+		var c: int = queue[head]
+		head += 1
+		for k in 6:
+			var j := l.index_of(HexCoords.neighbor(l.coords[c], k))
+			if j < 0 or out.has(j) or not s.territory.has(j):
+				continue
+			if not _walkable(s, j):
+				continue
+			out[j] = true
+			queue.append(j)
+	_reach[s.index] = out
+	return out
+
+
+func _walkable(s: Settlement, j: int) -> bool:
+	var l := lv()
+	if s.roads.has(j):
+		return true
+	if (HexMapGenerator.is_water(l.terrain[j])) or l.lake[j] == 1 or l.river[j] == 1:
+		return false
+	return l.slope[j] <= WALK_SLOPE
+
+
+## Hex steps from a cell to the nearest hex of the clan's land (99 if far).
+func _steps_from_land(s: Settlement, cell: int) -> int:
+	var l := lv()
+	var a := l.coords[cell]
+	var best := 99
+	for t: int in s.territory:
+		best = mini(best, HexCoords.distance(a, l.coords[t]))
+	return best
+
+
+# --------------------------------------------------------------------------- armies
+
+## Gathers the clan's warriors (up to 24) into an army group in front of the hall.
+func muster() -> Dictionary:
+	var s := me()
+	var n := mini(int(s.stock.get("warriors", 0)), 24)
+	if n < 2:
+		message.emit("Not enough warriors to muster (2 at least - train them at the barracks)")
+		return {}
+	s.stock["warriors"] = float(s.stock.get("warriors", 0)) - n
+	var hall_v: BuildingView = _views.get(s.hall.uid)
+	var front := Vector2(s.hall.pos.x, s.hall.pos.z)
+	var facing := 0.0
+	if hall_v != null:
+		var f3 := hall_v.to_global((hall_v.info.door as Vector3) + Vector3(0, 0, -14.0))
+		front = Vector2(f3.x, f3.z)
+		facing = hall_v.rotation.y
+	# They form up on the nearest dry, level, open hex to the hall's door.
+	var l := lv()
+	var start := front
+	var best := INF
+	var a0 := l.coords[s.hall.cell]
+	for dq in range(-3, 4):
+		for dr in range(maxi(-3, -dq - 3), mini(3, -dq + 3) + 1):
+			var j := l.index_of(a0 + Vector2i(dq, dr))
+			if j < 0 or j == int(s.hall.cell) or _occupied.has(j) or not _walkable(s, j) or s.roads.has(j):
+				continue
+			var c := l.cell_center(j)
+			if hex_map.current_surface().sample(c) < hex_map.sea_y + 0.6:
+				continue
+			var d := c.distance_to(front)
+			if d < best:
+				best = d
+				start = c
+	if best < INF:
+		var away := start - Vector2(s.hall.pos.x, s.hall.pos.z)
+		facing = atan2(-away.x, -away.y)
+	var name: String = Settlement.ARMY_NAMES[(s._next_army - 1) % Settlement.ARMY_NAMES.size()]
+	var a := {"id": s._next_army, "name": name.capitalize() if name.begins_with("the") else name, "size": n,
+		"formation": "shield_wall", "pos": start, "facing": facing, "path": []}
+	a.name = name.substr(0, 1).to_upper() + name.substr(1)
+	s._next_army += 1
+	s.armies.append(a)
+	var v := ArmyView.new()
+	add_child(v)
+	v.setup(a, s, ground)
+	_army_views[_army_key(s, a)] = v
+	select_army(a)
+	message.emit("%s musters: %d warriors." % [a.name, n])
+	return a
+
+
+func _army_key(s: Settlement, a: Dictionary) -> String:
+	return "%d_%d" % [s.index, int(a.id)]
+
+
+func _army_owner(a: Dictionary) -> Settlement:
+	for s in settlements:
+		if s.armies.has(a):
+			return s
+	return null
+
+
+## The active player's army near a point on the map ({} if none).
+func army_at(p: Vector2) -> Dictionary:
+	var s := me()
+	if s == null:
+		return {}
+	for a: Dictionary in s.armies:
+		var r := 3.0 + sqrt(float(a.size)) * 1.2
+		if (a.pos as Vector2).distance_to(p) < r:
+			return a
+	return {}
+
+
+func select_army(a: Dictionary) -> void:
+	if not selected_army.is_empty():
+		var old: ArmyView = _army_views.get(_army_key(_army_owner(selected_army), selected_army)) if _army_owner(selected_army) != null else null
+		if old != null:
+			old.set_selected(false)
+	selected_army = a
+	if not a.is_empty():
+		select({})
+		cancel_placement()
+		var v: ArmyView = _army_views.get(_army_key(_army_owner(a), a))
+		if v != null:
+			v.set_selected(true)
+	army_selected.emit(a)
+
+
+func set_formation(a: Dictionary, f: String) -> void:
+	a.formation = f
+
+
+## Sends an army to a point: the way there over land, round water and cliffs, across rivers
+## only by bridges.
+func order_army(a: Dictionary, target: Vector2) -> void:
+	var l := lv()
+	var from := l.cell_at(a.pos)
+	var to := l.cell_at(target)
+	if to < 0 or not _army_can_cross(to):
+		message.emit("The army can't go there")
+		return
+	if _occupied.has(to):
+		message.emit("A building stands there")
+		return
+	var cells := _army_path(from, to)
+	if cells.is_empty():
+		message.emit("No way there - rivers need bridges, cliffs need hill roads")
+		return
+	var pts: Array = []
+	for c: int in cells.slice(1, cells.size() - 1):
+		pts.append(l.cell_center(c))
+	pts.append(target)
+	a.path = pts
+
+
+func _army_can_cross(j: int) -> bool:
+	var l := lv()
+	if (HexMapGenerator.is_water(l.terrain[j]) and l.river[j] == 0) or l.lake[j] == 1:
+		return false
+	var road := false
+	for s in settlements:
+		if s.roads.has(j):
+			road = true
+	if l.river[j] == 1 and not road:
+		return false
+	# Round buildings, not through them.
+	if _occupied.has(j):
+		return false
+	return road or l.slope[j] <= GATHER_SLOPE
+
+
+## A* over the finest hexes for an army: cells from `a` to `b` ([] if no way).
+func _army_path(a: int, b: int) -> Array:
+	var l := lv()
+	if a < 0 or b < 0:
+		return []
+	var came := {a: -1}
+	var cost := {a: 0.0}
+	var heap: Array = []
+	RoadNetwork._push(heap, [0.0, a])
+	var goal := l.cell_center(b)
+	var steps := 0
+	while not heap.is_empty() and steps < 60000:
+		steps += 1
+		var top: Array = RoadNetwork._pop(heap)
+		var c: int = top[1]
+		if c == b:
+			break
+		for k in 6:
+			var j := l.index_of(HexCoords.neighbor(l.coords[c], k))
+			if j < 0 or not _army_can_cross(j):
+				continue
+			var nc: float = float(cost[c]) + 1.0 + l.slope[j] * 1.5
+			if not cost.has(j) or nc < float(cost[j]):
+				cost[j] = nc
+				came[j] = c
+				RoadNetwork._push(heap, [nc + l.cell_center(j).distance_to(goal) / l.hex_size, j])
+	if not came.has(b):
+		return []
+	var out: Array = []
+	var c2 := b
+	while c2 >= 0:
+		out.push_front(c2)
+		c2 = came[c2]
+	return out
+
+
+## Sends an army's warriors home to the hall's stores.
+func disband(a: Dictionary) -> void:
+	var s := _army_owner(a)
+	if s == null:
+		return
+	s.stock["warriors"] = float(s.stock.get("warriors", 0)) + int(a.size)
+	s.armies.erase(a)
+	var key := _army_key(s, a)
+	if _army_views.has(key):
+		(_army_views[key] as Node).queue_free()
+		_army_views.erase(key)
+	if selected_army == a:
+		selected_army = {}
+		army_selected.emit({})
+	message.emit("%s is disbanded." % String(a.name))
+
+
+## Right-click: stop placing, or let go of the selected army. True if it did something.
+func right_click() -> bool:
+	if placing != "":
+		cancel_placement()
+		return true
+	if not selected_army.is_empty():
+		select_army({})
+		return true
+	return false
+
+
 func _fish_near(cell: int) -> bool:
 	var l := lv()
 	var a := l.coords[cell]
@@ -241,6 +567,17 @@ func hover(cell: int) -> void:
 	_ghost_ok = r[0]
 	var c := lv().cell_center(cell)
 	_ghost.visible = true
+	if BuildingDefs.DEFS[placing].get("road", false):
+		_ghost.position = Vector3(c.x, ground(c) + 0.3, c.y)
+		_ghost.rotation.y = PI / 6.0
+		_ghost_mat.albedo_color = Color(0.35, 1.0, 0.45, 0.35) if _ghost_ok else Color(1.0, 0.3, 0.25, 0.35)
+		var kind: String = r[3] if r.size() > 3 else ""
+		var names := {"road": "Road", "hill": "Hill road", "bridge": "Bridge"}
+		_ghost_label.text = ("%s - %s" % [names.get(kind, "Road"), Goods.describe(r[4])]) if _ghost_ok else String(r[1])
+		(_ghost_label.get_node("Shadow") as Label3D).text = _ghost_label.text
+		_ghost_label.modulate = Color(0.75, 1.0, 0.75) if _ghost_ok else Color(1.0, 0.65, 0.55)
+		_ghost_label.position = Vector3(0, 4.0, 0)
+		return
 	_ghost.position = Vector3(c.x, _seat(c, BuildingModels.shape(String(BuildingDefs.DEFS[placing].model)).size), c.y)
 	_ghost.rotation.y = _facing(c)
 	_ghost_mat.albedo_color = Color(0.35, 1.0, 0.45, 0.45) if _ghost_ok else Color(1.0, 0.3, 0.25, 0.45)
@@ -254,6 +591,15 @@ func hover(cell: int) -> void:
 func click(cell: int) -> bool:
 	if not running:
 		return false
+	if placing == "":
+		var p := hex_map.last_pick
+		var hit := army_at(Vector2(p.x, p.z))
+		if not hit.is_empty():
+			select_army(hit)
+			return true
+		if not selected_army.is_empty() and cell >= 0:
+			order_army(selected_army, Vector2(p.x, p.z))
+			return true
 	if placing != "":
 		var r := check(placing, cell)
 		if not r[0]:
@@ -261,6 +607,14 @@ func click(cell: int) -> bool:
 			return true
 		var s := me()
 		var d: Dictionary = BuildingDefs.DEFS[placing]
+		if d.get("road", false):
+			s.pay(r[4])
+			s.roads[cell] = r[3]
+			_infra_dirty = true
+			_reach.erase(s.index)
+			_ghost_cell = -1
+			hover(cell)
+			return true
 		s.pay(d.cost)
 		var rec := _raise(s, placing, cell, false, int(r[2]))
 		message.emit("%s is being built." % String(d.name))
@@ -277,6 +631,8 @@ func click(cell: int) -> bool:
 
 
 func select(rec: Dictionary) -> void:
+	if not rec.is_empty() and not selected_army.is_empty():
+		select_army({})
 	if not selected.is_empty() and _views.has(selected.uid):
 		(_views[selected.uid] as BuildingView).set_selected(false)
 	selected = rec
@@ -300,6 +656,8 @@ func demolish(rec: Dictionary) -> void:
 		tw.tween_callback(v.queue_free)
 		_views.erase(rec.uid)
 		_ground_dirty = true
+		_infra_dirty = true
+		_reach.clear()
 	if d.has("territory"):
 		_territory_dirty = true
 	select({})
@@ -341,6 +699,8 @@ func _raise(s: Settlement, id: String, cell: int, built: bool, kind := 0) -> Dic
 	v.setup(rec, s, ground)
 	_views[rec.uid] = v
 	_ground_dirty = true
+	_infra_dirty = true
+	_reach.clear()
 	_clear_ground(c, maxf(info.size.x, info.size.y) * 0.75 + 4.0)
 	if built:
 		rec.progress = 0.0
@@ -412,15 +772,18 @@ func _on_level_changed(_i: int) -> void:
 		var bv := v as BuildingView
 		var p := Vector2(bv.position.x, bv.position.z)
 		bv.position.y = _seat(p, bv.info.size)
+		bv.conform()
 		bv.make_foundation()
 	_territory_dirty = true
 	_ground_dirty = true
+	_infra_dirty = true
 
 
 # --------------------------------------------------------------------------- land
 
 func _update_territory() -> void:
 	_territory_dirty = false
+	_reach.clear()
 	_owner.clear()
 	var l := lv()
 	for s in settlements:
@@ -477,6 +840,9 @@ func _process(delta: float) -> void:
 	if _ground_dirty:
 		_ground_dirty = false
 		_ground.rebuild(_views.values())
+	if _infra_dirty:
+		_infra_dirty = false
+		_infra.rebuild()
 	if paused:
 		return
 	var dt := delta * speed

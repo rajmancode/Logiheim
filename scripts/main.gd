@@ -133,7 +133,7 @@ func _before_build(src: TerrainSource) -> void:
 func _after_build() -> void:
 	hud_panel.visible = true
 	landings = []
-	landing_sites = LandingSites.find(hex_map, 10)
+	landing_sites = hex_map.landing if hex_map.landing != null else LandingSites.find(hex_map, 10)
 	landing_markers.build(landing_sites.sites)
 	# (Tools and tests that build in one go skip the screens.)
 	if OS.has_environment("LOGIHEIM_SYNC_BUILD"):
@@ -197,8 +197,7 @@ func _process(_delta: float) -> void:
 func _unhandled_input(event: InputEvent) -> void:
 	if event is InputEventMouseButton:
 		var mb := event as InputEventMouseButton
-		if mb.pressed and mb.button_index == MOUSE_BUTTON_RIGHT and game_world.placing != "":
-			game_world.cancel_placement()
+		if mb.pressed and mb.button_index == MOUSE_BUTTON_RIGHT and game_world.running and game_world.right_click():
 			return
 		if mb.pressed and mb.button_index == MOUSE_BUTTON_LEFT and game_world.running and hovered >= 0:
 			if game_world.click(hex_map.finest_cell_at(Vector2(hex_map.last_pick.x, hex_map.last_pick.z))):
@@ -226,6 +225,9 @@ func _unhandled_input(event: InputEvent) -> void:
 					return
 				if not game_world.selected.is_empty():
 					game_world.select({})
+					return
+				if not game_world.selected_army.is_empty():
+					game_world.select_army({})
 					return
 			KEY_TAB:
 				game_world.set_active(game_world.active + 1)

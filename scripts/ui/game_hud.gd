@@ -15,6 +15,9 @@ extends CanvasLayer
 ##     click to select one) and People (homes, food, each want and how well it is met,
 ##     contentment and what it does, where influence comes from).
 ##   - Short messages ("Longhouse finished.") under the top bar.
+##   - Armies: "Muster army" in the Military tab gathers the clan's warriors into an army
+##     group; its panel (where the building panel goes) sets its formation, shows where it is
+##     going and disbands it. Click the army to select it, click the map to march it there.
 ##   - Options (the Options button, F10): the interface's scale, where the resource bar, build
 ##     menu, building panel and ledger sit, and the production pops (UiSettings, saved).
 ##   All of it hangs under one root control drawn at UiSettings.scale; _layout() places the
@@ -58,6 +61,11 @@ var _bottom: PanelContainer
 var _crest_box: CenterContainer
 var _crest_for := -1
 var _options: PanelContainer
+var _army_panel: PanelContainer
+var _army_title: Label
+var _army_text: RichTextLabel
+var _army_buttons: Dictionary = {}
+var _army_shield: CenterContainer
 var _scale_label: Label
 var _narrow := false            # little room across: fewer icons, one speed button
 var _bar_icons: Array[Control] = []
@@ -259,6 +267,7 @@ func _ready() -> void:
 	_toast.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	_toast.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	_toast_box.add_child(_toast)
+	_build_army_panel(theme)
 	_build_options(theme)
 	visible = false
 	_layout.call_deferred()
@@ -341,6 +350,7 @@ func _layout() -> void:
 	_ledger.size = Vector2(410, maxf(y_bot - y_top - 20.0, 200.0))
 	_ledger.position = Vector2(_ledger_x(), y_top + 10.0)
 	_info.position = Vector2(_info_x(), y_top + 10.0)
+	_army_panel.position = _info.position
 	_toast_box.position = Vector2((size.x - 600.0) * 0.5, y_top + 10.0)
 	_options.position = (size - _options.size) * 0.5
 	if _scale_label != null:
@@ -685,6 +695,7 @@ func open(p_world: GameWorld) -> void:
 	world = p_world
 	if not world.message.is_connected(show_message):
 		world.message.connect(show_message)
+		world.army_selected.connect(func(_a: Dictionary) -> void: _update_army())
 		world.selection_changed.connect(func(_r: Dictionary) -> void: _update_info())
 	visible = true
 	_build_cards()
@@ -787,6 +798,32 @@ func _build_cards() -> void:
 				world.begin_placement(id)
 			_build_cards())
 		_cards.add_child(b)
+	if _tab == "military":
+		var m := Button.new()
+		m.custom_minimum_size = Vector2(222, 96)
+		m.focus_mode = Control.FOCUS_NONE
+		var cp := Vector4(8, 6, 8, 6)
+		m.add_theme_stylebox_override("normal", UiStyle.box("card", 22, cp))
+		m.add_theme_stylebox_override("hover", UiStyle.box("card_hover", 22, cp))
+		m.add_theme_stylebox_override("pressed", UiStyle.box("card_active", 22, cp))
+		var mrow := HBoxContainer.new()
+		mrow.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+		mrow.offset_left = 6
+		mrow.offset_right = -6
+		mrow.add_theme_constant_override("separation", 8)
+		mrow.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		m.add_child(mrow)
+		mrow.add_child(_icon_rect(Goods.icon("warriors"), 64, ""))
+		var ml := Label.new()
+		ml.text = "Muster army\nfrom your warriors"
+		ml.add_theme_font_size_override("font_size", 14)
+		ml.add_theme_color_override("font_color", UiStyle.GOLD)
+		ml.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		ml.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+		mrow.add_child(ml)
+		m.tooltip_text = "Gather up to 24 warriors from the barracks' training into an army group. Select it on the map, set its formation, and click where it should march."
+		m.pressed.connect(func() -> void: world.muster())
+		_cards.add_child(m)
 	_card_scroll.scroll_horizontal = 0
 
 
@@ -844,6 +881,7 @@ func _process(delta: float) -> void:
 		_update_goods(s)
 		_build_cards_affordable(s)
 		_update_info()
+		_update_army()
 		_update_ledger(s)
 	if world.placing != "":
 		_hint.text = "Placing %s: click a hex on your land (Shift: more). Right-click or Esc to stop." % String(BuildingDefs.DEFS[world.placing].name)
@@ -878,6 +916,88 @@ func _build_cards_affordable(s: Settlement) -> void:
 		var b := _cards.get_child(i) as Button
 		b.modulate = Color(1, 1, 1, 1.0 if s.can_afford(BuildingDefs.DEFS[ids[i]].cost) else 0.45)
 		b.button_pressed = world.placing == ids[i]
+
+
+func _build_army_panel(theme: Theme) -> void:
+	_army_panel = PanelContainer.new()
+	_army_panel.theme = theme
+	_army_panel.add_theme_stylebox_override("panel", UiStyle.panel())
+	_army_panel.custom_minimum_size = Vector2(360, 0)
+	_root.add_child(_army_panel)
+	var v := VBoxContainer.new()
+	v.add_theme_constant_override("separation", 8)
+	_army_panel.add_child(v)
+	var head := HBoxContainer.new()
+	head.add_theme_constant_override("separation", 10)
+	v.add_child(head)
+	_army_shield = CenterContainer.new()
+	_army_shield.custom_minimum_size = Vector2(56, 64)
+	head.add_child(_army_shield)
+	_army_title = Label.new()
+	_army_title.add_theme_font_override("font", UiStyle.font(900))
+	_army_title.add_theme_font_size_override("font_size", 20)
+	_army_title.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+	head.add_child(_army_title)
+	UiStyle.gild(_army_title)
+	v.add_child(UiStyle.rule())
+	_army_text = _rich(14, 340)
+	v.add_child(_army_text)
+	v.add_child(UiStyle.heading("Formation", 15))
+	var grid := GridContainer.new()
+	grid.columns = 3
+	grid.add_theme_constant_override("h_separation", 6)
+	grid.add_theme_constant_override("v_separation", 6)
+	v.add_child(grid)
+	var group := ButtonGroup.new()
+	for f: String in ArmyView.FORMATIONS:
+		var b := Button.new()
+		b.text = ArmyView.FORMATION_NAMES[f]
+		b.toggle_mode = true
+		b.button_group = group
+		b.focus_mode = Control.FOCUS_NONE
+		b.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		b.pressed.connect(func() -> void:
+			if not world.selected_army.is_empty():
+				world.set_formation(world.selected_army, f)
+				_update_army())
+		grid.add_child(b)
+		_army_buttons[f] = b
+	var dis := Button.new()
+	dis.text = "Disband (back to the hall)"
+	dis.focus_mode = Control.FOCUS_NONE
+	dis.pressed.connect(func() -> void:
+		if not world.selected_army.is_empty():
+			world.disband(world.selected_army))
+	v.add_child(dis)
+	_army_panel.visible = false
+
+
+func _update_army() -> void:
+	var a: Dictionary = world.selected_army if world != null else {}
+	var was := _army_panel.visible
+	_army_panel.visible = not a.is_empty()
+	if a.is_empty():
+		return
+	if not was:
+		_info.visible = false
+		var home := _info_x()
+		_army_panel.position.x = home + (-400.0 if UiSettings.panel_left else 400.0)
+		var tw := create_tween().set_trans(Tween.TRANS_CUBIC).set_ease(Tween.EASE_OUT)
+		tw.tween_property(_army_panel, "position:x", home, 0.25)
+		var s := world.me()
+		for c in _army_shield.get_children():
+			c.queue_free()
+		_army_shield.add_child(Emblem.shield(s.color, s.emblem, 60.0))
+	_army_title.text = String(a.name)
+	var moving := not (a.path as Array).is_empty()
+	var lines := PackedStringArray()
+	lines.append("[b]%d warriors[/b] and the clan's standard" % int(a.size))
+	lines.append(("[color=#8fd07a]Marching[/color] - %d hexes to go" % (a.path as Array).size()) if moving else "Standing in %s" % String(ArmyView.FORMATION_NAMES[a.formation]).to_lower())
+	lines.append("[color=#a09070]Click the map to march. Right-click to let go.[/color]")
+	_army_text.text = "\n".join(lines)
+	for f in _army_buttons:
+		(_army_buttons[f] as Button).button_pressed = f == String(a.formation)
+	_army_panel.reset_size()
 
 
 func _update_info() -> void:

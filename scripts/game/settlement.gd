@@ -32,6 +32,12 @@ var expansions := 0
 var hall: Dictionary = {}
 ## Hexes (finest level cell indices) this settlement holds: cell -> true.
 var territory := {}
+## Roads it has laid: cell -> "road", "hill" (switchbacks up a steep hex) or "bridge".
+var roads := {}
+## Its army groups: {id, name, size, formation, pos: Vector2, facing, path: Array[Vector2]}.
+var armies: Array = []
+var _next_army := 1
+const ARMY_NAMES := ["the Hirð", "the Ravens", "the Wolfcoats", "the Iron Shields", "the Sea Wolves", "the Bear Shirts", "the Storm Riders", "the Ash Spears"]
 
 ## Buildings finished since the world last looked (it reports and clears them).
 var just_finished: Array = []
