@@ -322,51 +322,32 @@ static func same_deposit(level: HexLevel, i: int, j: int) -> bool:
 	return level.resource[j] == level.resource[i]
 
 
-## Outline ribbons around every deposit (shown with the resource icons): a coloured line along
-## each hex edge where the deposit ends, following the ground.
+## Outlines round every deposit (shown with the resource icons): a smooth dashed line in the
+## resource's colour with a faint glow inward (BorderRibbon, style 1).
 static func build_outlines(level: HexLevel, surface: TerrainSurface, sea_y: float) -> MeshInstance3D:
-	var s := level.hex_size
-	var w := s * 0.05
-	var data := MeshData.new()
+	var groups := {}
 	for i in level.cell_count():
 		var kind := level.resource[i]
 		if kind == 0:
 			continue
-		var c := level.cell_center(i)
-		var col: Color = PATCH.get(kind, Color(0.3, 0.6, 1.0)).lightened(0.25)
-		for k in 6:
-			var ca := HexCoords.corner(k, s)
-			var cb := HexCoords.corner((k + 1) % 6, s)
-			var j := level.cell_at(c + (ca + cb))
-			if j >= 0 and same_deposit(level, i, j):
-				continue
-			# Inset a little so neighbouring deposits' lines sit side by side.
-			var pa := c + ca * (1.0 - w / s)
-			var pb := c + cb * (1.0 - w / s)
-			var inward := -(ca + cb).normalized() * w
-			const SEG := 4
-			for q in SEG:
-				var p0 := pa.lerp(pb, float(q) / SEG)
-				var p1 := pa.lerp(pb, float(q + 1) / SEG)
-				var y0 := maxf(surface.sample(p0), sea_y) + 0.6
-				var y1 := maxf(surface.sample(p1), sea_y) + 0.6
-				var a := Vector3(p0.x, y0, p0.y)
-				var b := Vector3(p1.x, y1, p1.y)
-				var a2 := Vector3(p0.x + inward.x, y0, p0.y + inward.y)
-				var b2 := Vector3(p1.x + inward.x, y1, p1.y + inward.y)
-				data.tri(a, b, b2, Vector2.ZERO, Vector2.ZERO, Vector2.ZERO, Vector3.UP, Vector2.ZERO, col)
-				data.tri(a, b2, a2, Vector2.ZERO, Vector2.ZERO, Vector2.ZERO, Vector3.UP, Vector2.ZERO, col)
+		var key = level.deposit[i] if level.deposit[i] >= 0 else "k%d" % kind
+		if not groups.has(key):
+			groups[key] = []
+		(groups[key] as Array).append(i)
+	var data := MeshData.new()
+	for key in groups:
+		var cells: Array = groups[key]
+		var i0: int = cells[0]
+		var kind := level.resource[i0]
+		var col: Color = PATCH.get(kind, Color(0.3, 0.6, 1.0)).lightened(0.3)
+		var loops := BorderRibbon.loops(level, cells, func(j: int) -> bool: return level.resource[j] == kind and same_deposit(level, i0, j))
+		BorderRibbon.add_ribbons(data, loops, surface, sea_y, level.hex_size * 0.22, 2.0, 0.6, col)
 	if data.verts.is_empty():
 		return null
 	var mi := MeshInstance3D.new()
 	mi.name = "DepositOutlines"
 	mi.mesh = data.to_mesh()
-	var mat := StandardMaterial3D.new()
-	mat.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
-	mat.vertex_color_use_as_albedo = true
-	mat.cull_mode = BaseMaterial3D.CULL_DISABLED
-	mat.render_priority = 5
-	mi.material_override = mat
+	mi.material_override = BorderRibbon.material(1, 5)
 	mi.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
 	return mi
 

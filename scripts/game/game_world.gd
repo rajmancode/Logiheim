@@ -449,52 +449,18 @@ func _update_territory() -> void:
 		_borders.append(_border_mesh(s))
 
 
-## The settlement's border: a glowing ribbon along every edge between its land and the rest,
-## draped over the ground.
+## The settlement's border: a smooth ribbon round its land (BorderRibbon): an inked rim and a
+## bright line in the owner's colour with a glint running along it, a stitched line inside and
+## a soft wash of colour fading into the land.
 func _border_mesh(s: Settlement) -> MeshInstance3D:
 	var l := lv()
-	var st := SurfaceTool.new()
-	st.begin(Mesh.PRIMITIVE_TRIANGLES)
-	var corners := HexCoords.corners(l.hex_size)
-	for cell in s.territory:
-		var a := l.coords[cell]
-		var c := l.cell_center(cell)
-		for k in 6:
-			var j := l.index_of(HexCoords.neighbor(a, k))
-			if j >= 0 and s.territory.has(j):
-				continue
-			var p0: Vector2 = c + corners[k]
-			var p1: Vector2 = c + corners[(k + 1) % 6]
-			# Inward, so neighbouring borders sit side by side rather than on top of each other.
-			var inward := (c - (p0 + p1) * 0.5).normalized()
-			var seg := 4
-			for i in seg:
-				var t0 := float(i) / seg
-				var t1 := float(i + 1) / seg
-				var a0 := p0.lerp(p1, t0)
-				var a1 := p0.lerp(p1, t1)
-				var b0 := a0 + inward * 1.6
-				var b1 := a1 + inward * 1.6
-				var quad := [a0, a1, b1, b0]
-				var ys := []
-				for q: Vector2 in quad:
-					ys.append(maxf(ground(q), hex_map.sea_y) + 0.6)
-				var v := []
-				for qi in 4:
-					v.append(Vector3(quad[qi].x, ys[qi], quad[qi].y))
-				for tri in [[0, 1, 2], [0, 2, 3]]:
-					for ti in tri:
-						st.set_color(Color(1, 1, 1, 1.0 if ti < 2 else 0.25))
-						st.add_vertex(v[ti])
+	var data := MeshData.new()
+	var loops := BorderRibbon.loops(l, s.territory.keys(), func(j: int) -> bool: return s.territory.has(j))
+	BorderRibbon.add_ribbons(data, loops, hex_map.current_surface(), hex_map.sea_y, 16.0, 4.0, 0.45, s.color)
 	var mi := MeshInstance3D.new()
-	mi.mesh = st.commit()
-	var m := StandardMaterial3D.new()
-	m.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
-	m.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
-	m.vertex_color_use_as_albedo = true
-	m.albedo_color = s.color.lightened(0.15)
-	m.cull_mode = BaseMaterial3D.CULL_DISABLED
-	mi.material_override = m
+	mi.name = "Border"
+	mi.mesh = data.to_mesh()
+	mi.material_override = BorderRibbon.material(0, 4)
 	mi.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
 	add_child(mi)
 	return mi

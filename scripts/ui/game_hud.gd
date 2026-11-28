@@ -36,6 +36,8 @@ var _info_text: RichTextLabel
 var _info_bar: ProgressBar
 var _demolish: Button
 var _toast: Label
+var _toast_box: PanelContainer
+var _team_style := {}
 var _toast_t := 0.0
 var _hint: Label
 var _refresh_t := 0.0
@@ -54,9 +56,9 @@ func _ready() -> void:
 	# --- Top bar -----------------------------------------------------------------------------
 	var top := PanelContainer.new()
 	top.theme = theme
-	top.add_theme_stylebox_override("panel", _panel_style(0.9))
+	top.add_theme_stylebox_override("panel", UiStyle.box("topbar", 24, Vector4(14, 6, 14, 12)))
 	top.set_anchors_and_offsets_preset(Control.PRESET_TOP_WIDE)
-	top.offset_bottom = 54
+	top.offset_bottom = 60
 	add_child(top)
 	var row := HBoxContainer.new()
 	row.add_theme_constant_override("separation", 12)
@@ -66,10 +68,12 @@ func _ready() -> void:
 	_player_btn.tooltip_text = "Pass the controls to the next player (Tab)"
 	_player_btn.pressed.connect(func() -> void: world.set_active(world.active + 1))
 	row.add_child(_player_btn)
+	row.add_child(_icon_rect(load("res://assets/icons/buildings/longhouse.png"), 28, "People"))
 	_people = Label.new()
 	_people.tooltip_text = "People: how many / room in your homes (idle hands)"
 	_people.mouse_filter = Control.MOUSE_FILTER_PASS
 	row.add_child(_people)
+	row.add_child(_icon_rect(Goods.icon("jewellery"), 26, "Contentment"))
 	_content = Label.new()
 	_content.tooltip_text = "Contentment: how well your people's wants are met (see the ledger's People tab)"
 	_content.mouse_filter = Control.MOUSE_FILTER_PASS
@@ -83,7 +87,7 @@ func _ready() -> void:
 	_expand.pressed.connect(func() -> void: world.expand())
 	row.add_child(_expand)
 	_goods_box = HBoxContainer.new()
-	_goods_box.add_theme_constant_override("separation", 10)
+	_goods_box.add_theme_constant_override("separation", 5)
 	_goods_box.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	row.add_child(_goods_box)
 	_ledger_btn = Button.new()
@@ -91,12 +95,14 @@ func _ready() -> void:
 	_ledger_btn.toggle_mode = true
 	_ledger_btn.focus_mode = Control.FOCUS_NONE
 	_ledger_btn.tooltip_text = "Stores, buildings and people (L)"
-	_ledger_btn.toggled.connect(func(on: bool) -> void: _ledger.visible = on)
+	_ledger_btn.toggled.connect(_slide_ledger)
 	row.add_child(_ledger_btn)
 	for sp in [[0.0, "❚❚"], [1.0, "1x"], [2.0, "2x"], [4.0, "4x"]]:
 		var b := Button.new()
 		b.text = sp[1]
 		b.toggle_mode = true
+		b.add_theme_font_size_override("font_size", 13)
+		b.custom_minimum_size = Vector2(40, 0)
 		b.focus_mode = Control.FOCUS_NONE
 		var v: float = sp[0]
 		b.pressed.connect(func() -> void:
@@ -111,9 +117,9 @@ func _ready() -> void:
 	# --- Build menu ----------------------------------------------------------------------------
 	var bottom := PanelContainer.new()
 	bottom.theme = theme
-	bottom.add_theme_stylebox_override("panel", _panel_style(0.9))
+	bottom.add_theme_stylebox_override("panel", UiStyle.box("panel", 44, Vector4(18, 12, 18, 14)))
 	bottom.set_anchors_and_offsets_preset(Control.PRESET_BOTTOM_WIDE)
-	bottom.offset_top = -152
+	bottom.offset_top = -168
 	bottom.offset_left = 160
 	bottom.offset_right = -160
 	add_child(bottom)
@@ -133,6 +139,13 @@ func _ready() -> void:
 		b.text = BuildingDefs.CATEGORY_NAMES[cat]
 		b.toggle_mode = true
 		b.focus_mode = Control.FOCUS_NONE
+		var tp := Vector4(14, 6, 14, 6)
+		b.add_theme_stylebox_override("normal", UiStyle.box("tab", 14, tp))
+		b.add_theme_stylebox_override("hover", UiStyle.box("tab", 14, tp, Color(1.4, 1.3, 1.1)))
+		b.add_theme_stylebox_override("pressed", UiStyle.box("tab_active", 14, tp))
+		b.add_theme_stylebox_override("hover_pressed", UiStyle.box("tab_active", 14, tp))
+		b.add_theme_color_override("font_pressed_color", UiStyle.GOLD)
+		b.add_theme_color_override("font_hover_pressed_color", UiStyle.GOLD)
 		b.pressed.connect(func() -> void:
 			_tab = cat
 			_build_cards())
@@ -145,7 +158,7 @@ func _ready() -> void:
 	_hint.clip_text = true
 	tabs.add_child(_hint)
 	_card_scroll = ScrollContainer.new()
-	_card_scroll.custom_minimum_size = Vector2(0, 98)
+	_card_scroll.custom_minimum_size = Vector2(0, 104)
 	_card_scroll.vertical_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
 	_card_scroll.gui_input.connect(_on_cards_wheel)
 	bv.add_child(_card_scroll)
@@ -156,8 +169,8 @@ func _ready() -> void:
 	# --- Selected building ---------------------------------------------------------------------
 	_info = PanelContainer.new()
 	_info.theme = theme
-	_info.add_theme_stylebox_override("panel", _panel_style(0.92))
-	_info.position = Vector2(12, 66)
+	_info.add_theme_stylebox_override("panel", UiStyle.panel())
+	_info.position = Vector2(12, 70)
 	_info.custom_minimum_size = Vector2(360, 0)
 	add_child(_info)
 	var iv := VBoxContainer.new()
@@ -173,6 +186,8 @@ func _ready() -> void:
 	_info_title.add_theme_color_override("font_color", UiStyle.GOLD)
 	_info_title.size_flags_vertical = Control.SIZE_SHRINK_CENTER
 	head.add_child(_info_title)
+	UiStyle.gild(_info_title)
+	iv.add_child(UiStyle.rule())
 	_info_text = _rich(14, 340)
 	iv.add_child(_info_text)
 	_info_bar = _bar(Color(0.78, 0.58, 0.24))
@@ -187,12 +202,12 @@ func _ready() -> void:
 	# --- Ledger --------------------------------------------------------------------------------
 	_ledger = PanelContainer.new()
 	_ledger.theme = theme
-	_ledger.add_theme_stylebox_override("panel", _panel_style(0.94))
+	_ledger.add_theme_stylebox_override("panel", UiStyle.panel())
 	_ledger.set_anchors_and_offsets_preset(Control.PRESET_RIGHT_WIDE)
-	_ledger.offset_left = -400
+	_ledger.offset_left = -420
 	_ledger.offset_right = -10
-	_ledger.offset_top = 66
-	_ledger.offset_bottom = -162
+	_ledger.offset_top = 70
+	_ledger.offset_bottom = -176
 	add_child(_ledger)
 	_ledger_tabs = TabContainer.new()
 	_ledger.add_child(_ledger_tabs)
@@ -201,33 +216,67 @@ func _ready() -> void:
 	_build_people_tab()
 	_ledger.visible = false
 
+	_toast_box = PanelContainer.new()
+	_toast_box.add_theme_stylebox_override("panel", UiStyle.box("banner", 34, Vector4(56, 12, 56, 14)))
+	_toast_box.set_anchors_and_offsets_preset(Control.PRESET_CENTER_TOP)
+	_toast_box.offset_top = 70
+	_toast_box.offset_left = -300
+	_toast_box.offset_right = 300
+	_toast_box.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_toast_box.modulate.a = 0.0
+	add_child(_toast_box)
 	_toast = Label.new()
 	_toast.theme = theme
 	_toast.add_theme_font_override("font", UiStyle.font(800))
-	_toast.add_theme_font_size_override("font_size", 20)
+	_toast.add_theme_font_size_override("font_size", 19)
 	_toast.add_theme_color_override("font_color", UiStyle.PARCHMENT)
 	_toast.add_theme_color_override("font_outline_color", UiStyle.INK)
 	_toast.add_theme_constant_override("outline_size", 6)
 	_toast.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	_toast.set_anchors_and_offsets_preset(Control.PRESET_CENTER_TOP)
-	_toast.offset_top = 64
-	_toast.offset_left = -400
-	_toast.offset_right = 400
 	_toast.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	add_child(_toast)
+	_toast_box.add_child(_toast)
 	visible = false
 
 
 # ------------------------------------------------------------------------------- helpers
 
-func _panel_style(alpha: float) -> StyleBoxFlat:
-	var st := StyleBoxFlat.new()
-	st.bg_color = Color(0.06, 0.05, 0.04, alpha)
-	st.set_corner_radius_all(6)
-	st.set_content_margin_all(8)
-	st.border_color = Color(0.85, 0.68, 0.32, 0.9)
-	st.set_border_width_all(2)
-	return st
+## A good's icon and amount in a small dark chip (the top bar).
+func _chip(tex: Texture2D, text: String, tip: String) -> PanelContainer:
+	var c := PanelContainer.new()
+	c.add_theme_stylebox_override("panel", UiStyle.box("chip", 16, Vector4(6, 2, 12, 2)))
+	c.tooltip_text = tip
+	c.mouse_filter = Control.MOUSE_FILTER_PASS
+	var h := HBoxContainer.new()
+	h.add_theme_constant_override("separation", 4)
+	h.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	c.add_child(h)
+	if tex != null:
+		h.add_child(_icon_rect(tex, 24, ""))
+	var l := Label.new()
+	l.text = text
+	l.add_theme_font_size_override("font_size", 14)
+	l.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	h.add_child(l)
+	return c
+
+
+## The ledger slides in from the right and out again.
+func _slide_ledger(on: bool) -> void:
+	var tw := create_tween().set_parallel(true).set_trans(Tween.TRANS_CUBIC).set_ease(Tween.EASE_OUT)
+	if on:
+		_ledger.visible = true
+		_ledger.offset_left = 20.0
+		_ledger.offset_right = 430.0
+		_ledger.modulate.a = 0.0
+		tw.tween_property(_ledger, "offset_left", -420.0, 0.28)
+		tw.tween_property(_ledger, "offset_right", -10.0, 0.28)
+		tw.tween_property(_ledger, "modulate:a", 1.0, 0.2)
+		_refresh_t = 0.0
+	else:
+		tw.tween_property(_ledger, "offset_left", 20.0, 0.22)
+		tw.tween_property(_ledger, "offset_right", 430.0, 0.22)
+		tw.tween_property(_ledger, "modulate:a", 0.0, 0.2)
+		tw.chain().tween_callback(func() -> void: _ledger.visible = false)
 
 
 func _icon_rect(tex: Texture2D, size: int, tip: String) -> TextureRect:
@@ -255,26 +304,15 @@ func _rich(size: int, width: float) -> RichTextLabel:
 
 func _bar(col: Color) -> ProgressBar:
 	var b := ProgressBar.new()
-	b.custom_minimum_size = Vector2(0, 12)
+	b.custom_minimum_size = Vector2(0, 14)
 	b.show_percentage = false
-	var fill := StyleBoxFlat.new()
-	fill.bg_color = col
-	fill.set_corner_radius_all(3)
-	b.add_theme_stylebox_override("fill", fill)
-	var bg := StyleBoxFlat.new()
-	bg.bg_color = Color(0.08, 0.06, 0.04)
-	bg.set_corner_radius_all(3)
-	b.add_theme_stylebox_override("background", bg)
+	b.add_theme_stylebox_override("fill", UiStyle.box("bar_fill", 6, Vector4.ZERO, col))
+	b.add_theme_stylebox_override("background", UiStyle.box("bar_bg", 6, Vector4.ZERO))
 	return b
 
 
-func _header(text: String) -> Label:
-	var l := Label.new()
-	l.text = text
-	l.add_theme_font_override("font", UiStyle.font(900))
-	l.add_theme_font_size_override("font_size", 16)
-	l.add_theme_color_override("font_color", UiStyle.GOLD)
-	return l
+func _header(text: String) -> Control:
+	return UiStyle.heading(text, 16)
 
 
 ## A recipe as BBCode: what it uses -> what it makes.
@@ -484,7 +522,10 @@ func open(p_world: GameWorld) -> void:
 func show_message(text: String) -> void:
 	_toast.text = text
 	_toast_t = 3.5
-	_toast.modulate.a = 1.0
+	_toast_box.modulate.a = 1.0
+	_toast_box.scale = Vector2(0.9, 0.9)
+	_toast_box.pivot_offset = _toast_box.size * 0.5
+	create_tween().tween_property(_toast_box, "scale", Vector2.ONE, 0.25).set_trans(Tween.TRANS_BACK).set_ease(Tween.EASE_OUT)
 
 
 func _unhandled_key_input(event: InputEvent) -> void:
@@ -518,9 +559,19 @@ func _build_cards() -> void:
 	for id in BuildingDefs.in_category(_tab):
 		var d: Dictionary = BuildingDefs.DEFS[id]
 		var b := Button.new()
-		b.custom_minimum_size = Vector2(218, 90)
+		b.custom_minimum_size = Vector2(222, 96)
 		b.focus_mode = Control.FOCUS_NONE
 		b.toggle_mode = true
+		var cp := Vector4(8, 6, 8, 6)
+		b.add_theme_stylebox_override("normal", UiStyle.box("card", 22, cp))
+		b.add_theme_stylebox_override("hover", UiStyle.box("card_hover", 22, cp))
+		b.add_theme_stylebox_override("pressed", UiStyle.box("card_active", 22, cp))
+		b.add_theme_stylebox_override("hover_pressed", UiStyle.box("card_active", 22, cp))
+		b.mouse_entered.connect(func() -> void:
+			b.pivot_offset = b.size * 0.5
+			create_tween().tween_property(b, "scale", Vector2(1.05, 1.05), 0.12).set_trans(Tween.TRANS_BACK).set_ease(Tween.EASE_OUT))
+		b.mouse_exited.connect(func() -> void:
+			create_tween().tween_property(b, "scale", Vector2.ONE, 0.12))
 		b.button_pressed = world != null and world.placing == id
 		var row := HBoxContainer.new()
 		row.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
@@ -539,6 +590,7 @@ func _build_cards() -> void:
 		var nm := Label.new()
 		nm.text = String(d.name)
 		nm.add_theme_font_size_override("font_size", 14)
+		nm.add_theme_color_override("font_color", UiStyle.GOLD)
 		nm.clip_text = true
 		nm.mouse_filter = Control.MOUSE_FILTER_IGNORE
 		col.add_child(nm)
@@ -588,19 +640,16 @@ func _process(delta: float) -> void:
 		return
 	var s := world.me()
 	_player_btn.text = "  %s  " % s.player_name
-	var sb := StyleBoxFlat.new()
-	sb.bg_color = s.color.darkened(0.25)
-	sb.set_corner_radius_all(5)
-	sb.border_color = UiStyle.GOLD
-	sb.set_border_width_all(2)
-	sb.content_margin_left = 8
-	sb.content_margin_right = 8
-	_player_btn.add_theme_stylebox_override("normal", sb)
-	_people.text = "People %d/%d (%d idle)" % [s.population, s.housing(), s.idle()]
-	_content.text = "Content %d%%" % int(s.contentment * 100.0)
+	if not _team_style.has(s.index):
+		_team_style[s.index] = UiStyle.box("button_pressed", 14, Vector4(14, 7, 14, 7), Color(s.color.r * 1.7, s.color.g * 1.7, s.color.b * 1.7))
+	if _player_btn.get_theme_stylebox("normal") != _team_style[s.index]:
+		_player_btn.add_theme_stylebox_override("normal", _team_style[s.index])
+		_player_btn.add_theme_stylebox_override("hover", _team_style[s.index])
+	_people.text = "%d/%d (%d idle)" % [s.population, s.housing(), s.idle()]
+	_content.text = "%d%%" % int(s.contentment * 100.0)
 	_content.modulate = Color(1, 0.65, 0.55) if s.contentment < 0.3 else (Color(0.75, 1, 0.7) if s.contentment > 0.7 else Color.WHITE)
 	_influence.text = "%d (+%.1f/s)" % [int(s.influence), s.influence_rate()]
-	_expand.text = "Expand land (%d)" % s.expand_cost()
+	_expand.text = "Expand (%d)" % s.expand_cost()
 	_expand.disabled = s.influence < s.expand_cost()
 	_speed_btns[0].button_pressed = world.paused
 	for i in range(1, 4):
@@ -618,32 +667,20 @@ func _process(delta: float) -> void:
 		_hint.text = "Click a building to see what it's doing. L: ledger."
 	if _toast_t > 0.0:
 		_toast_t -= delta
-		_toast.modulate.a = clampf(_toast_t, 0.0, 1.0)
+		_toast_box.modulate.a = clampf(_toast_t, 0.0, 1.0)
 
 
 ## The top bar's goods: the stores' fill, food, and the few goods everything is built from.
 func _update_goods(s: Settlement) -> void:
 	for c in _goods_box.get_children():
 		c.queue_free()
-	var store := Label.new()
-	store.text = "Stores %d/%d" % [int(s.stored()), s.storage()]
-	store.modulate = Color(1, 0.7, 0.6) if s.stored() >= s.storage() else Color.WHITE
+	var store := _chip(load("res://assets/icons/buildings/warehouse.png"), "%d/%d" % [int(s.stored()), s.storage()], "Goods in store / room in your stores")
+	if s.stored() >= s.storage():
+		store.modulate = Color(1, 0.7, 0.6)
 	_goods_box.add_child(store)
-	var food := HBoxContainer.new()
-	food.add_theme_constant_override("separation", 3)
-	food.add_child(_icon_rect(Goods.icon("bread"), 28, "Food: fish, meat, bread and salt fish"))
-	var fl := Label.new()
-	fl.text = "%d" % int(s.food())
-	food.add_child(fl)
-	_goods_box.add_child(food)
+	_goods_box.add_child(_chip(Goods.icon("bread"), "%d" % int(s.food()), "Food: fish, meat, bread and salt fish"))
 	for id in Goods.TOP:
-		var item := HBoxContainer.new()
-		item.add_theme_constant_override("separation", 3)
-		item.add_child(_icon_rect(Goods.icon(id), 28, Goods.display_name(id)))
-		var l := Label.new()
-		l.text = "%d" % int(s.stock.get(id, 0))
-		item.add_child(l)
-		_goods_box.add_child(item)
+		_goods_box.add_child(_chip(Goods.icon(id), "%d" % int(s.stock.get(id, 0)), Goods.display_name(id)))
 
 
 func _build_cards_affordable(s: Settlement) -> void:
@@ -656,9 +693,16 @@ func _build_cards_affordable(s: Settlement) -> void:
 
 func _update_info() -> void:
 	var rec := world.selected if world != null else {}
+	var was := _info.visible
 	_info.visible = not rec.is_empty()
 	if rec.is_empty():
 		return
+	if not was:
+		_info.position.x = -380
+		_info.modulate.a = 0.0
+		var tw := create_tween().set_parallel(true).set_trans(Tween.TRANS_CUBIC).set_ease(Tween.EASE_OUT)
+		tw.tween_property(_info, "position:x", 12.0, 0.25)
+		tw.tween_property(_info, "modulate:a", 1.0, 0.2)
 	var d: Dictionary = BuildingDefs.DEFS[rec.id]
 	var s: Settlement = world.settlements[world._settlement_of(rec)]
 	_info_title.text = String(d.name)
