@@ -1309,7 +1309,9 @@ class Kit:
 		if n.length() < 0.5:
 			n = Vector3.UP
 		quad(a, b, c, d, n, col)
-		quad(a, b, c, d, -n, col)
+		# The back face a hair behind, so the two never fight over the same depth.
+		var o := -n * 0.004
+		quad(a + o, b + o, c + o, d + o, -n, col)
 
 	## A box centred at c; `tilt` rotates it (Euler, radians) about its centre.
 	func box(c: Vector3, s: Vector3, col: Color, tilt := Vector3.ZERO) -> void:

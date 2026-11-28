@@ -105,7 +105,7 @@ func setup(p_record: Dictionary, p_settlement: Settlement, ground: Callable) -> 
 	make_foundation()
 	# Builders at the site while it goes up.
 	for i in 2:
-		var v := _villager(Color(0.55, 0.45, 0.32), "hammer")
+		var v := _villager(Color(0.55, 0.45, 0.32), "hammer", "builder")
 		_builders.append(v)
 	_place_builders()
 	_built = settlement.is_built(record)
@@ -129,9 +129,9 @@ const TRADES := {
 }
 
 
-func _villager(tunic: Color, a := "idle") -> Villager:
+func _villager(tunic: Color, a := "idle", occupation := "") -> Villager:
 	var v := Villager.new()
-	v.setup(settlement.color, tunic, _people_mat, height_at, a)
+	v.setup(settlement.color, tunic, _people_mat, height_at, a, false, occupation)
 	get_tree_root_add(v)
 	return v
 
@@ -480,7 +480,7 @@ func _set_workers(n: int) -> void:
 	while _workers.size() < n:
 		var tunics := [Color(0.42, 0.36, 0.28), Color(0.3, 0.38, 0.32), Color(0.48, 0.32, 0.26), Color(0.36, 0.33, 0.42)]
 		var trade: Array = TRADES.get(record.id, ["idle", ""])
-		var v := _villager(tunics[_workers.size() % tunics.size()], trade[0])
+		var v := _villager(tunics[_workers.size() % tunics.size()], trade[0], Outfits.BY_BUILDING.get(record.id, "commoner"))
 		_workers.append(v)
 		var door: Vector3 = info.door
 		var work: Vector3 = info.work

@@ -7,6 +7,9 @@ extends Node3D
 ## Hair, beards, braids, buns, hoods and headscarves vary from one to the next. Arms bend at
 ## the elbow and legs at the knee; cloaks and skirts swing as they walk.
 ##
+## Each trade dresses its own way (Outfits, setup(..., occupation)): its colours, headgear,
+## apron, cloak, belt kit, what it carries on its back and the tool in its hand.
+##
 ## Soldiers (setup(..., soldier = true)) wear an iron helmet with a nose guard, carry a round
 ## shield in the owner's colour on the left arm and a long spear. They march to a place given
 ## by march_to() (their spot in an army's formation) and stand there in a stance: "guard"
@@ -56,9 +59,27 @@ var goal_face := 0.0
 var stance := "guard"
 
 static var _parts := {}
+const LINEN_DYES := [Color(0.88, 0.85, 0.76), Color(0.7, 0.25, 0.2), Color(0.3, 0.4, 0.6)]
 
 
-func setup(_team: Color, tunic: Color, mat: ShaderMaterial, ground: Callable, p_act := "idle", p_soldier := false) -> void:
+## The clan's colour in a sash over the belt, for those without a cloak.
+func _sash_mesh() -> Mesh:
+	if _parts.has("sash"):
+		return _parts["sash"]
+	var k := BuildingModels.Kit.new()
+	k.frustum(Vector3(0, -0.045, 0), 0.208, 0.206, 0.065, BuildingModels.TEAM, 16)
+	k.box(Vector3(0.12, -0.12, -0.17), Vector3(0.05, 0.14, 0.02), BuildingModels.TEAM, Vector3(0, 0, 0.2))
+	var m := k.commit()
+	_parts["sash"] = m
+	return m
+
+
+var occupation := "commoner"
+
+
+func setup(_team: Color, tunic: Color, mat: ShaderMaterial, ground: Callable, p_act := "idle", p_soldier := false, p_occupation := "") -> void:
+	occupation = p_occupation if p_occupation != "" else "commoner"
+	var sp := Outfits.spec(occupation)
 	height_at = ground
 	_mat = mat
 	act = p_act
@@ -69,13 +90,33 @@ func setup(_team: Color, tunic: Color, mat: ShaderMaterial, ground: Callable, p_
 	_phase = _rng.randf() * TAU
 	speed = _rng.randf_range(1.3, 1.7)
 	var skin := Color(0.9, 0.73, 0.6).lerp(Color(0.74, 0.54, 0.42), _rng.randf())
-	var hair: Color = [Color(0.86, 0.72, 0.42), Color(0.92, 0.82, 0.55), Color(0.55, 0.35, 0.18), Color(0.3, 0.2, 0.12), Color(0.72, 0.36, 0.14), Color(0.8, 0.78, 0.72)][_rng.randi() % 6]
-	_female = _rng.randf() < 0.45 and not soldier
-	# Clothes: plant-dyed wool and linen; men's tunics as given, women's dresses varied.
-	var dress: Color = [Color(0.62, 0.22, 0.16), Color(0.28, 0.36, 0.55), Color(0.4, 0.5, 0.3), Color(0.7, 0.58, 0.32), Color(0.5, 0.36, 0.5)][_rng.randi() % 5]
+	var hair: Color = [Color(0.86, 0.72, 0.42), Color(0.92, 0.82, 0.55), Color(0.55, 0.35, 0.18), Color(0.3, 0.2, 0.12), Color(0.72, 0.36, 0.14), Color(0.62, 0.5, 0.32)][_rng.randi() % 6]
+	if _rng.randf() < float(sp.get("elder", 0.12)):
+		hair = Color(0.82, 0.8, 0.76).lerp(Color(0.62, 0.6, 0.58), _rng.randf())
+	_female = _rng.randf() < float(sp.get("women", 0.45)) and not soldier
+	# Clothes: plant-dyed wool and linen in the trade's colours.
+	if not soldier and occupation != "commoner":
+		var tp: Array = sp.get("tunic", [tunic])
+		tunic = tp[_rng.randi() % tp.size()]
+		tunic = tunic * (0.92 + 0.16 * _rng.randf())
+		tunic.a = 1.0
+	var dp: Array = sp.get("dress", [Color(0.62, 0.22, 0.16), Color(0.28, 0.36, 0.55), Color(0.4, 0.5, 0.3), Color(0.7, 0.58, 0.32), Color(0.5, 0.36, 0.5)])
+	var dress: Color = dp[_rng.randi() % dp.size()]
 	var under := Color(0.86, 0.82, 0.72).lerp(Color(0.72, 0.66, 0.55), _rng.randf())
-	var legs := Color(0.36, 0.3, 0.22).lerp(Color(0.3, 0.32, 0.36), _rng.randf())
+	var lp: Array = sp.get("legs", [Color(0.36, 0.3, 0.22), Color(0.3, 0.32, 0.36), Color(0.4, 0.36, 0.3)])
+	var legs: Color = lp[_rng.randi() % lp.size()]
+	var hat := String(sp.get("hat_f", "none") if _female else sp.get("hat", "none"))
+	if soldier:
+		hat = "none"
 	var style := _rng.randi() % 3
+	# A hat hides the hood (men); a headscarf is a woman's hat of its own.
+	if not _female and hat != "none" and style == 1:
+		style = 0 if _rng.randf() < 0.6 else 2
+	if _female and hat == "scarf":
+		style = 2
+		hat = "none"
+	elif _female and hat != "none" and style == 2:
+		style = 0
 	var body := (under if _female else tunic)
 	_hips = Node3D.new()
 	_hips.position = Vector3(0, 0.95, 0)
@@ -89,6 +130,9 @@ func setup(_team: Color, tunic: Color, mat: ShaderMaterial, ground: Callable, p_
 	_mesh(_head, _head_mesh(skin, hair, _female, style))
 	if soldier:
 		_mesh(_head, _helmet_mesh())
+	elif hat != "none":
+		var hcol: Color = sp.get("hood_col", [Color(0.6, 0.2, 0.15), Color(0.25, 0.35, 0.55), Color(0.4, 0.45, 0.35), LINEN_DYES[_rng.randi() % LINEN_DYES.size()]][_rng.randi() % 4])
+		_mesh(_head, Outfits.hat_mesh(hat, hcol))
 	# A skirt (or the tunic's hem) that hangs from the hips and swings as the legs move.
 	_skirt = Node3D.new()
 	_skirt.position = Vector3(0, -0.02, 0)
@@ -98,7 +142,28 @@ func setup(_team: Color, tunic: Color, mat: ShaderMaterial, ground: Callable, p_
 	_cloak = Node3D.new()
 	_cloak.position = Vector3(0, 0.56, 0.13)
 	_torso.add_child(_cloak)
-	_mesh(_cloak, _cloak_mesh(_female))
+	var cloak := "team" if soldier else String(sp.get("cloak", "team"))
+	match cloak:
+		"team":
+			_mesh(_cloak, _cloak_mesh(_female))
+		"fur":
+			_mesh(_cloak, Outfits.fur_cloak_mesh(Outfits.FUR if _rng.randf() < 0.6 else Outfits.FUR_GREY))
+		"team_fur":
+			_mesh(_cloak, _cloak_mesh(_female))
+			_mesh(_cloak, Outfits.collar_mesh())
+		_:
+			# No cloak: the clan's colour in a woven sash at the waist.
+			_mesh(_hips, _sash_mesh())
+	if not soldier:
+		if sp.has("apron"):
+			_mesh(_skirt, Outfits.apron_mesh(sp.apron, _female))
+			if sp.get("bib", false):
+				_mesh(_torso, Outfits.bib_mesh(sp.apron))
+		if String(sp.get("back", "none")) != "none":
+			_mesh(_torso, Outfits.back_mesh(String(sp.back)))
+		if sp.has("belt"):
+			_mesh(_hips, Outfits.belt_mesh(sp.belt))
+	var bare: bool = sp.get("bare_arms", false) and not soldier
 	for s: float in [-1.0, 1.0]:
 		var sh := Node3D.new()
 		sh.position = Vector3(s * (0.19 if _female else 0.23), 0.52, 0)
@@ -107,7 +172,7 @@ func setup(_team: Color, tunic: Color, mat: ShaderMaterial, ground: Callable, p_
 		var el := Node3D.new()
 		el.position = Vector3(0, -0.3, 0)
 		sh.add_child(el)
-		_mesh(el, _forearm_mesh(body, skin))
+		_mesh(el, _forearm_mesh(skin if bare else body, skin))
 		_sh.append(sh)
 		_el.append(el)
 		var hp := Node3D.new()
@@ -122,7 +187,7 @@ func setup(_team: Color, tunic: Color, mat: ShaderMaterial, ground: Callable, p_
 		_kn.append(kn)
 	# The tool in the right hand and whatever is being carried, on the left shoulder.
 	_tool = MeshInstance3D.new()
-	_tool.mesh = _tool_mesh(act)
+	_tool.mesh = Outfits.tool_mesh(String(sp.tool)) if sp.has("tool") and not soldier else _tool_mesh(act)
 	_tool.material_override = mat
 	_tool.position = Vector3(0, -0.27, 0)
 	(_el[1] as Node3D).add_child(_tool)
@@ -494,12 +559,17 @@ func _head_mesh(skin: Color, hair: Color, female: bool, style: int) -> Mesh:
 	if _parts.has(key):
 		return _parts[key]
 	var k := BuildingModels.Kit.new()
-	k.sphere(Vector3(0, 0.11, 0), 0.12, skin, 8, 12)
-	k.box(Vector3(0, 0.1, -0.12), Vector3(0.035, 0.055, 0.045), skin * 0.95)
+	k.sphere(Vector3(0, 0.11, 0), 0.12, skin, 10, 14)
+	# Jaw and chin a little forward, the nose.
+	k.sphere(Vector3(0, 0.055, -0.035), 0.085, skin, 6, 10)
+	k.box(Vector3(0, 0.105, -0.122), Vector3(0.032, 0.05, 0.04), skin * 0.93, Vector3(0.25, 0, 0))
 	for sd: float in [-1.0, 1.0]:
-		k.box(Vector3(sd * 0.042, 0.135, -0.108), Vector3(0.026, 0.02, 0.01), Color(0.12, 0.1, 0.08))
-		k.box(Vector3(sd * 0.042, 0.163, -0.11), Vector3(0.04, 0.012, 0.012), hair * 0.8)
-		k.sphere(Vector3(sd * 0.12, 0.11, 0.0), 0.025, skin * 0.95, 3, 6)
+		k.box(Vector3(sd * 0.042, 0.133, -0.11), Vector3(0.03, 0.02, 0.008), Color(0.95, 0.93, 0.88))
+		k.box(Vector3(sd * 0.042, 0.133, -0.115), Vector3(0.014, 0.018, 0.006), Color(0.16, 0.22, 0.3) if hair.r > 0.6 else Color(0.18, 0.13, 0.08))
+		k.box(Vector3(sd * 0.043, 0.158, -0.113), Vector3(0.042, 0.011, 0.012), hair * 0.75, Vector3(0, 0, -sd * 0.12))
+		k.sphere(Vector3(sd * 0.121, 0.11, 0.0), 0.026, skin * 0.95, 3, 6)
+		k.sphere(Vector3(sd * 0.068, 0.088, -0.098), 0.02, skin.lerp(Color(0.85, 0.5, 0.45), 0.18), 3, 6)
+	k.box(Vector3(0, 0.058, -0.113), Vector3(0.046, 0.009, 0.01), Color(0.55, 0.3, 0.26))
 	# Hair over the crown and down the back.
 	k.sphere(Vector3(0, 0.15, 0.025), 0.128, hair, 6, 12)
 	k.sphere(Vector3(0, 0.07, 0.06), 0.112, hair, 6, 12)
