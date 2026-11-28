@@ -215,7 +215,7 @@ func tick(dt: float) -> Array:
 					influence += float(gains[k])
 				else:
 					stock[k] = float(stock.get(k, 0)) + float(gains[k])
-			events.append({"building": b, "gains": gains})
+			events.append({"building": b, "gains": gains, "uses": uses})
 	# Influence from halls, temples and towers.
 	influence += influence_rate() * dt
 	# People: grow while there's room and food; eat; go hungry.

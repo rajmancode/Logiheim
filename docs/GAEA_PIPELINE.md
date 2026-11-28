@@ -90,3 +90,14 @@ Any mask you leave out falls back to a height or slope rule in `HexMapSettings` 
 ## Exporting the game
 
 Godot only packs files it recognises as resources, so add `*.json, *.r16, *.r32` to **Export → Resources → Filters to export non-resource files**. PNG/EXR masks are imported as textures and packed automatically.
+
+## Game icons
+
+The settlement icons do not come from Gaea; they are drawn from the game's own models. After
+changing a building model (`scripts/game/building_models.gd`) or a good's model
+(`scripts/game/goods_models.gd`), redraw them:
+
+```
+godot --path . -s tools/render_game_icons.gd -- build/icon_renders   # needs a window
+python tools/make_game_icons.py build/icon_renders
+```

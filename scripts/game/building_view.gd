@@ -298,27 +298,63 @@ func _place_boat() -> void:
 	_boat.rotation.y = randf() * TAU
 
 
-## A "+2 Wood" over the roof, rising and fading.
-func pop(gains: Dictionary) -> void:
-	var parts := PackedStringArray()
-	var col := Color.WHITE
-	for k in gains:
-		if k == "influence":
-			parts.append("+%d Influence" % int(gains[k]))
-			col = Color(0.75, 0.6, 1.0)
-		else:
-			parts.append("+%d %s" % [int(gains[k]), Goods.display_name(k)])
-			col = Goods.color(k).lightened(0.35)
-	var lb := UiStyle.map_label(" ".join(parts), 64, col, Vector2.ZERO, 14)
-	lb.position = Vector3(0, float(info.height) + 1.0, 0)
-	add_child(lb)
+## What a work cycle gave and took, over the roof: each good's coin with "+2" beside it, and
+## underneath, smaller and in red, the goods it used up ("-1"). Rises and fades.
+func pop(gains: Dictionary, uses: Dictionary = {}) -> void:
+	var root := Node3D.new()
+	root.position = Vector3(0, float(info.height) + 1.0, 0)
+	add_child(root)
+	var items: Array = []
+	_pop_row(root, gains, "+", 1.0, Color(1.0, 0.97, 0.88), 0.0, items)
+	_pop_row(root, uses, "-", 0.72, Color(1.0, 0.55, 0.45), -96.0, items)
 	var tw := create_tween().set_parallel(true)
-	tw.tween_property(lb, "position:y", float(info.height) + 6.0, 2.2)
-	tw.tween_property(lb, "modulate:a", 0.0, 2.2).set_delay(0.6)
-	var sh := lb.get_node_or_null("Shadow") as Label3D
-	if sh != null:
-		tw.tween_property(sh, "modulate:a", 0.0, 2.0).set_delay(0.6)
-	tw.chain().tween_callback(lb.queue_free)
+	tw.tween_property(root, "position:y", float(info.height) + 6.0, 2.4)
+	for it: Node in items:
+		tw.tween_property(it, "modulate:a", 0.0, 1.6).set_delay(0.9)
+	tw.chain().tween_callback(root.queue_free)
+
+
+const POP_PX := 0.0003
+
+
+func _pop_row(root: Node3D, goods: Dictionary, prefix: String, k_size: float, col: Color, y: float, items: Array) -> void:
+	if goods.is_empty():
+		return
+	var icon_px := 170.0 * k_size
+	var gap := 34.0 * k_size
+	var font := int(120 * k_size)
+	var texts: Array = []
+	var width := 0.0
+	for k in goods:
+		var t := "%s%d" % [prefix, int(goods[k])]
+		texts.append(t)
+		width += icon_px + font * 0.55 * t.length() + gap
+	width -= gap
+	var x := -width * 0.5
+	var i := 0
+	for k in goods:
+		var tex := Goods.icon(k)
+		if tex != null:
+			var sp := Sprite3D.new()
+			sp.texture = tex
+			sp.billboard = BaseMaterial3D.BILLBOARD_ENABLED
+			sp.fixed_size = true
+			sp.no_depth_test = true
+			sp.render_priority = 15
+			sp.texture_filter = BaseMaterial3D.TEXTURE_FILTER_LINEAR_WITH_MIPMAPS
+			var ps := POP_PX * icon_px / float(tex.get_width())
+			sp.pixel_size = ps
+			sp.offset = Vector2(x + icon_px * 0.5, y) * POP_PX / ps
+			root.add_child(sp)
+			items.append(sp)
+		var lb := UiStyle.map_label(texts[i], font, col, Vector2(x + icon_px + 10.0 * k_size + font * 0.275 * String(texts[i]).length(), y), 14)
+		root.add_child(lb)
+		items.append(lb)
+		var sh := lb.get_node_or_null("Shadow") as Label3D
+		if sh != null:
+			items.append(sh)
+		x += icon_px + font * 0.55 * String(texts[i]).length() + gap
+		i += 1
 
 
 func set_selected(on: bool) -> void:

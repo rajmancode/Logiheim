@@ -47,10 +47,30 @@ static func color(id: String) -> Color:
 	return INFO[id][1] if INFO.has(id) else Color.WHITE
 
 
+## The good's coin (assets/icons/goods, made by tools/make_game_icons.py), "influence" too;
+## the map resource's badge if there is no coin.
 static func icon(id: String) -> Texture2D:
+	var path := icon_path(id)
+	if path != "":
+		return load(path)
 	if not INFO.has(id) or String(INFO[id][2]) == "":
 		return null
 	return HexMap.icon_texture(INFO[id][2])
+
+
+static func icon_path(id: String) -> String:
+	var path := "res://assets/icons/goods/%s.png" % id
+	return path if ResourceLoader.exists(path) else ""
+
+
+## A cost or output as BBCode for a RichTextLabel: each good's coin and the amount.
+static func bbcode(d: Dictionary, size := 20, prefix := "") -> String:
+	var parts := PackedStringArray()
+	for k in d:
+		var path := icon_path(k)
+		var pic := "[img=%dx%d]%s[/img]" % [size, size, path] if path != "" else display_name(k)
+		parts.append("[hint=%s]%s[/hint] %s%s" % [display_name(k), pic, prefix, _num(d[k])])
+	return "   ".join(parts)
 
 
 ## "12 Wood, 5 Stone" for a cost or output dictionary.

@@ -23,7 +23,8 @@ var _tabs: Array[Button] = []
 var _cards: HBoxContainer
 var _info: PanelContainer
 var _info_title: Label
-var _info_text: Label
+var _info_icon: TextureRect
+var _info_text: RichTextLabel
 var _info_bar: ProgressBar
 var _demolish: Button
 var _toast: Label
@@ -52,6 +53,13 @@ func _ready() -> void:
 	row.add_child(_player_btn)
 	_people = Label.new()
 	row.add_child(_people)
+	var inf_icon := TextureRect.new()
+	inf_icon.texture = Goods.icon("influence")
+	inf_icon.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+	inf_icon.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
+	inf_icon.custom_minimum_size = Vector2(30, 30)
+	inf_icon.tooltip_text = "Influence"
+	row.add_child(inf_icon)
 	_influence = Label.new()
 	row.add_child(_influence)
 	_expand = Button.new()
@@ -132,15 +140,26 @@ func _ready() -> void:
 	add_child(_info)
 	var iv := VBoxContainer.new()
 	_info.add_child(iv)
+	var head := HBoxContainer.new()
+	head.add_theme_constant_override("separation", 10)
+	iv.add_child(head)
+	_info_icon = TextureRect.new()
+	_info_icon.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+	_info_icon.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
+	_info_icon.custom_minimum_size = Vector2(64, 64)
+	head.add_child(_info_icon)
 	_info_title = Label.new()
 	_info_title.add_theme_font_override("font", UiStyle.font(900))
 	_info_title.add_theme_font_size_override("font_size", 20)
 	_info_title.add_theme_color_override("font_color", UiStyle.GOLD)
-	iv.add_child(_info_title)
-	_info_text = Label.new()
-	_info_text.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	_info_title.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+	head.add_child(_info_title)
+	_info_text = RichTextLabel.new()
+	_info_text.bbcode_enabled = true
+	_info_text.fit_content = true
+	_info_text.scroll_active = false
 	_info_text.custom_minimum_size = Vector2(310, 0)
-	_info_text.add_theme_font_size_override("font_size", 14)
+	_info_text.add_theme_font_size_override("normal_font_size", 14)
 	iv.add_child(_info_text)
 	_info_bar = ProgressBar.new()
 	_info_bar.custom_minimum_size = Vector2(0, 14)
@@ -211,14 +230,46 @@ func _build_cards() -> void:
 	for id in BuildingDefs.in_category(_tab):
 		var d: Dictionary = BuildingDefs.DEFS[id]
 		var b := Button.new()
-		b.custom_minimum_size = Vector2(176, 88)
-		b.add_theme_font_size_override("font_size", 13)
+		b.custom_minimum_size = Vector2(212, 88)
 		b.focus_mode = Control.FOCUS_NONE
 		b.toggle_mode = true
-		b.clip_text = true
 		b.button_pressed = world != null and world.placing == id
-		var cost := Goods.describe(d.cost) if not d.cost.is_empty() else "Free"
-		b.text = "%s\n%s" % [String(d.name), cost]
+		# The building's tile, its name, and what it costs as coins and numbers.
+		var row := HBoxContainer.new()
+		row.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+		row.offset_left = 6
+		row.offset_right = -6
+		row.add_theme_constant_override("separation", 8)
+		row.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		b.add_child(row)
+		var pic := TextureRect.new()
+		pic.texture = BuildingDefs.icon(id)
+		pic.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+		pic.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
+		pic.custom_minimum_size = Vector2(72, 72)
+		pic.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+		pic.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		row.add_child(pic)
+		var col := VBoxContainer.new()
+		col.alignment = BoxContainer.ALIGNMENT_CENTER
+		col.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		col.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		row.add_child(col)
+		var nm := Label.new()
+		nm.text = String(d.name)
+		nm.add_theme_font_size_override("font_size", 14)
+		nm.clip_text = true
+		nm.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		col.add_child(nm)
+		var cost := RichTextLabel.new()
+		cost.bbcode_enabled = true
+		cost.fit_content = true
+		cost.scroll_active = false
+		cost.autowrap_mode = TextServer.AUTOWRAP_OFF
+		cost.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		cost.add_theme_font_size_override("normal_font_size", 13)
+		cost.text = Goods.bbcode(d.cost, 20) if not d.cost.is_empty() else "Free"
+		col.add_child(cost)
 		var tip := String(d.desc)
 		if d.has("workers") and int(d.workers) > 0:
 			tip += "\nPeople: %d" % int(d.workers)
@@ -253,7 +304,7 @@ func _process(delta: float) -> void:
 	sb.content_margin_right = 8
 	_player_btn.add_theme_stylebox_override("normal", sb)
 	_people.text = "People %d/%d  (%d idle)" % [s.population, s.housing(), s.idle()]
-	_influence.text = "Influence %d  (+%.1f/s)" % [int(s.influence), s.influence_rate()]
+	_influence.text = "%d  (+%.1f/s)" % [int(s.influence), s.influence_rate()]
 	_expand.text = "Expand land (%d)" % s.expand_cost()
 	_expand.disabled = s.influence < s.expand_cost()
 	_speed_btns[0].button_pressed = world.paused
@@ -295,7 +346,7 @@ func _update_goods(s: Settlement) -> void:
 			ic.texture = tex
 			ic.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
 			ic.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
-			ic.custom_minimum_size = Vector2(26, 26)
+			ic.custom_minimum_size = Vector2(28, 28)
 			item.add_child(ic)
 		else:
 			var chip := ColorRect.new()
@@ -325,6 +376,7 @@ func _update_info() -> void:
 	var d: Dictionary = BuildingDefs.DEFS[rec.id]
 	var s: Settlement = world.settlements[world._settlement_of(rec)]
 	_info_title.text = String(d.name)
+	_info_icon.texture = BuildingDefs.icon(String(rec.id))
 	var lines := PackedStringArray()
 	lines.append(String(rec.status) if String(rec.status) != "" else "Standing")
 	if s != world.me():
@@ -333,9 +385,9 @@ func _update_info() -> void:
 		lines.append("People: %d of %d" % [int(rec.staff), int(d.workers)])
 	var gains: Dictionary = d.yields.get(int(rec.kind), {}) if d.has("yields") else d.get("makes", {})
 	if not gains.is_empty():
-		lines.append("Makes: %s every %ds" % [Goods.describe(gains).replace("influence", "Influence"), int(d.get("cycle", 10))])
+		lines.append("Makes  %s  every %ds" % [Goods.bbcode(gains, 22, "+"), int(d.get("cycle", 10))])
 	if d.has("uses"):
-		lines.append("Uses: %s" % Goods.describe(d.uses))
+		lines.append("Uses  %s" % Goods.bbcode(d.uses, 22, "-"))
 	if d.has("housing"):
 		lines.append("Homes for %d" % int(d.housing))
 	if d.has("storage"):

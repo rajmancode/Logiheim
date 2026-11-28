@@ -104,6 +104,12 @@ const DEFS := {
 }
 
 
+## The building's tile (assets/icons/buildings, made by tools/make_game_icons.py).
+static func icon(id: String) -> Texture2D:
+	var path := "res://assets/icons/buildings/%s.png" % id
+	return load(path) if ResourceLoader.exists(path) else null
+
+
 static func get_def(id: String) -> Dictionary:
 	return DEFS.get(id, {})
 

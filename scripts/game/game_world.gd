@@ -462,7 +462,7 @@ func _process(delta: float) -> void:
 		for e: Dictionary in events:
 			var rec: Dictionary = e.building
 			if _views.has(rec.uid) and s.index == active:
-				(_views[rec.uid] as BuildingView).pop(e.gains)
+				(_views[rec.uid] as BuildingView).pop(e.gains, e.get("uses", {}))
 		for b: Dictionary in s.just_finished:
 			if BuildingDefs.DEFS[b.id].has("territory"):
 				_territory_dirty = true
