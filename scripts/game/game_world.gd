@@ -42,6 +42,12 @@ var _ground: SettlementGround   # plots and paths worn into the land
 var _ground_dirty := false
 var _infra: Infrastructure      # roads, hill roads and bridges
 var _infra_dirty := false
+# The Road tool lays a whole run at once: from the clan's network to the hex under the mouse.
+var _road_path: Array = []       # the new hexes it would lay, network end first
+var _road_paid := 0              # how many of them the stores can pay for
+var _road_ghosts: Array[MeshInstance3D] = []
+var _road_ghost_mats: Array[StandardMaterial3D] = []
+var _road_last := -1             # the hex last laid to while dragging
 var _reach := {}                # settlement index -> {cell: true} it can get to
 var _army_views := {}           # army id -> ArmyView
 var hover_cell := -1                  # the hex under the mouse (-1 over the interface)
@@ -77,6 +83,12 @@ func _ready() -> void:
 	add_child(_ghost)
 	_ghost_label = UiStyle.map_label("", 34, UiStyle.PARCHMENT, Vector2(0, 0), 14)
 	_ghost.add_child(_ghost_label)
+	for col: Color in [Color(0.4, 1.0, 0.5, 0.3), Color(1.0, 0.75, 0.25, 0.3)]:
+		var m := StandardMaterial3D.new()
+		m.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
+		m.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+		m.albedo_color = col
+		_road_ghost_mats.append(m)
 
 
 func lv() -> HexLevel:
@@ -168,6 +180,9 @@ func cancel_placement() -> void:
 	placing = ""
 	_expand_parent = {}
 	_ghost.visible = false
+	_road_path = []
+	_road_last = -1
+	_show_road_path()
 
 
 ## Can `id` go up on `cell` for the active settlement? [ok, reason, resource kind]
@@ -304,6 +319,155 @@ func begin_expansion(parent: Dictionary, ext_id: String) -> void:
 	_expand_parent = parent
 	begin_placement(ext_id)
 	_expand_parent = parent
+
+
+## Whether new road may run over a hex (leaving out reach and price).
+func _road_cell_ok(s: Settlement, j: int) -> bool:
+	var l := lv()
+	if j < 0 or int(_owner.get(j, -1)) != active or s.roads.has(j) or _occupied.has(j):
+		return false
+	if (HexMapGenerator.is_water(l.terrain[j]) and l.river[j] == 0) or l.lake[j] == 1:
+		return false
+	return l.slope[j] <= ROAD_SLOPE
+
+
+## The run of new road the Road tool would lay to reach `target` from the clan's network (its
+## roads, its hall and outposts): the cheapest way over its land - level ground first, hill
+## roads and bridges only where they save a long way round. The new hexes in order from the
+## network end; [] if there is no way (or the hex is already on the network).
+func road_path(s: Settlement, target: int) -> Array:
+	if not _road_cell_ok(s, target):
+		return []
+	var l := lv()
+	var dist := {}
+	var prev := {}
+	var open: Array = []
+	for c: int in s.roads:
+		dist[c] = 0.0
+		open.append(c)
+	for b: Dictionary in s.buildings:
+		if b.id == "town_hall" or (b.id == "outpost" and s.is_built(b)):
+			dist[int(b.cell)] = 0.0
+			open.append(int(b.cell))
+	var done := {}
+	while not open.is_empty():
+		# The nearest open hex (a clan's land is a few hundred hexes: a plain scan will do).
+		var bi := 0
+		for i in range(1, open.size()):
+			if float(dist[open[i]]) < float(dist[open[bi]]):
+				bi = i
+		var c: int = open[bi]
+		open.remove_at(bi)
+		if done.has(c):
+			continue
+		done[c] = true
+		if c == target:
+			break
+		for k in 6:
+			var j := l.index_of(HexCoords.neighbor(l.coords[c], k))
+			if j < 0 or done.has(j) or not _road_cell_ok(s, j):
+				continue
+			var kind := Infrastructure.kind_for(l, j)
+			var step := 1.0 + (3.0 if kind == "bridge" else (1.2 if kind == "hill" else 0.0))
+			# Keep on in a straight line where it costs nothing more: roads that run true.
+			if prev.has(c):
+				var p: int = prev[c]
+				var straight := (l.cell_center(j) - l.cell_center(c)).normalized().dot((l.cell_center(c) - l.cell_center(p)).normalized())
+				step += 0.12 * (1.0 - straight)
+			var nd := float(dist[c]) + step
+			if nd < float(dist.get(j, INF)) and nd < 80.0:
+				dist[j] = nd
+				prev[j] = c
+				open.append(j)
+	if not prev.has(target):
+		return []
+	var out: Array = []
+	var c := target
+	while prev.has(c):
+		out.push_front(c)
+		c = prev[c]
+	return out
+
+
+## What the Road tool says about laying to `cell`, and the run it would lay.
+func _plan_road(cell: int) -> void:
+	var s := me()
+	_road_path = road_path(s, cell)
+	_road_paid = 0
+	var total := {}
+	for j: int in _road_path:
+		for g in Infrastructure.cost_for(Infrastructure.kind_for(lv(), j)).keys():
+			total[g] = float(total.get(g, 0)) + float(Infrastructure.cost_for(Infrastructure.kind_for(lv(), j))[g])
+	var acc := {}
+	for j: int in _road_path:
+		var cost := Infrastructure.cost_for(Infrastructure.kind_for(lv(), j))
+		for g in cost:
+			acc[g] = float(acc.get(g, 0)) + float(cost[g])
+		if not s.can_afford(acc):
+			break
+		_road_paid += 1
+	_road_total = total
+
+
+var _road_total := {}
+
+
+## The run the Road tool would lay, a hex outline on each: green where it is paid for, amber
+## beyond what the stores hold.
+func _show_road_path() -> void:
+	var l := lv() if hex_map != null and not hex_map.levels.is_empty() else null
+	var n := _road_path.size() if l != null else 0
+	while _road_ghosts.size() < n:
+		var g := MeshInstance3D.new()
+		g.mesh = _ghost.mesh
+		g.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+		g.scale = Vector3(0.82, 0.5, 0.82)
+		g.rotation.y = PI / 6.0
+		add_child(g)
+		_road_ghosts.append(g)
+	for i in _road_ghosts.size():
+		var g := _road_ghosts[i]
+		g.visible = i < n
+		if i < n:
+			var c := l.cell_center(int(_road_path[i]))
+			g.mesh = _ghost.mesh
+			g.position = Vector3(c.x, ground(c) + 0.25, c.y)
+			g.material_override = _road_ghost_mats[0 if i < _road_paid else 1]
+
+
+## A road dragged out over the map: each hex the mouse comes to joins the run.
+func road_drag(cell: int) -> void:
+	if not running or placing == "" or not BuildingDefs.DEFS[placing].get("road", false):
+		return
+	if cell < 0 or cell == _road_last:
+		return
+	_road_last = cell
+	_lay_road(cell, false)
+
+
+## Lays the Road tool's run to `cell` (as far as the stores pay for). Returns false if nothing
+## could be laid.
+func _lay_road(cell: int, say: bool) -> bool:
+	var s := me()
+	if cell != _ghost_cell or _road_path.is_empty():
+		_plan_road(cell)
+	if _road_path.is_empty() or _road_paid == 0:
+		if say:
+			var r := check(placing, cell)
+			message.emit(String(r[1]) if not r[0] and String(r[1]) != "" else ("Not enough to lay that road" if not _road_path.is_empty() else "No way to run a road there from your roads"))
+		return false
+	for i in _road_paid:
+		var j: int = _road_path[i]
+		var kind := Infrastructure.kind_for(lv(), j)
+		s.pay(Infrastructure.cost_for(kind))
+		s.roads[j] = kind
+	if say and _road_paid < _road_path.size():
+		message.emit("Laid %d of %d hexes of road - not enough for the rest" % [_road_paid, _road_path.size()])
+	_infra_dirty = true
+	_reach.erase(s.index)
+	_ghost_cell = -1
+	hover(cell)
+	return true
 
 
 ## Whether a road may go on this hex, and what kind: [ok, reason, 0, kind, cost].
@@ -655,6 +819,8 @@ func hover(cell: int) -> void:
 	_ghost_cell = cell
 	if cell < 0:
 		_ghost.visible = false
+		_road_path = []
+		_show_road_path()
 		return
 	var r := check(placing, cell)
 	_ghost_ok = r[0]
@@ -663,10 +829,26 @@ func hover(cell: int) -> void:
 	if BuildingDefs.DEFS[placing].get("road", false):
 		_ghost.position = Vector3(c.x, ground(c) + 0.3, c.y)
 		_ghost.rotation.y = PI / 6.0
-		_ghost_mat.albedo_color = Color(0.35, 1.0, 0.45, 0.35) if _ghost_ok else Color(1.0, 0.3, 0.25, 0.35)
-		var kind: String = r[3] if r.size() > 3 else ""
-		var names := {"road": "Road", "hill": "Hill road", "bridge": "Bridge"}
-		_ghost_label.text = ("%s - %s" % [names.get(kind, "Road"), Goods.describe(r[4])]) if _ghost_ok else String(r[1])
+		_plan_road(cell)
+		_show_road_path()
+		var why := String(r[1])
+		if why == "Start from land you can reach" or why.begins_with("Not enough"):
+			why = ""
+		var run := _road_path.size()
+		_ghost_ok = run > 0 and _road_paid > 0
+		_ghost_mat.albedo_color = (Color(0.35, 1.0, 0.45, 0.45) if _road_paid == run else Color(1.0, 0.75, 0.25, 0.45)) if _ghost_ok else Color(1.0, 0.3, 0.25, 0.35)
+		var kinds := {}
+		for j: int in _road_path:
+			kinds[Infrastructure.kind_for(lv(), j)] = true
+		var what := "Bridge" if kinds.has("bridge") and run == 1 else ("Hill road" if kinds.has("hill") and run == 1 else "Road")
+		if _ghost_ok:
+			_ghost_label.text = "%s, %d hex%s - %s" % [what, run, "" if run == 1 else "es", Goods.describe(_road_total)]
+			if _road_paid < run:
+				_ghost_label.text += "\n(stores pay for %d)" % _road_paid
+		elif run > 0:
+			_ghost_label.text = "Not enough: %s" % Goods.describe(_road_total)
+		else:
+			_ghost_label.text = why if why != "" else "No way to run a road here from your roads"
 		(_ghost_label.get_node("Shadow") as Label3D).text = _ghost_label.text
 		_ghost_label.modulate = Color(0.75, 1.0, 0.75) if _ghost_ok else Color(1.0, 0.65, 0.55)
 		_ghost_label.position = Vector3(0, 4.0, 0)
@@ -693,6 +875,10 @@ func click(cell: int) -> bool:
 		if not selected_army.is_empty() and cell >= 0:
 			order_army(selected_army, Vector2(p.x, p.z))
 			return true
+	if placing != "" and BuildingDefs.DEFS[placing].get("road", false):
+		_road_last = cell
+		_lay_road(cell, true)
+		return true
 	if placing != "":
 		var r := check(placing, cell)
 		if not r[0]:
@@ -701,12 +887,8 @@ func click(cell: int) -> bool:
 		var s := me()
 		var d: Dictionary = BuildingDefs.DEFS[placing]
 		if d.get("road", false):
-			s.pay(r[4])
-			s.roads[cell] = r[3]
-			_infra_dirty = true
-			_reach.erase(s.index)
-			_ghost_cell = -1
-			hover(cell)
+			_road_last = cell
+			_lay_road(cell, true)
 			return true
 		s.pay(d.cost)
 		var rec := _raise(s, placing, cell, false, int(r[2]), _expand_parent if d.has("expansion_of") else {})

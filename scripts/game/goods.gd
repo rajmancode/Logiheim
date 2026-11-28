@@ -112,7 +112,8 @@ static func bbcode(d: Dictionary, size := 20, prefix := "") -> String:
 	for k in d:
 		var path := icon_path(k)
 		var pic := "[img=%dx%d]%s[/img]" % [size, size, path] if path != "" else display_name(k)
-		parts.append("[hint=%s]%s[/hint] %s%s" % [display_name(k), pic, prefix, _num(d[k])])
+		# A no-break space, so a wrapped line never parts an icon from its number.
+		parts.append("[hint=%s]%s[/hint] %s%s" % [display_name(k), pic, prefix, _num(d[k])])
 	return "   ".join(parts)
 
 

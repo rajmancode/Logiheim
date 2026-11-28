@@ -214,6 +214,9 @@ func _process(_delta: float) -> void:
 
 
 func _unhandled_input(event: InputEvent) -> void:
+	if event is InputEventMouseMotion and (event as InputEventMouseMotion).button_mask & MOUSE_BUTTON_MASK_LEFT and game_world.running:
+		# Dragging with the Road tool paints the road along behind the mouse.
+		game_world.road_drag(game_cell)
 	if event is InputEventMouseButton:
 		var mb := event as InputEventMouseButton
 		if mb.pressed and mb.button_index == MOUSE_BUTTON_RIGHT and game_world.running and game_world.right_click():

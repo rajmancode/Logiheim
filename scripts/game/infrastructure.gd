@@ -76,8 +76,14 @@ func rebuild() -> void:
 	var walls := BuildingModels.Kit.new()
 	var any_wall := false
 	for s in world.settlements:
+		# Plain roads run as smooth curves through their hexes (see _road_chains); hill roads
+		# and bridges are built hex by hex below and the curves meet them at the hex edge.
+		for pts: PackedVector2Array in _road_chains(s, l):
+			road.add(pts, surface, sea)
 		for cell: int in s.roads:
 			var kind := String(s.roads[cell])
+			if kind == "road":
+				continue
 			var c := l.cell_center(cell)
 			# Where this hex's road goes: to neighbouring roads (to the shared edge) and to the
 			# doors of the clan's buildings beside it.
@@ -114,6 +120,125 @@ func rebuild() -> void:
 	_bridges.material_override = ResourceProps._material("body")
 	_walls.mesh = walls.commit() if any_wall else null
 	_walls.material_override = BuildingView.building_material(Color.WHITE)
+
+
+## Where a plain road hex leads: [neighbouring road hexes it runs on through (plain roads),
+## end points (the shared edge with a hill road or bridge, a building's door)].
+func _road_links(s: Settlement, l: HexLevel, cell: int) -> Array:
+	var occ: Dictionary = world.get("_occupied")
+	var views: Dictionary = world.get("_views")
+	var cells: Array = []
+	var ends: Array = []
+	var c := l.cell_center(cell)
+	for k in 6:
+		var j := l.index_of(HexCoords.neighbor(l.coords[cell], k))
+		if j < 0:
+			continue
+		if s.roads.has(j):
+			if String(s.roads[j]) == "road":
+				cells.append(j)
+			else:
+				ends.append((c + l.cell_center(j)) * 0.5)
+		elif occ.has(j) and s.buildings.has(occ[j]):
+			var v: BuildingView = views.get((occ[j] as Dictionary).uid)
+			if v != null:
+				var door := v.to_global((v.info.door as Vector3) + Vector3(0, 0, -2.5))
+				ends.append(Vector2(door.x, door.z))
+	return [cells, ends]
+
+
+## The clan's plain roads as curves: each run between forks and ends traced through its hex
+## middles and rounded off (Chaikin), so a road bends gently from hex to hex instead of
+## kinking at every middle; a lone hex runs from door to door, or is a short paved stretch.
+func _road_chains(s: Settlement, l: HexLevel) -> Array:
+	var links := {}
+	for cell: int in s.roads:
+		if String(s.roads[cell]) == "road":
+			links[cell] = _road_links(s, l, cell)
+	var degree := func(c: int) -> int:
+		return (links[c][0] as Array).size() + (links[c][1] as Array).size()
+	var used := {}
+	var out: Array = []
+	var walk := func(start: int, first: int) -> PackedVector2Array:
+		var pts := PackedVector2Array([l.cell_center(start)])
+		var prev := start
+		var cur := first
+		while true:
+			used[Vector2i(mini(prev, cur), maxi(prev, cur))] = true
+			pts.append(l.cell_center(cur))
+			if degree.call(cur) != 2 or cur == start:
+				break
+			var nxt := -1
+			for j: int in links[cur][0]:
+				if j != prev:
+					nxt = j
+			if nxt < 0:
+				# On through to its one end point (a door, a bridge, a hill road).
+				pts.append(links[cur][1][0])
+				break
+			if used.has(Vector2i(mini(cur, nxt), maxi(cur, nxt))):
+				break
+			prev = cur
+			cur = nxt
+		return pts
+	# Runs start at forks and ends; then whatever is left is a loop.
+	for pass_no in 2:
+		for c: int in links:
+			if pass_no == 0 and degree.call(c) == 2:
+				continue
+			for j: int in links[c][0]:
+				if not used.has(Vector2i(mini(c, j), maxi(c, j))):
+					var pts: PackedVector2Array = walk.call(c, j)
+					# A run that starts at a hex with a single end point begins there.
+					if (links[c][0] as Array).size() == 1 and (links[c][1] as Array).size() == 1:
+						pts.insert(0, links[c][1][0])
+					out.append(pts)
+	for c: int in links:
+		var cells: Array = links[c][0]
+		var ends: Array = links[c][1]
+		var cc := l.cell_center(c)
+		# Spurs to every end point, except the one a run already starts or ends on.
+		if cells.size() != 1 or ends.size() != 1:
+			if cells.is_empty() and ends.size() == 2:
+				out.append(PackedVector2Array([ends[0], cc, ends[1]]))
+			else:
+				for e: Vector2 in ends:
+					if not (cells.size() == 1 and ends.size() == 1):
+						out.append(PackedVector2Array([cc, e]))
+		if cells.is_empty() and ends.is_empty():
+			var d := Vector2(l.hex_size * 0.35, 0)
+			out.append(PackedVector2Array([cc - d, cc + d]))
+	var smooth: Array = []
+	for pts: PackedVector2Array in out:
+		smooth.append(_densify(_chaikin(pts, 3), 1.6))
+	return smooth
+
+
+## Rounds a polyline's corners off, keeping its two ends.
+static func _chaikin(pts: PackedVector2Array, rounds: int) -> PackedVector2Array:
+	var p := pts
+	for r in rounds:
+		if p.size() < 3:
+			return p
+		var q := PackedVector2Array([p[0]])
+		for i in p.size() - 1:
+			q.append(p[i].lerp(p[i + 1], 0.25))
+			q.append(p[i].lerp(p[i + 1], 0.75))
+		q.append(p[p.size() - 1])
+		p = q
+	return p
+
+
+## Points along a polyline no further apart than `step`, so the strip follows the ground.
+static func _densify(pts: PackedVector2Array, step: float) -> PackedVector2Array:
+	var out := PackedVector2Array()
+	for i in pts.size() - 1:
+		var n := maxi(1, int(ceil(pts[i].distance_to(pts[i + 1]) / step)))
+		for k in n:
+			out.append(pts[i].lerp(pts[i + 1], float(k) / n))
+	if not pts.is_empty():
+		out.append(pts[pts.size() - 1])
+	return out
 
 
 ## A climbing track from c to e that zig-zags across the slope.

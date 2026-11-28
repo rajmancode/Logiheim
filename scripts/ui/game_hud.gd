@@ -32,6 +32,7 @@ var _clock_time: Label
 var _clock_date: Label
 var _clock_season: Label
 var _clock_day := -1
+var _clock_aside := false
 const CLOCK_W := 200.0
 
 var _player_btn: Button
@@ -124,21 +125,18 @@ func _ready() -> void:
 	_player_btn.tooltip_text = "Pass the controls to the next player (Tab)"
 	_player_btn.pressed.connect(func() -> void: world.set_active(world.active + 1))
 	row.add_child(_player_btn)
-	_bar_icons.append(_icon_rect(load("res://assets/icons/buildings/longhouse.png"), 28, "People"))
-	row.add_child(_bar_icons[-1])
-	_people = Label.new()
-	_people.tooltip_text = "People: how many / room in your homes (idle hands)"
-	_people.mouse_filter = Control.MOUSE_FILTER_PASS
-	row.add_child(_people)
-	_bar_icons.append(_icon_rect(Goods.icon("jewellery"), 26, "Contentment"))
-	row.add_child(_bar_icons[-1])
-	_content = Label.new()
-	_content.tooltip_text = "Contentment: how well your people's wants are met (see the ledger's People tab)"
-	_content.mouse_filter = Control.MOUSE_FILTER_PASS
-	row.add_child(_content)
-	row.add_child(_icon_rect(Goods.icon("influence"), 28, "Influence"))
-	_influence = Label.new()
-	row.add_child(_influence)
+	var stats := HBoxContainer.new()
+	stats.add_theme_constant_override("separation", 5)
+	row.add_child(stats)
+	var pc := _chip(_hud_icon("people"), "", "People: how many / room in your homes (idle hands)")
+	stats.add_child(pc)
+	_people = _chip_label(pc)
+	var cc := _chip(_hud_icon("content"), "", "Contentment: how well your people's wants are met (see the ledger's People tab)")
+	stats.add_child(cc)
+	_content = _chip_label(cc)
+	var ic := _chip(_hud_icon("influence"), "", "Influence: spent to push your land further out (Expand)")
+	stats.add_child(ic)
+	_influence = _chip_label(ic)
 	_expand = Button.new()
 	_expand.focus_mode = Control.FOCUS_NONE
 	_expand.tooltip_text = "Spend influence to push your land a step further out from the town hall"
@@ -279,7 +277,12 @@ func _ready() -> void:
 	var cv := VBoxContainer.new()
 	cv.add_theme_constant_override("separation", 0)
 	cv.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	_clock.add_child(cv)
+	var cm := MarginContainer.new()
+	cm.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	for side in ["left", "right"]:
+		cm.add_theme_constant_override("margin_" + side, 8)
+	_clock.add_child(cm)
+	cm.add_child(cv)
 	_dial = ClockDial.new()
 	_dial.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
 	cv.add_child(_dial)
@@ -368,39 +371,54 @@ func _ready() -> void:
 
 # ------------------------------------------------------------------------------- helpers
 
-## A good's icon and amount in a small dark chip (the top bar).
+## The top bar's badge for a stat or good: a bold disc of its own colour (assets/icons/hud),
+## or the good's coin for goods without one.
+func _hud_icon(id: String) -> Texture2D:
+	var p := "res://assets/icons/hud/%s.png" % id
+	return load(p) if ResourceLoader.exists(p) else Goods.icon(id)
+
+
+## A stat or good in the top bar: its badge overlapping the left end of a raised pill that
+## holds the number, so each reads as its own token against the bar.
 func _chip(tex: Texture2D, text: String, tip: String) -> PanelContainer:
 	var c := PanelContainer.new()
-	c.add_theme_stylebox_override("panel", UiStyle.box("chip", 16, Vector4(6, 2, 12, 2)))
+	var st := StyleBoxFlat.new()
+	st.bg_color = Color(0.25, 0.17, 0.1)
+	st.border_color = Color(0.72, 0.56, 0.3)
+	st.set_border_width_all(1)
+	st.border_width_top = 2
+	st.set_corner_radius_all(18)
+	st.content_margin_left = 2
+	st.content_margin_right = 10
+	st.content_margin_top = 1
+	st.content_margin_bottom = 1
+	st.shadow_color = Color(0, 0, 0, 0.45)
+	st.shadow_size = 2
+	st.shadow_offset = Vector2(0, 1)
+	c.add_theme_stylebox_override("panel", st)
 	c.tooltip_text = tip
 	c.mouse_filter = Control.MOUSE_FILTER_PASS
+	c.size_flags_vertical = Control.SIZE_SHRINK_CENTER
 	var h := HBoxContainer.new()
-	h.add_theme_constant_override("separation", 4)
+	h.add_theme_constant_override("separation", 5)
 	h.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	c.add_child(h)
 	if tex != null:
-		# The coin sits on a small lit medallion so it stands off the dark bar.
-		var med := PanelContainer.new()
-		var st := StyleBoxFlat.new()
-		st.bg_color = Color(0.93, 0.85, 0.66)
-		st.border_color = Color(0.98, 0.84, 0.48)
-		st.set_border_width_all(2)
-		st.set_corner_radius_all(32)
-		st.set_content_margin_all(1)
-		st.shadow_color = Color(1.0, 0.8, 0.4, 0.35)
-		st.shadow_size = 3
-		med.add_theme_stylebox_override("panel", st)
-		med.mouse_filter = Control.MOUSE_FILTER_IGNORE
-		med.size_flags_vertical = Control.SIZE_SHRINK_CENTER
-		med.add_child(_icon_rect(tex, 26, ""))
-		h.add_child(med)
+		h.add_child(_icon_rect(tex, 32, ""))
 	var l := Label.new()
 	l.text = text
-	l.add_theme_font_size_override("font_size", 14)
-	l.add_theme_color_override("font_color", Color(1.0, 0.94, 0.78))
+	l.add_theme_font_override("font", UiStyle.font(700))
+	l.add_theme_font_size_override("font_size", 15)
+	l.add_theme_color_override("font_color", Color(1.0, 0.96, 0.86))
+	l.add_theme_color_override("font_outline_color", Color(0.08, 0.05, 0.02))
+	l.add_theme_constant_override("outline_size", 4)
 	l.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	h.add_child(l)
 	return c
+
+
+func _chip_label(c: PanelContainer) -> Label:
+	return c.get_child(0).get_child(c.get_child(0).get_child_count() - 1) as Label
 
 
 ## The ledger slides in from its side and out again.
@@ -408,6 +426,9 @@ func _slide_ledger(on: bool) -> void:
 	var home := _ledger_x()
 	var away := home + (440.0 if UiSettings.ledger_right else -440.0)
 	var tw := create_tween().set_parallel(true).set_trans(Tween.TRANS_CUBIC).set_ease(Tween.EASE_OUT)
+	# The clock shares the ledger's corner: it steps aside while the ledger is open.
+	_clock_aside = on and UiSettings.panel_left == UiSettings.ledger_right
+	tw.tween_property(_clock, "modulate:a", 0.0 if _clock_aside else 1.0, 0.18)
 	if on:
 		_ledger.visible = true
 		_ledger.position.x = away
@@ -458,11 +479,8 @@ func _layout() -> void:
 	var clock_right := UiSettings.panel_left
 	_clock.reset_size()
 	_clock.position = Vector2(size.x - _clock.size.x - 10.0 if clock_right else 10.0, y_top + 8.0)
-	var ledger_top := y_top
-	if clock_right == UiSettings.ledger_right:
-		ledger_top += _clock.get_combined_minimum_size().y + 8.0
-	_ledger.size = Vector2(410, maxf(y_bot - ledger_top - 20.0, 200.0))
-	_ledger.position = Vector2(_ledger_x(), ledger_top + 10.0)
+	_ledger.size = Vector2(410, maxf(y_bot - y_top - 20.0, 160.0))
+	_ledger.position = Vector2(_ledger_x(), y_top + 10.0)
 	_info.position = Vector2(_info_x(), y_top + 10.0)
 	_army_panel.position = _info.position
 	_toast_box.position = Vector2((size.x - 600.0) * 0.5, y_top + 10.0)
@@ -893,17 +911,20 @@ func _build_cards() -> void:
 		nm.text = String(d.name)
 		nm.add_theme_font_size_override("font_size", 14)
 		nm.add_theme_color_override("font_color", UiStyle.GOLD)
-		nm.clip_text = true
+		nm.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+		nm.max_lines_visible = 2
+		nm.add_theme_constant_override("line_spacing", -3)
 		nm.mouse_filter = Control.MOUSE_FILTER_IGNORE
 		col.add_child(nm)
 		var cost := RichTextLabel.new()
 		cost.bbcode_enabled = true
 		cost.fit_content = true
 		cost.scroll_active = false
-		cost.autowrap_mode = TextServer.AUTOWRAP_OFF
+		cost.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 		cost.mouse_filter = Control.MOUSE_FILTER_IGNORE
 		cost.add_theme_font_size_override("normal_font_size", 13)
-		cost.text = Goods.bbcode(d.cost, 20) if not d.cost.is_empty() else "Free"
+		cost.add_theme_constant_override("line_separation", -2)
+		cost.text = Goods.bbcode(d.cost, 20 if d.cost.size() <= 2 else 17) if not d.cost.is_empty() else "Free"
 		col.add_child(cost)
 		b.tooltip_text = _card_tip(id)
 		if s != null and not s.can_afford(d.cost):
@@ -932,10 +953,12 @@ func _build_cards() -> void:
 		m.add_child(mrow)
 		mrow.add_child(_icon_rect(Goods.icon("warriors"), 64, ""))
 		var ml := Label.new()
-		ml.text = "Muster army\nfrom your warriors"
+		ml.text = "Muster an army from your warriors"
 		ml.add_theme_font_size_override("font_size", 14)
 		ml.add_theme_color_override("font_color", UiStyle.GOLD)
 		ml.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		ml.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+		ml.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 		ml.size_flags_vertical = Control.SIZE_SHRINK_CENTER
 		mrow.add_child(ml)
 		m.tooltip_text = "Gather up to 24 warriors from the barracks' training into an army group. Select it on the map, set its formation, and click where it should march."
@@ -989,9 +1012,9 @@ func _process(delta: float) -> void:
 	if _player_btn.get_theme_stylebox("normal") != _team_style[s.index]:
 		_player_btn.add_theme_stylebox_override("normal", _team_style[s.index])
 		_player_btn.add_theme_stylebox_override("hover", _team_style[s.index])
-	_people.text = "%d/%d (%d idle)" % [s.population, s.housing(), s.idle()]
+	_people.text = "%d/%d  %d idle" % [s.population, s.housing(), s.idle()]
 	_content.text = "%d%%" % int(s.contentment * 100.0)
-	_content.modulate = Color(1, 0.65, 0.55) if s.contentment < 0.3 else (Color(0.75, 1, 0.7) if s.contentment > 0.7 else Color.WHITE)
+	_content.self_modulate = Color(1, 0.65, 0.55) if s.contentment < 0.3 else (Color(0.75, 1, 0.7) if s.contentment > 0.7 else Color.WHITE)
 	_influence.text = "%d (+%.1f/s)" % [int(s.influence), s.influence_rate()]
 	_expand.text = "Expand (%d)" % s.expand_cost()
 	_opt_btn.text = "Options"
@@ -1000,6 +1023,8 @@ func _process(delta: float) -> void:
 	if _top.get_combined_minimum_size().x > room:
 		_opt_btn.text = "Opt."
 		_expand.text = "Exp. %d" % s.expand_cost()
+	if _top.get_combined_minimum_size().x > room:
+		_people.text = "%d/%d" % [s.population, s.housing()]
 	if _top.get_combined_minimum_size().x > room:
 		_player_btn.text = "  %s  " % s.player_name.left(1)
 	_expand.disabled = s.influence < s.expand_cost()
@@ -1023,6 +1048,9 @@ func _process(delta: float) -> void:
 		_hint.text = "Placing %s: click a hex on your land (Shift: more). Right-click or Esc to stop." % String(BuildingDefs.DEFS[world.placing].name)
 	else:
 		_hint.text = "Click a building to see what it's doing. L: ledger."
+	var hf := _hint.get_theme_font("font")
+	_hint.self_modulate.a = 1.0 if hf.get_string_size(_hint.text, HORIZONTAL_ALIGNMENT_LEFT, -1, _hint.get_theme_font_size("font_size")).x <= _hint.size.x else 0.0
+	(_people.get_parent().get_parent() as Control).tooltip_text = "People: %d, with homes for %d; %d idle hands" % [s.population, s.housing(), s.idle()]
 	_update_res_tip(delta)
 	_update_clock()
 	if _toast_t > 0.0:
@@ -1043,7 +1071,7 @@ func _update_goods(s: Settlement) -> void:
 			_goods_box.remove_child(c)
 			c.queue_free()
 		for id: String in ids:
-			var tex: Texture2D = load("res://assets/icons/buildings/warehouse.png") if id == "_store" else Goods.icon("bread" if id == "_food" else id)
+			var tex: Texture2D = _hud_icon(id.substr(1) if id.begins_with("_") else id)
 			var chip := _chip(tex, "", "")
 			chip.set_meta("good", id)
 			_goods_box.add_child(chip)
@@ -1051,7 +1079,7 @@ func _update_goods(s: Settlement) -> void:
 	for i in ids.size():
 		var id: String = ids[i]
 		var chip: PanelContainer = _goods_chips[i]
-		var l := chip.get_child(0).get_child(chip.get_child(0).get_child_count() - 1) as Label
+		var l := _chip_label(chip)
 		match id:
 			"_store":
 				l.text = "%d/%d" % [int(s.stored()), s.storage()]
@@ -1345,7 +1373,7 @@ func _update_clock() -> void:
 	if atmosphere == null:
 		_clock.visible = false
 		return
-	_clock.visible = true
+	_clock.visible = _clock_aside == false or _clock.modulate.a > 0.01
 	# Kept to its corner as its text changes width.
 	_clock.reset_size()
 	if UiSettings.panel_left:
