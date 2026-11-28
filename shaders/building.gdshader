@@ -23,6 +23,7 @@ uniform float build = 1.0;
 uniform float height = 8.0;
 uniform float flash = 0.0;     // brief highlight (selected, just finished)
 uniform bool people = false;   // people: cloth, skin and hair, not boards and thatch
+uniform float night = 0.0;     // 0 by day, 1 at night: windows glow with firelight
 
 varying vec3 v_local;
 varying vec3 v_world;
@@ -128,6 +129,12 @@ void fragment() {
 		col = mix(col, vec3(0.16, 0.2, 0.07), moss * 0.55 * foot);
 		ao = mix(0.55, 1.0, foot * gap);
 		rough = 0.9;
+	} else if (mat == 9) {
+		// A window or doorway: dark, lit warm from the fire inside after dark, flickering.
+		float fl = 0.8 + 0.12 * sin(TIME * 7.3 + v_world.x * 1.7) + 0.08 * sin(TIME * 13.1 + v_world.z);
+		col = vec3(0.03, 0.02, 0.012);
+		EMISSION = vec3(1.0, 0.55, 0.22) * night * 3.2 * fl;
+		rough = 1.0;
 	} else if (mat == 8) {
 		// People: soft wool and linen, a faint weave and fold shading.
 		col *= 0.92 + 0.1 * env_noise(v_local.xz * 40.0 + vec2(v_local.y * 40.0));
@@ -146,5 +153,5 @@ void fragment() {
 	ROUGHNESS = mix(rough, 0.5, wetness);
 	METALLIC = metal;
 	AO = ao;
-	EMISSION = vec3(1.0, 0.75, 0.4) * (fresh * 0.25 + flash * 0.35);
+	EMISSION += vec3(1.0, 0.75, 0.4) * (fresh * 0.25 + flash * 0.35);
 }

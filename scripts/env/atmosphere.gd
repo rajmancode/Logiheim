@@ -22,6 +22,8 @@ const COMPASS := ["N", "NE", "E", "SE", "S", "SW", "W", "NW"]
 @export var day_length_minutes := 8.0
 @export var cycle_running := true
 @export var weather := Weather.CLEAR
+## 0 in daylight, 1 at night (also darker under heavy cloud): when torches are lit and windows glow.
+static var night := 0.0
 
 var sun: DirectionalLight3D
 var moon: DirectionalLight3D
@@ -177,6 +179,7 @@ func _update_sky() -> Vector3:
 	var sun_dir := Vector3(horiz.x * cos(elev), sin(elev), horiz.y * cos(elev)).normalized()
 
 	var day := smoothstep(-0.08, 0.2, sin_e)
+	night = clampf(1.0 - smoothstep(-0.05, 0.25, sin_e) + 0.25 * (1.0 - light), 0.0, 1.0)
 	var golden := (1.0 - smoothstep(0.0, 0.45, sin_e)) * day
 	sun.basis = Basis.looking_at(-sun_dir, Vector3.UP)
 	sun.light_energy = 1.3 * day * light

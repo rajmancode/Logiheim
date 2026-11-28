@@ -23,6 +23,7 @@ var _flag: MeshInstance3D
 var _cart: MeshInstance3D
 var _boat: MeshInstance3D
 var _light: OmniLight3D
+var _fires: Array = []   # [{root, flame, embers, light, kind, seed}]
 var _builders: Array = []
 var _workers: Array = []
 var _built := false
@@ -93,6 +94,7 @@ func setup(p_record: Dictionary, p_settlement: Settlement, ground: Callable) -> 
 		_light.light_energy = 0.0
 		_light.position = (info.work as Vector3) + Vector3(0, 1.5, 0) if record.id in ["smithy", "weaponsmith", "bakery"] else Vector3(0, 2.0, -float(info.size.y) * 0.5 - 0.8)
 		add_child(_light)
+	_make_fires()
 	# Builders at the site while it goes up.
 	for i in 2:
 		var v := _villager(Color(0.55, 0.45, 0.32), "hammer")
@@ -124,6 +126,118 @@ func _villager(tunic: Color, a := "idle") -> Villager:
 func get_tree_root_add(v: Node3D) -> void:
 	v.top_level = true
 	add_child(v)
+
+
+## Everything that burns on the building: a flame of additive licks, embers rising off it, and
+## a flickering light. Torches are lit at dusk and put out at dawn; braziers burn while the
+## building stands; the forge, ovens and hearths blaze while it works and glow low otherwise.
+## Lights come up as it gets dark, so a settlement at night is picked out in firelight.
+func _make_fires() -> void:
+	var lights := 0
+	for f: Array in info.get("fires", []):
+		var kind := String(f[1])
+		var root := Node3D.new()
+		root.position = f[0]
+		add_child(root)
+		var big := kind in ["brazier", "forge"]
+		var flame := CPUParticles3D.new()
+		flame.amount = 14 if big else 9
+		flame.lifetime = 0.55 if big else 0.45
+		flame.emission_shape = CPUParticles3D.EMISSION_SHAPE_SPHERE
+		flame.emission_sphere_radius = 0.22 if big else 0.08
+		flame.direction = Vector3.UP
+		flame.spread = 12.0
+		flame.gravity = Vector3(0, 2.5, 0)
+		flame.initial_velocity_min = 0.6
+		flame.initial_velocity_max = 1.3
+		flame.scale_amount_min = 0.5 if big else 0.32
+		flame.scale_amount_max = 0.95 if big else 0.55
+		var shrink := Curve.new()
+		shrink.add_point(Vector2(0, 0.7))
+		shrink.add_point(Vector2(0.25, 1.0))
+		shrink.add_point(Vector2(1, 0.1))
+		flame.scale_amount_curve = shrink
+		flame.mesh = _fire_quad()
+		var ramp := Gradient.new()
+		ramp.set_color(0, Color(1.0, 0.92, 0.55, 1.0))
+		ramp.add_point(0.35, Color(1.0, 0.55, 0.15, 0.9))
+		ramp.set_color(ramp.get_point_count() - 1, Color(0.6, 0.12, 0.03, 0.0))
+		flame.color_ramp = ramp
+		root.add_child(flame)
+		var embers := CPUParticles3D.new()
+		embers.amount = 6 if big else 3
+		embers.lifetime = 1.8
+		embers.emission_shape = CPUParticles3D.EMISSION_SHAPE_SPHERE
+		embers.emission_sphere_radius = 0.15
+		embers.direction = Vector3.UP
+		embers.spread = 30.0
+		embers.gravity = Vector3(0.3, 0.6, 0)
+		embers.initial_velocity_min = 0.8
+		embers.initial_velocity_max = 2.0
+		embers.scale_amount_min = 0.05
+		embers.scale_amount_max = 0.09
+		embers.mesh = _fire_quad()
+		var er := Gradient.new()
+		er.set_color(0, Color(1.0, 0.7, 0.3, 1.0))
+		er.set_color(1, Color(1.0, 0.3, 0.05, 0.0))
+		embers.color_ramp = er
+		root.add_child(embers)
+		var light: OmniLight3D = null
+		if lights < 4 or big:
+			light = OmniLight3D.new()
+			light.light_color = Color(1.0, 0.6, 0.3)
+			light.omni_range = 11.0 if big else 8.0
+			light.omni_attenuation = 1.4
+			light.light_energy = 0.0
+			light.position = Vector3(0, 0.3, 0)
+			root.add_child(light)
+			lights += 1
+		root.visible = false
+		_fires.append({"root": root, "flame": flame, "embers": embers, "light": light, "kind": kind, "seed": randf() * 10.0})
+
+
+static var _fire_mesh: QuadMesh
+
+
+static func _fire_quad() -> QuadMesh:
+	if _fire_mesh != null:
+		return _fire_mesh
+	_fire_mesh = QuadMesh.new()
+	_fire_mesh.size = Vector2(1, 1)
+	var m := StandardMaterial3D.new()
+	m.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
+	m.blend_mode = BaseMaterial3D.BLEND_MODE_ADD
+	m.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+	m.billboard_mode = BaseMaterial3D.BILLBOARD_PARTICLES
+	m.vertex_color_use_as_albedo = true
+	m.albedo_texture = _puff()
+	m.depth_draw_mode = BaseMaterial3D.DEPTH_DRAW_DISABLED
+	_fire_mesh.material = m
+	return _fire_mesh
+
+
+func _update_fires(working: bool) -> void:
+	var night := Atmosphere.night
+	_mat.set_shader_parameter("night", night if _built else 0.0)
+	for f: Dictionary in _fires:
+		var kind := String(f.kind)
+		var lit := _built
+		var strength := 1.0
+		match kind:
+			"torch":
+				lit = lit and night > 0.15
+			"forge", "hearth":
+				strength = 1.0 if working else 0.45
+		(f.root as Node3D).visible = lit
+		(f.flame as CPUParticles3D).emitting = lit
+		(f.embers as CPUParticles3D).emitting = lit and strength > 0.5
+		(f.flame as CPUParticles3D).scale = Vector3.ONE * (0.6 + 0.4 * strength)
+		var light := f.light as OmniLight3D
+		if light != null:
+			var s: float = f.seed
+			var flick := 0.8 + 0.12 * sin(_t * 11.0 + s) * sin(_t * 6.7 + s * 2.0) + 0.08 * sin(_t * 23.0 + s)
+			var base := 2.6 if kind in ["brazier", "forge"] else 1.7
+			light.light_energy = (base * strength * (0.15 + 0.85 * night) * flick) if lit else 0.0
 
 
 func _particles(col: Color, amount: int, life: float, box: Vector3, spd: float) -> CPUParticles3D:
@@ -255,6 +369,7 @@ func _process(delta: float) -> void:
 		var bp := _boat.position
 		_boat.position.y = height_at.call(Vector2(bp.x, bp.z)) + 0.15 + sin(_t * 1.3) * 0.12
 		_boat.rotation = Vector3(sin(_t * 1.1) * 0.06, _boat.rotation.y, sin(_t * 0.9) * 0.08)
+	_update_fires(working)
 	if _light != null:
 		var glow := 1.0 if working or record.id == "town_hall" else 0.0
 		_light.light_energy = lerpf(_light.light_energy, glow * (1.4 + 0.5 * sin(_t * 13.0) * sin(_t * 7.3)), minf(delta * 4.0, 1.0))

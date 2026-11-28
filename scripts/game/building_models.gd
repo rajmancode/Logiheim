@@ -8,7 +8,8 @@ extends RefCounted
 ##
 ## shape(kind) -> {mesh, height, size: Vector2 (footprint), chimney: Vector3 (or none),
 ##                 door: Vector3, work: Vector3 (where its people work), flag: Vector3 (or none),
-##                 cart: bool, boat: bool}
+##                 cart: bool, boat: bool, fires: [[Vector3, kind]] - torches, braziers, the forge,
+##                 ovens and hearths (kind: torch, brazier, forge, hearth), lit by BuildingView}
 
 const WOOD := Color(0.42, 0.28, 0.16)
 const DARK_WOOD := Color(0.26, 0.17, 0.1)
@@ -21,6 +22,7 @@ const EARTH := Color(0.36, 0.28, 0.2)
 const IRON := Color(0.22, 0.22, 0.24)
 const TEAM := Color(1, 1, 1, 0.0)   # tinted to the owner's colour
 const SHINGLE := Color(0.47, 0.38, 0.38)  # weathered wooden shingles (drawn as such by the shader)
+const WINDOW := Color(0.11, 0.07, 0.031)  # a window or door opening: dark by day, lit from within at night
 
 static var _cache := {}
 
@@ -45,6 +47,7 @@ static func shape(kind: String) -> Dictionary:
 			for s: float in [-1.0, 1.0]:
 				_pillar(k, Vector3(s * 4.2, 0, -7.5), 8.5)
 				_banner_cloth(k, Vector3(s * 4.2 + s * 0.15, 8.0, -7.5), 1.4, 3.6)
+				_torch(k, Vector3(s * 4.2, 3.2, -7.78), Vector3(0, 0, -1))
 				_brazier(k, Vector3(s * 2.0, 0, -6.0))
 			_rune_stone(k, Vector3(7.5, 0, -7.0), 0.3)
 			for i in 3:
@@ -86,6 +89,7 @@ static func shape(kind: String) -> Dictionary:
 					k.post(Vector3(x, 4.3, z), 2.3, 0.14, DARK_WOOD)
 			k.roof(Vector3(0, 6.5, 0), 9.2, 9.0, 3.6, SHINGLE)
 			_portal(k, Vector3(0, 1.45, -3.12), 1.8, false)
+			_torch_post(k, Vector3(-1.4, 0, -5.4))
 			# Steps up to the door.
 			for i in 3:
 				k.box(Vector3(0, 0.25 + i * 0.4, -4.6 + i * 0.5), Vector3(1.6, 0.18, 0.5), DARK_WOOD)
@@ -156,6 +160,8 @@ static func shape(kind: String) -> Dictionary:
 			k.cone(Vector3(0, y - 0.2, 0), 1.1, 3.4, SHINGLE, 4)
 			k.post(Vector3(0, y + 3.0, 0), 1.6, 0.06, IRON)
 			_portal(k, Vector3(0, 0.9, -4.42), 2.4, true)
+			for sd: float in [-1.0, 1.0]:
+				_brazier(k, Vector3(sd * 2.4, 0, -8.6))
 			info.height = y + 4.5
 			info.size = Vector2(14, 14)
 			info.door = Vector3(0, 0, -8.0)
@@ -169,6 +175,7 @@ static func shape(kind: String) -> Dictionary:
 					k.cylinder(c + Vector3(0, yy, 0), 1.24, 0.1, IRON, 14)
 			k.box(Vector3(5.2, 0.5, -1.8), Vector3(2.0, 1.0, 1.8), STONE)
 			k.cylinder(Vector3(5.2, 1.0, -1.8), 0.75, 0.6, Color(0.62, 0.36, 0.2), 12)
+			k.fires.append([Vector3(5.2, 0.45, -2.75), "hearth"])
 			_lean_to(k, Vector3(5.2, 0, -1.8), 3.4, 3.0, 2.8)
 			for i in 6:
 				var row: int = [0, 0, 0, 1, 1, 2][i]
@@ -187,6 +194,7 @@ static func shape(kind: String) -> Dictionary:
 			k.cylinder(oc + Vector3(0, 0.8, 0), 1.7, 0.8, Color(0.62, 0.4, 0.26), 14)
 			k.sphere(oc + Vector3(0, 1.6, 0), 1.7, Color(0.62, 0.4, 0.26), 6, 14)
 			k.box(oc + Vector3(0, 1.3, -1.6), Vector3(0.8, 0.7, 0.3), Color(0.08, 0.05, 0.03))
+			k.fires.append([oc + Vector3(0, 1.2, -1.85), "hearth"])
 			k.box(oc + Vector3(0.6, 3.3, 0.6), Vector3(0.5, 1.6, 0.5), DARK_STONE)
 			_lean_to(k, oc, 4.6, 4.2, 3.7)
 			for i in 4:
@@ -209,6 +217,7 @@ static func shape(kind: String) -> Dictionary:
 			k.roof(Vector3(0, 3.2, -0.6), 9.0, 5.0, 1.8, TURF)
 			k.box(Vector3(1.8, 0.6, 0.4), Vector3(2.4, 1.2, 1.6), STONE)
 			k.box(Vector3(1.8, 1.25, 0.4), Vector3(1.4, 0.1, 0.9), Color(0.9, 0.35, 0.08))
+			k.fires.append([Vector3(1.8, 1.4, 0.4), "forge"])
 			k.box(Vector3(1.8, 3.4, 1.0), Vector3(1.0, 4.0, 0.9), DARK_STONE)
 			k.box(Vector3(3.5, 0.9, 0.6), Vector3(1.0, 0.6, 1.2), EARTH, Vector3(0, 0, 0.2))
 			k.cylinder(Vector3(-0.8, 0, -0.8), 0.4, 0.7, DARK_WOOD, 10)
@@ -292,6 +301,7 @@ static func shape(kind: String) -> Dictionary:
 			k.box(Vector3(3.6, 0.4, -0.2), Vector3(3.6, 0.8, 2.6), STONE)
 			k.box(Vector3(3.6, 0.88, -0.2), Vector3(3.3, 0.16, 2.3), IRON)
 			k.box(Vector3(3.6, 0.95, -0.2), Vector3(3.0, 0.04, 2.0), Color(0.82, 0.86, 0.88))
+			k.fires.append([Vector3(3.6, 0.45, -1.55), "hearth"])
 			for i in 3:
 				k.cone(Vector3(1.0 + i * 1.3, 0, -3.0), 0.55, 0.8, Color(0.97, 0.97, 0.97), 10)
 			for i in 3:
@@ -355,6 +365,7 @@ static func shape(kind: String) -> Dictionary:
 			for i in 3:
 				k.box(Vector3(0.5, 0.9 + i * 0.9, 3.2 + i * 0.8), Vector3(9.0 - i * 1.5, 1.8, 1.6), DARK_STONE, Vector3(0, 0.05 * i, 0))
 			_lean_to(k, Vector3(-3.6, 0, -0.2), 3.6, 3.0, 2.8)
+			_torch_post(k, Vector3(-1.4, 0, -2.2))
 			for i in 8:
 				k.box(Vector3(0.8 + (i % 4) * 1.15, 0.4 + (i / 4) * 0.8, -1.2 + (i % 2) * 0.25), Vector3(1.05, 0.75, 0.85), STONE)
 			var tc := Vector3(3.2, 0, 1.0)
@@ -376,6 +387,8 @@ static func shape(kind: String) -> Dictionary:
 				k.post(Vector3(x, 0, -1.6), 2.9, 0.24, DARK_WOOD)
 			k.box(Vector3(0, 2.9, -1.6), Vector3(4.0, 0.45, 0.5), DARK_WOOD)
 			k.box(Vector3(0, 3.35, -1.65), Vector3(1.8, 0.35, 0.1), TEAM)
+			for sd: float in [-1.0, 1.0]:
+				_torch(k, Vector3(sd * 1.6, 2.2, -1.85), Vector3(0, 0, -1))
 			k.cone(Vector3(5.4, 0, -2.0), 2.2, 1.6, Color(0.4, 0.36, 0.32), 8)
 			for x in [-0.8, 0.8]:
 				k.post(Vector3(x - 3.0, 0, -3.0), 1.4, 0.08, DARK_WOOD)
@@ -445,6 +458,7 @@ static func shape(kind: String) -> Dictionary:
 			k.cone(Vector3(2.0, 0, 0), 3.0, 2.5, EARTH, 12)
 			k.cylinder(Vector3(2.0, 2.3, 0), 0.55, 0.6, DARK_STONE, 8)
 			k.box(Vector3(2.0, 0.15, -3.0), Vector3(1.2, 0.3, 0.8), Color(0.06, 0.05, 0.04))
+			k.fires.append([Vector3(2.0, 0.7, -2.6), "hearth"])
 			_house(k, Vector3(-4.0, 0, 1.0), 5.0, 4.2, 2.1, TURF)
 			_woodpile(k, Vector3(6.2, 0, 0.5), 3.0, PI * 0.5)
 			for i in 3:
@@ -481,6 +495,7 @@ static func shape(kind: String) -> Dictionary:
 				for z in [-2.4, 2.4]:
 					k.post(Vector3(x, h, z), 2.0, 0.1, DARK_WOOD)
 			k.roof(Vector3(0, h + 2.0, 0), 6.0, 6.0, 2.2, SHINGLE)
+			_brazier(k, Vector3(1.4, h + 0.15, 1.4))
 			k.post(Vector3(0, h + 3.8, 0), 2.4, 0.07, DARK_WOOD)
 			k.box(Vector3(0, h * 0.5, -1.95), Vector3(0.5, h, 0.08), DARK_WOOD)
 			info.flag = Vector3(0, h + 6.0, 0)
@@ -511,6 +526,10 @@ static func shape(kind: String) -> Dictionary:
 	var sz: Vector2 = info.size
 	k.box(Vector3(0, -1.6, 0), Vector3(sz.x + 0.6, 3.4, sz.y + 0.6), Color(0.38, 0.35, 0.3))
 	info.mesh = k.commit()
+	var fires: Array = []
+	for f: Array in k.fires:
+		fires.append([(f[0] as Vector3) * SCALE, f[1]])
+	info.fires = fires
 	# Everything about the model scales with it.
 	info.height = float(info.height) * SCALE
 	info.size = (info.size as Vector2) * SCALE
@@ -544,6 +563,40 @@ static func _brazier(k: Kit, base: Vector3) -> void:
 		k.log(base + Vector3(cos(ang) * 0.25, 0.65, sin(ang) * 0.25), 0.04, 1.4, IRON, Vector3(-cos(ang) * 0.3, 1, -sin(ang) * 0.3).normalized())
 	k.frustum(base + Vector3(0, 1.25, 0), 0.25, 0.55, 0.45, IRON, 10)
 	k.cone(base + Vector3(0, 1.6, 0), 0.45, 0.3, Color(0.95, 0.45, 0.1), 8)
+	k.fires.append([base + Vector3(0, 1.75, 0), "brazier"])
+
+
+## A torch in an iron bracket on a wall at `p`, leaning out along `out`.
+static func _torch(k: Kit, p: Vector3, out: Vector3) -> void:
+	var o := out.normalized()
+	k.box(p + o * 0.1, Vector3(0.12, 0.12, 0.12) + Vector3(absf(o.x), 0, absf(o.z)) * 0.12, IRON)
+	var dir := (o * 0.45 + Vector3.UP).normalized()
+	var tip := p + o * 0.2 + dir * 0.75
+	k.log(p + o * 0.2 + dir * 0.35, 0.045, 0.75, DARK_WOOD, dir)
+	k.cylinder(tip - dir * 0.18, 0.08, 0.2, Color(0.12, 0.08, 0.05), 8, dir)
+	k.fires.append([tip + Vector3(0, 0.12, 0), "torch"])
+
+
+## A torch on its own pole, stuck in the ground at `base`.
+static func _torch_post(k: Kit, base: Vector3) -> void:
+	k.post(base, 2.4, 0.07, DARK_WOOD)
+	k.frustum(base + Vector3(0, 2.4, 0), 0.07, 0.12, 0.25, Color(0.12, 0.08, 0.05), 8)
+	k.fires.append([base + Vector3(0, 2.8, 0), "torch"])
+
+
+## A small window (a wind-eye) in a wall facing `n`: a frame round a dark opening that glows
+## with firelight from inside at night, and an open shutter.
+static func _window(k: Kit, c: Vector3, n: Vector3, w: float, h: float) -> void:
+	var f := n.normalized()
+	var side := Vector3(-f.z, 0, f.x)
+	var p := c + f * 0.04
+	k.quad(p - side * w * 0.5 - Vector3(0, h * 0.5, 0), p + side * w * 0.5 - Vector3(0, h * 0.5, 0),
+		p + side * w * 0.5 + Vector3(0, h * 0.5, 0), p - side * w * 0.5 + Vector3(0, h * 0.5, 0), f, WINDOW)
+	for sd: float in [-1.0, 1.0]:
+		k.box(p + f * 0.03 + side * sd * (w * 0.5 + 0.05), Vector3(0.1, h + 0.2, 0.1) if absf(f.z) > 0.5 else Vector3(0.1, h + 0.2, 0.1), DARK_WOOD)
+		k.box(p + f * 0.03 + Vector3(0, sd * (h * 0.5 + 0.05), 0), side.abs() * (w + 0.2) + Vector3(0, 0.1, 0) + f.abs() * 0.1, DARK_WOOD)
+	# The shutter, swung open against the wall.
+	k.box(p + f * 0.06 + side * (w * 0.5 + 0.1 + w * 0.5), side.abs() * w + Vector3(0, h, 0) + f.abs() * 0.05, WOOD * 0.9)
 
 
 ## A rune stone, carved and painted in bands of the owner's colour.
@@ -708,12 +761,24 @@ static func _longhouse(k: Kit, c: Vector3, length: float, width: float, wall: fl
 				var rp := Vector3(ex - sd * 0.05, top + 0.05, c.z)
 				var dir := (rp - ep).normalized()
 				k.box((ep + rp) * 0.5, Vector3(0.14, 0.32, ep.distance_to(rp) + 0.2), TEAM if opts.get("boards", false) else DARK_WOOD, Vector3(atan2(-dir.y, dir.z), 0, 0))
+	# Wind-eyes along the walls and high in the gables, lit from the fire within at night.
+	for sd: float in [-1.0, 1.0]:
+		for t: float in [-0.55, 0.55]:
+			if length < 8.0 and sd > 0.0:
+				continue
+			var wz: float = c.z + sd * hw.call(t)
+			_window(k, Vector3(c.x + t * hl, 0.4 + wall * 0.62, wz), Vector3(0, 0, sd), 0.7, 0.5)
+		var gx := c.x + sd * hl
+		_window(k, Vector3(gx, 0.4 + wall + roof_h * 0.35, c.z), Vector3(sd, 0, 0), 0.45, 0.4)
 	# Smoke louver on the ridge.
 	var rt: float = ridge.call(0.0)
 	k.box(c + Vector3(0, rt + 0.35, 0), Vector3(1.3, 0.5, 0.9), DARK_WOOD)
 	k.roof(c + Vector3(0, rt + 0.6, 0), 1.6, 1.3, 0.45, roof_col)
 	# The door: posts and a lintel round a planked leaf with iron straps.
 	var dz: float = c.z - hw.call(0.0) - 0.06
+	# Torches either side of the door.
+	for sd: float in [-1.0, 1.0]:
+		_torch(k, Vector3(c.x + sd * (1.7 if carved else 1.25), 0.4 + (1.5 if opts.get("gallery", false) else 2.1), dz), Vector3(0, 0, -1))
 	if carved:
 		_portal(k, Vector3(c.x, 0.4, dz), 2.6, true)
 		k.box(Vector3(c.x, 0.4, dz - 0.5), Vector3(2.6, 0.15, 0.9), STONE)
@@ -842,6 +907,7 @@ static func person(tunic: Color) -> Dictionary:
 class Kit:
 	var st := SurfaceTool.new()
 	var s := 1.0   # everything is drawn this much bigger
+	var fires: Array = []   # [position, kind] of everything that burns
 
 	func _init() -> void:
 		st.begin(Mesh.PRIMITIVE_TRIANGLES)
@@ -867,6 +933,8 @@ class Kit:
 	static func material_of(col: Color) -> float:
 		if col.a < 0.25:
 			return 5.0
+		if col.is_equal_approx(WINDOW):
+			return 9.0
 		var mx := maxf(col.r, maxf(col.g, col.b))
 		var mn := minf(col.r, minf(col.g, col.b))
 		if mx - mn < 0.05:
