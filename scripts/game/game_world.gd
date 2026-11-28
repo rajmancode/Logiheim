@@ -726,6 +726,39 @@ func click(cell: int) -> bool:
 	return false
 
 
+## The building under a ray (its box), nearest first: {cell, point}, or {} if none - so a
+## click on a roof picks that building, not the hex behind it.
+func pick_object(origin: Vector3, dir: Vector3) -> Dictionary:
+	var best := INF
+	var out := {}
+	for uid in _views:
+		var v: BuildingView = _views[uid]
+		if not is_instance_valid(v) or not v.visible:
+			continue
+		var inv := v.global_transform.affine_inverse()
+		var o := inv * origin
+		var d := inv.basis * dir
+		var lo := Vector3(-float(v.info.size.x) * 0.5, -0.5, -float(v.info.size.y) * 0.5)
+		var hi := Vector3(float(v.info.size.x) * 0.5, float(v.info.height), float(v.info.size.y) * 0.5)
+		var t0 := 0.0
+		var t1 := INF
+		var hit := true
+		for a in 3:
+			if absf(d[a]) < 1e-6:
+				if o[a] < lo[a] or o[a] > hi[a]:
+					hit = false
+					break
+				continue
+			var ta := (lo[a] - o[a]) / d[a]
+			var tb := (hi[a] - o[a]) / d[a]
+			t0 = maxf(t0, minf(ta, tb))
+			t1 = minf(t1, maxf(ta, tb))
+		if hit and t0 <= t1 and t0 < best:
+			best = t0
+			out = {"cell": int(v.record.cell), "point": v.global_position, "t": t0}
+	return out
+
+
 ## The main resource on a hex (0 if none).
 func resource_at(cell: int) -> int:
 	var l := lv()

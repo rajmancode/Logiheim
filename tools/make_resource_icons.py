@@ -166,6 +166,18 @@ def _shape_points(group: str, size: int) -> list:
     return pts
 
 
+# Each resource's own backdrop colour, so even resources of one group (one badge shape and rim)
+# tell apart at a glance: the colour of where it is found or of the thing itself.
+BACKDROPS = {
+    "amber": "#e8952a", "bog_iron": "#6b6a2c", "cave": "#3a2f2a", "clay": "#c0603a", "coal": "#454a52",
+    "farmland": "#e3c04f", "fish": "#2f8fd0", "furs": "#3f6e45", "game": "#7aa83c", "gems": "#b03fb5",
+    "gold": "#f2c230", "horses": "#8fbf55", "iron": "#a8452e", "lake_ore": "#2aa39a", "oak": "#4fa83a",
+    "peat": "#7a5332", "reeds": "#b9c25a", "salt": "#9fd3ea", "seals": "#6f95b8", "silver": "#8a9bb5",
+    "soapstone": "#7fa596", "stone": "#9a9890", "tar": "#c27a22", "timber": "#2f7d4a", "whales": "#1c4f8f",
+    "wool": "#9bd06a",
+}
+
+
 def picture_badge(group: str, render_path: Path, out_path: Path) -> None:
     from PIL import Image, ImageDraw, ImageFilter
     S = 256
@@ -176,21 +188,42 @@ def picture_badge(group: str, render_path: Path, out_path: Path) -> None:
     mask = Image.new("L", (SS, SS), 0)
     ImageDraw.Draw(mask).polygon(pts, fill=255)
     inner = mask.filter(ImageFilter.MinFilter(25))
-    # Backdrop: dark, tinted by the group colour, lighter towards the top (a soft sky).
+    # Backdrop: the resource's own colour, a bright glow in the middle darkening to the rim.
+    from PIL import ImageEnhance
+    key = render_path.stem
+    bc = BACKDROPS.get(key, colour)
+    brgb = tuple(int(bc[i:i + 2], 16) for i in (1, 3, 5))
     back = Image.new("RGBA", (SS, SS))
-    bd = ImageDraw.Draw(back)
+    px = back.load()
     for y in range(SS):
-        t = y / SS
-        k = 0.55 - 0.35 * t
-        bd.line([(0, y), (SS, y)], fill=(int(rgb[0] * k * 0.6 + 40 * (1 - t)), int(rgb[1] * k * 0.6 + 45 * (1 - t)), int(rgb[2] * k * 0.6 + 55 * (1 - t)), 255))
+        for x in range(SS):
+            r = min(1.0, math.hypot(x - SS * 0.5, y - SS * 0.42) / (SS * 0.62))
+            k = 1.25 - 0.75 * r * r
+            lift = 60 * (1 - r) ** 2
+            px[x, y] = tuple(min(255, int(c * k + lift)) for c in brgb) + (255,)
     pic = Image.open(render_path).convert("RGBA")
     box = pic.getbbox() or (0, 0, pic.width, pic.height)
     pic = pic.crop(box)
-    fit = SS * 0.72
+    # Livelier picture, with a white sticker edge and a soft shadow so it reads on any colour.
+    a_ch = pic.getchannel("A")
+    rgbp = pic.convert("RGB")
+    rgbp = ImageEnhance.Brightness(rgbp).enhance(1.12)
+    rgbp = ImageEnhance.Contrast(rgbp).enhance(1.2)
+    rgbp = ImageEnhance.Color(rgbp).enhance(1.3)
+    pic = rgbp.convert("RGBA")
+    pic.putalpha(a_ch)
+    fit = SS * 0.78
     sc = min(fit / pic.width, fit / pic.height)
     pic = pic.resize((max(1, int(pic.width * sc)), max(1, int(pic.height * sc))), Image.LANCZOS)
     layer = Image.new("RGBA", (SS, SS), (0, 0, 0, 0))
-    layer.paste(pic, ((SS - pic.width) // 2, (SS - pic.height) // 2 + int(SS * 0.02)), pic)
+    at = ((SS - pic.width) // 2, (SS - pic.height) // 2 + int(SS * 0.02))
+    alpha = Image.new("L", (SS, SS), 0)
+    alpha.paste(pic.getchannel("A"), at)
+    shade = alpha.filter(ImageFilter.MaxFilter(9)).filter(ImageFilter.GaussianBlur(10))
+    layer.paste(Image.new("RGBA", (SS, SS), (0, 0, 0, 150)), (6, 10), shade)
+    edge = alpha.point(lambda v: 255 if v > 90 else 0).filter(ImageFilter.MaxFilter(7))
+    layer.paste(Image.new("RGBA", (SS, SS), (255, 252, 240, 215)), (0, 0), edge)
+    layer.paste(pic, at, pic)
     face = Image.alpha_composite(back, layer)
     out = Image.new("RGBA", (SS, SS), (0, 0, 0, 0))
     # Drop shadow, dark outline, coloured rim, then the picture inside.

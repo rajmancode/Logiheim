@@ -42,6 +42,8 @@ var _lake_materials: Array[ShaderMaterial] = []
 var _show_grid := true
 var _show_icons := true
 var _icon_roots: Array[Node3D] = []
+## Per level, the resource badges for picking: [world pos, size at unit depth, reach].
+var _icon_hits: Array = []
 ## Fjords cut into this map (for tools and debugging).
 var fjord_plan: FjordMaker
 var volcano_plan: VolcanoMaker
@@ -357,6 +359,7 @@ func _clear() -> void:
 		root.queue_free()
 	_level_roots.clear()
 	_icon_roots.clear()
+	_icon_hits.clear()
 	_noises.clear()
 	_materials.clear()
 	_lake_materials.clear()
@@ -619,6 +622,8 @@ func _build_resource_icons() -> void:
 		root.visible = _show_icons
 		_level_roots[li].add_child(root)
 		_icon_roots.append(root)
+		var hits: Array = []
+		_icon_hits.append(hits)
 		# Every level outlines the same (finest) deposits, so the outlines keep their shape as
 		# the view zooms between levels; only the ground they are draped on changes.
 		var outline := ResourceProps.build_outlines(levels[0], surfaces[li], sea_y, 0.6 + 0.8 * li)
@@ -659,6 +664,7 @@ func _build_resource_icons() -> void:
 			sprite.shaded = false
 			sprite.render_priority = 10 if is_center else 9
 			sprite.position = pos
+			hits.append([pos, sprite.pixel_size * float(tex.get_width()), level.hex_size * (40.0 if is_center else 18.0)])
 			# Fade out far away so the horizon doesn't fill with icons.
 			var reach := level.hex_size * (40.0 if is_center else 18.0)
 			sprite.visibility_range_end = reach
@@ -692,6 +698,28 @@ func _build_resource_icons() -> void:
 				label.visibility_range_end_margin = reach * 0.2
 				label.visibility_range_fade_mode = GeometryInstance3D.VISIBILITY_RANGE_FADE_SELF
 				root.add_child(label)
+
+
+## The resource badge under the mouse on the shown level (they are drawn over everything, so
+## they are what the player clicks): its hex centre (world x, z), or Vector2.INF if none.
+func icon_pick(camera: Camera3D, mouse: Vector2) -> Vector2:
+	if not _show_icons or underground >= 0 or active_level >= _icon_hits.size():
+		return Vector2.INF
+	var vp_h := float(camera.get_viewport().get_visible_rect().size.y)
+	var k := vp_h / (2.0 * tan(deg_to_rad(camera.fov) * 0.5))
+	var best := INF
+	var out := Vector2.INF
+	var eye := camera.global_position
+	for h: Array in _icon_hits[active_level]:
+		var pos: Vector3 = h[0]
+		if eye.distance_to(pos) > float(h[2]) or camera.is_position_behind(pos):
+			continue
+		var r := float(h[1]) * k * 0.42
+		var d := camera.unproject_position(pos).distance_to(mouse)
+		if d < r and d / r < best:
+			best = d / r
+			out = Vector2(pos.x, pos.z)
+	return out
 
 
 func set_resource_icons_visible(on: bool) -> void:

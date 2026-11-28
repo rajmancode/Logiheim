@@ -13,6 +13,7 @@ var hud_panel: PanelContainer
 var map_dirs: PackedStringArray = []
 var map_index := 0
 var hovered := -1
+var game_cell := -1     # the finest-level hex the game sees under the mouse (badges and buildings first)
 var selected := -1
 var show_grid := true
 var seed_edit: LineEdit
@@ -184,13 +185,29 @@ func _process(_delta: float) -> void:
 	cam.ground_height = hex_map.surface_height(Vector2(p.x, p.z))
 
 	var mouse := get_viewport().get_mouse_position()
-	var cell := hex_map.pick(cam.camera.project_ray_origin(mouse), cam.camera.project_ray_normal(mouse))
+	var origin := cam.camera.project_ray_origin(mouse)
+	var dir := cam.camera.project_ray_normal(mouse)
+	var cell := hex_map.pick(origin, dir)
+	var ground_t := origin.distance_to(hex_map.last_pick) if cell >= 0 else INF
+	game_cell = -1 if cell < 0 else hex_map.finest_cell_at(Vector2(hex_map.last_pick.x, hex_map.last_pick.z))
+	var over_ui := get_viewport().gui_get_hovered_control() != null
+	if game_world.running and not over_ui:
+		# What stands up off the ground is what the player is pointing at: a resource badge
+		# (drawn over everything), else a building, else the ground.
+		var ic := hex_map.icon_pick(cam.camera, mouse)
+		if ic != Vector2.INF:
+			game_cell = hex_map.finest_cell_at(ic)
+			hex_map.last_pick = Vector3(ic.x, hex_map.ground_height(ic), ic.y)
+		else:
+			var ob := game_world.pick_object(origin, dir)
+			if not ob.is_empty() and float(ob.t) * dir.length() < ground_t + 1.0:
+				game_cell = int(ob.cell)
+				hex_map.last_pick = ob.point
 	if cell != hovered:
 		hovered = cell
 		hex_map.set_highlight("hover", hovered)
 	if game_world.running:
-		var over_ui := get_viewport().gui_get_hovered_control() != null
-		game_world.hover(-1 if cell < 0 or over_ui else hex_map.finest_cell_at(Vector2(hex_map.last_pick.x, hex_map.last_pick.z)))
+		game_world.hover(-1 if game_cell < 0 or over_ui else game_cell)
 	_update_hud()
 
 
@@ -199,8 +216,8 @@ func _unhandled_input(event: InputEvent) -> void:
 		var mb := event as InputEventMouseButton
 		if mb.pressed and mb.button_index == MOUSE_BUTTON_RIGHT and game_world.running and game_world.right_click():
 			return
-		if mb.pressed and mb.button_index == MOUSE_BUTTON_LEFT and game_world.running and hovered >= 0:
-			if game_world.click(hex_map.finest_cell_at(Vector2(hex_map.last_pick.x, hex_map.last_pick.z))):
+		if mb.pressed and mb.button_index == MOUSE_BUTTON_LEFT and game_world.running and game_cell >= 0:
+			if game_world.click(game_cell):
 				return
 		if mb.pressed and mb.button_index == MOUSE_BUTTON_LEFT:
 			# While choosing landings, a click on (or near) a banner picks that site.

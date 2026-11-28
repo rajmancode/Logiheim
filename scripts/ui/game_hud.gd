@@ -47,9 +47,17 @@ var _expand_key := ""
 var _res_tip: PanelContainer        # the tooltip over a resource hex
 var _res_tip_icon: TextureRect
 var _res_tip_text: RichTextLabel
-var _tip_cell := -1
-var _tip_t := 0.0
-const TIP_DELAY := 0.55
+var _tip_key := ""          # what the tooltip is about ("" none): "r<deposit/cell>" or "g<good>"
+var _tip_want := ""         # what the mouse is over now
+var _tip_t := 0.0           # how long the mouse has been over it
+var _tip_gone := 0.0        # how long since the mouse left (it lingers a moment)
+var _tip_warm := 0.0        # just closed: the next one opens at once
+var _tip_text_t := 0.0
+var _tip_anchor := Vector2.ZERO
+var _tip_tween: Tween
+var _goods_ids: Array = []  # the top bar's chips, kept between refreshes
+var _goods_chips: Array = []
+const TIP_DELAY := 0.45
 var _toast: Label
 var _toast_box: PanelContainer
 var _team_style := {}
@@ -267,7 +275,8 @@ func _ready() -> void:
 	_res_tip_text.bbcode_enabled = true
 	_res_tip_text.fit_content = true
 	_res_tip_text.scroll_active = false
-	_res_tip_text.autowrap_mode = TextServer.AUTOWRAP_OFF
+	_res_tip_text.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	_res_tip_text.custom_minimum_size = Vector2(340, 0)
 	_res_tip_text.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	_res_tip_text.add_theme_color_override("default_color", Color(0.16, 0.1, 0.05))
 	_res_tip_text.add_theme_font_override("normal_font", UiStyle.font(700))
@@ -564,7 +573,7 @@ func _build_stores_tab() -> void:
 		for id: String in Goods.GROUPS[group]:
 			var row := HBoxContainer.new()
 			row.add_theme_constant_override("separation", 8)
-			row.tooltip_text = Goods.display_name(id)
+			row.set_meta("good", id)
 			row.mouse_filter = Control.MOUSE_FILTER_PASS
 			row.add_child(_icon_rect(Goods.icon(id), 26, ""))
 			var gname := Label.new()
@@ -947,18 +956,34 @@ func _process(delta: float) -> void:
 
 ## The top bar's goods: the stores' fill, food, and the few goods everything is built from.
 func _update_goods(s: Settlement) -> void:
-	for c in _goods_box.get_children():
-		_goods_box.remove_child(c)
-		c.queue_free()
-	var store := _chip(load("res://assets/icons/buildings/warehouse.png"), "%d/%d" % [int(s.stored()), s.storage()], "Goods in store / room in your stores")
-	if s.stored() >= s.storage():
-		store.modulate = Color(1, 0.7, 0.6)
-	_goods_box.add_child(store)
-	_goods_box.add_child(_chip(Goods.icon("bread"), "%d" % int(s.food()), "Food: fish, meat, bread and salt fish"))
 	# As many of the key goods as there is room for (the ledger has them all).
 	var room := clampi(int((_area().x - (1250.0 if _narrow else 1330.0)) / 88.0), 0, Goods.TOP.size())
-	for id in Goods.TOP.slice(0, room):
-		_goods_box.add_child(_chip(Goods.icon(id), "%d" % int(s.stock.get(id, 0)), Goods.display_name(id)))
+	var ids: Array = ["_store", "_food"] + Goods.TOP.slice(0, room)
+	# The chips stay put (so a tooltip over one isn't torn down); only their numbers change.
+	if ids != _goods_ids:
+		_goods_ids = ids
+		_goods_chips.clear()
+		for c in _goods_box.get_children():
+			_goods_box.remove_child(c)
+			c.queue_free()
+		for id: String in ids:
+			var tex: Texture2D = load("res://assets/icons/buildings/warehouse.png") if id == "_store" else Goods.icon("bread" if id == "_food" else id)
+			var chip := _chip(tex, "", "")
+			chip.set_meta("good", id)
+			_goods_box.add_child(chip)
+			_goods_chips.append(chip)
+	for i in ids.size():
+		var id: String = ids[i]
+		var chip: PanelContainer = _goods_chips[i]
+		var l := chip.get_child(0).get_child(chip.get_child(0).get_child_count() - 1) as Label
+		match id:
+			"_store":
+				l.text = "%d/%d" % [int(s.stored()), s.storage()]
+				chip.modulate = Color(1, 0.7, 0.6) if s.stored() >= s.storage() else Color.WHITE
+			"_food":
+				l.text = "%d" % int(s.food())
+			_:
+				l.text = "%d" % int(s.stock.get(id, 0))
 	# A container grows to fit and never shrinks back by itself: hold the bar to the window.
 	_top.size = Vector2(_area().x, BAR_H)
 
@@ -1104,51 +1129,233 @@ func _resource_lines(cell: int, full: bool) -> Array:
 	return [NaturalResources.display_name(kind), amount, lines]
 
 
+## The rich tooltip: over a resource hex on the map, or a good in the top bar or the ledger.
+## It waits a moment, then pops in and stays while the mouse is over the same thing (the same
+## deposit counts as one thing), keeps its numbers live, lingers briefly when the mouse leaves,
+## and opens at once when the mouse moves straight on to something else.
 func _update_res_tip(delta: float) -> void:
-	var cell := world.hover_cell
-	var show := cell >= 0 and world.placing == "" and world.resource_at(cell) != 0 and not world._occupied.has(cell) \
-			and cell != world.selected_resource and get_viewport().gui_get_hovered_control() == null
-	if not show:
-		_tip_cell = -1
-		_res_tip.visible = false
-		return
-	if cell != _tip_cell:
-		_tip_cell = cell
+	var want := ""
+	var anchor_ctl: Control = null
+	var hov := get_viewport().gui_get_hovered_control()
+	var c := hov
+	while c != null and c != _root:
+		if c.has_meta("good"):
+			want = "g" + String(c.get_meta("good"))
+			anchor_ctl = c
+			break
+		c = c.get_parent() as Control
+	if want == "" and hov == null:
+		var cell := world.hover_cell
+		if cell >= 0 and world.placing == "" and world.resource_at(cell) != 0 and not world._occupied.has(cell) and cell != world.selected_resource:
+			var dep := world.lv().deposit[cell]
+			want = ("rd%d_%d" % [dep, world.resource_at(cell)]) if dep >= 0 else "rc%d" % cell
+	_tip_warm = maxf(_tip_warm - delta, 0.0)
+	if want == "":
 		_tip_t = 0.0
-		_res_tip.visible = false
-	_tip_t += delta
-	if _tip_t < TIP_DELAY:
+		_tip_want = ""
+		if _tip_key != "":
+			_tip_gone += delta
+			if _tip_gone > 0.15:
+				_hide_tip()
 		return
-	if not _res_tip.visible:
+	_tip_gone = 0.0
+	if want != _tip_want:
+		_tip_want = want
+		_tip_t = 0.0
+	_tip_t += delta
+	var m := get_viewport().get_mouse_position() / maxf(_root.scale.x, 0.01)
+	if want != _tip_key:
+		if _tip_t < (0.06 if (_tip_key != "" or _tip_warm > 0.0) else TIP_DELAY):
+			return
+		var swap := _tip_key != ""
+		_tip_key = want
+		_fill_tip(want)
+		_tip_anchor = _tip_spot(anchor_ctl, m)
+		_res_tip.position = _tip_anchor
+		_pop_tip(swap)
+		_tip_text_t = 0.5
+	# Live numbers; the map tooltip drifts gently after the mouse, a bar tooltip stays put.
+	_tip_text_t -= delta
+	if _tip_text_t <= 0.0:
+		_tip_text_t = 0.5
+		_fill_tip(_tip_key)
+	if want.begins_with("r"):
+		_tip_anchor = _tip_spot(null, m)
+	_res_tip.position = _res_tip.position.lerp(_tip_anchor, 1.0 - exp(-delta * 14.0))
+
+
+func _fill_tip(key: String) -> void:
+	if key.begins_with("g"):
+		var g := key.substr(1)
+		_res_tip_icon.texture = load("res://assets/icons/buildings/warehouse.png") if g == "_store" else Goods.icon("bread" if g == "_food" else g)
+		_res_tip_text.text = _good_tip(g)
+	else:
+		var cell := world.hover_cell
+		if cell < 0 or world.resource_at(cell) == 0:
+			return
 		var info := _resource_lines(cell, false)
 		_res_tip_icon.texture = HexMap.icon_texture(NaturalResources.key(world.resource_at(cell)))
-		_res_tip_text.text = "[b]%s[/b]  [color=#8a6a40]%s[/color]\n%s" % [info[0], info[1], "\n".join(info[2])]
-		_res_tip.visible = true
-		_res_tip.modulate.a = 0.0
-		_res_tip.reset_size()
-		create_tween().tween_property(_res_tip, "modulate:a", 1.0, 0.15)
-	var m := get_viewport().get_mouse_position() / maxf(_root.scale.x, 0.01)
+		_res_tip_text.text = "[b]%s[/b]  [color=#8a6a40]%s[/color]
+%s" % [info[0], info[1], "
+".join(info[2])]
+	_res_tip.reset_size()
+
+
+## Where the tooltip goes: under a bar control, or beside the mouse; kept on screen.
+func _tip_spot(ctl: Control, m: Vector2) -> Vector2:
 	var area := _area()
+	var sz := _res_tip.get_combined_minimum_size()
 	var p := m + Vector2(22, 22)
-	if p.x + _res_tip.size.x > area.x - 8.0:
-		p.x = m.x - _res_tip.size.x - 12.0
-	if p.y + _res_tip.size.y > area.y - 8.0:
-		p.y = m.y - _res_tip.size.y - 12.0
-	_res_tip.position = p.clamp(Vector2(8, 8), (area - _res_tip.size - Vector2(8, 8)).max(Vector2(8, 8)))
+	if ctl != null:
+		var r := ctl.get_global_rect()
+		var sc := maxf(_root.scale.x, 0.01)
+		p = Vector2(r.position.x / sc, (r.end.y if UiSettings.bar_top else r.position.y) / sc + (8.0 if UiSettings.bar_top else -sz.y - 8.0))
+	else:
+		if p.x + sz.x > area.x - 8.0:
+			p.x = m.x - sz.x - 14.0
+		if p.y + sz.y > area.y - 8.0:
+			p.y = m.y - sz.y - 14.0
+	return p.clamp(Vector2(8, 8), (area - sz - Vector2(8, 8)).max(Vector2(8, 8)))
+
+
+## Pops the tooltip in: rises, fades and springs to size; a quick nudge when it changes subject.
+func _pop_tip(swap: bool) -> void:
+	if _tip_tween != null:
+		_tip_tween.kill()
+	_res_tip.visible = true
+	_res_tip.move_to_front()
+	_res_tip.pivot_offset = Vector2(0, 0)
+	_tip_tween = create_tween().set_parallel(true)
+	if swap:
+		_res_tip.modulate.a = 1.0
+		_res_tip.scale = Vector2(0.97, 0.97)
+		_tip_tween.tween_property(_res_tip, "scale", Vector2.ONE, 0.18).set_trans(Tween.TRANS_BACK).set_ease(Tween.EASE_OUT)
+		return
+	_res_tip.modulate.a = 0.0
+	_res_tip.scale = Vector2(0.86, 0.86)
+	_res_tip.position = _tip_anchor + Vector2(0, 10)
+	_tip_tween.tween_property(_res_tip, "modulate:a", 1.0, 0.18)
+	_tip_tween.tween_property(_res_tip, "scale", Vector2.ONE, 0.32).set_trans(Tween.TRANS_BACK).set_ease(Tween.EASE_OUT)
+	_res_tip_icon.rotation = -0.25
+	_res_tip_icon.pivot_offset = _res_tip_icon.size * 0.5
+	_tip_tween.tween_property(_res_tip_icon, "rotation", 0.0, 0.45).set_trans(Tween.TRANS_ELASTIC).set_ease(Tween.EASE_OUT)
+
+
+func _hide_tip() -> void:
+	_tip_key = ""
+	_tip_gone = 0.0
+	_tip_warm = 0.3
+	if _tip_tween != null:
+		_tip_tween.kill()
+	_tip_tween = create_tween().set_parallel(true)
+	_tip_tween.tween_property(_res_tip, "modulate:a", 0.0, 0.12)
+	_tip_tween.tween_property(_res_tip, "scale", Vector2(0.94, 0.94), 0.12)
+	_tip_tween.chain().tween_callback(func() -> void:
+		if _tip_key == "":
+			_res_tip.visible = false)
+
+
+## A good's tooltip: what is in store and how fast it comes and goes, and who makes and uses it.
+func _good_tip(g: String) -> String:
+	var s := world.me()
+	var lines := PackedStringArray()
+	if g == "_store":
+		lines.append("[b]Stores[/b]")
+		lines.append("%d goods in store, room for %d (%d%% full)" % [int(s.stored()), s.storage(), int(100.0 * s.stored() / maxf(s.storage(), 1.0))])
+		lines.append("[color=#8a6a40]Storehouses, the hall and outposts add room. Full stores stop the buildings that would add to them.[/color]")
+		var best: Array = []
+		for k in s.made_rate:
+			best.append([float(s.made_rate[k]), String(k)])
+		best.sort_custom(func(a: Array, b: Array) -> bool: return a[0] > b[0])
+		if not best.is_empty() and float(best[0][0]) > 0.05:
+			var tops := PackedStringArray()
+			for b: Array in best.slice(0, 4):
+				if float(b[0]) > 0.05:
+					tops.append("%s %s" % [Goods.display_name(b[1]), _per_min(b[0])])
+			lines.append("Coming in fastest: " + ", ".join(tops))
+		return "
+".join(lines)
+	if g == "_food":
+		var made := 0.0
+		var eaten := 0.0
+		var parts := PackedStringArray()
+		for f: String in Goods.FOOD:
+			made += float(s.made_rate.get(f, 0.0))
+			eaten += float(s.used_rate.get(f, 0.0))
+			parts.append("%s %d" % [Goods.display_name(f), int(s.stock.get(f, 0))])
+		lines.append("[b]Food[/b]")
+		lines.append("%d in store: %s" % [int(s.food()), ", ".join(parts)])
+		lines.append(_rates_line(made, eaten, "eaten"))
+		var net := made - eaten
+		if net < -0.05:
+			lines.append("[color=#b04030]Lasts about %d min at this rate[/color]" % int(s.food() / -net))
+		lines.append("[color=#8a6a40]%d people eat; more food lets them grow.[/color]" % s.population)
+		return "
+".join(lines)
+	var made := float(s.made_rate.get(g, 0.0))
+	var used := float(s.used_rate.get(g, 0.0))
+	lines.append("[b]%s[/b]%s" % [Goods.display_name(g), "  [color=#8a6a40]food[/color]" if Goods.FOOD.has(g) else ""])
+	lines.append("In store: %d" % int(s.stock.get(g, 0)))
+	lines.append(_rates_line(made, used, "used"))
+	# Who makes and uses it, among your own buildings.
+	var makers := {}
+	var users := {}
+	for b: Dictionary in s.buildings:
+		if not s.is_built(b):
+			continue
+		for r: Dictionary in BuildingDefs.recipes(String(b.id), int(b.get("kind", 0))):
+			if (r.makes as Dictionary).has(g):
+				makers[b.id] = int(makers.get(b.id, 0)) + 1
+			if (r.get("uses", {}) as Dictionary).has(g):
+				users[b.id] = int(users.get(b.id, 0)) + 1
+	if not makers.is_empty():
+		lines.append("Made by: " + _counted(makers))
+	if not users.is_empty():
+		lines.append("Used by: " + _counted(users))
+	if makers.is_empty():
+		var could := PackedStringArray()
+		for id in BuildingDefs.DEFS:
+			if BuildingDefs.is_expansion(id):
+				continue
+			for r: Dictionary in BuildingDefs.recipes(id):
+				if (r.makes as Dictionary).has(g) and not could.has(String(BuildingDefs.DEFS[id].name)):
+					could.append(String(BuildingDefs.DEFS[id].name))
+		if not could.is_empty():
+			lines.append("[color=#8a6a40]Nobody makes it yet - build a %s[/color]" % " or ".join(could.slice(0, 3)).to_lower())
+	for n: Array in Goods.NEEDS:
+		if n[0] == g:
+			lines.append("[color=#8a6a40]People want it: %s[/color]" % String(n[2]).to_lower())
+	return "
+".join(lines)
+
+
+func _per_min(v: float) -> String:
+	if v < 0.05:
+		return "0/min"
+	return ("%.1f/min" % v) if v < 10.0 else ("%d/min" % int(v))
+
+
+func _rates_line(made: float, used: float, used_word: String) -> String:
+	var net := made - used
+	var col := "#2f7a2a" if net > 0.05 else ("#b04030" if net < -0.05 else "#6a5a40")
+	return "+%s made, -%s %s   [color=%s][b]%s%s[/b][/color]" % [_per_min(made), _per_min(used), used_word, col, "+" if net >= 0.0 else "-", _per_min(absf(net))]
+
+
+func _counted(d: Dictionary) -> String:
+	var parts := PackedStringArray()
+	for id in d:
+		parts.append(("%s x%d" % [String(BuildingDefs.DEFS[id].name), d[id]]) if int(d[id]) > 1 else String(BuildingDefs.DEFS[id].name))
+	return ", ".join(parts)
 
 
 ## The panel for a clicked resource hex: what it is, who gathers it, and buttons to build them.
 func _show_resource(cell: int) -> void:
 	var was := _info.visible
 	_info.visible = true
-	_res_tip.visible = false
+	if _tip_key.begins_with("r"):
+		_hide_tip()
 	if not was:
-		var home := _info_x()
-		_info.position.x = home + (-400.0 if UiSettings.panel_left else 400.0)
-		_info.modulate.a = 0.0
-		var tw := create_tween().set_parallel(true).set_trans(Tween.TRANS_CUBIC).set_ease(Tween.EASE_OUT)
-		tw.tween_property(_info, "position:x", home, 0.25)
-		tw.tween_property(_info, "modulate:a", 1.0, 0.2)
+		_open_info()
 	var kind := world.resource_at(cell)
 	var info := _resource_lines(cell, true)
 	_info_title.text = "%s  (%s)" % [info[0], String(info[1]).to_lower()]
@@ -1160,6 +1367,7 @@ func _show_resource(cell: int) -> void:
 	if key != _expand_key:
 		_expand_key = key
 		for c in _expand_box.get_children():
+			_expand_box.remove_child(c)
 			c.queue_free()
 		var col := VBoxContainer.new()
 		col.size_flags_horizontal = Control.SIZE_EXPAND_FILL
@@ -1184,7 +1392,25 @@ func _show_resource(cell: int) -> void:
 		var hs := BuildingDefs.harvesters_for(kind)
 		for i in mini(hs.size(), col2.get_child_count()):
 			(col2.get_child(i) as Button).modulate.a = 1.0 if s.can_afford(BuildingDefs.DEFS[hs[i]].cost) else 0.5
+	_info.size = Vector2.ZERO
 	_info.reset_size()
+
+
+## The panel opens: laid out first while unseen, then slides and fades in at its real size.
+func _open_info() -> void:
+	_info.modulate.a = 0.0
+	_slide_info_in.call_deferred()
+
+
+func _slide_info_in() -> void:
+	await get_tree().process_frame
+	_info.size = Vector2.ZERO
+	_info.reset_size()
+	var home := _info_x()
+	_info.position.x = home + (-400.0 if UiSettings.panel_left else 400.0)
+	var tw := create_tween().set_parallel(true).set_trans(Tween.TRANS_CUBIC).set_ease(Tween.EASE_OUT)
+	tw.tween_property(_info, "position:x", home, 0.25)
+	tw.tween_property(_info, "modulate:a", 1.0, 0.2)
 
 
 func _update_info() -> void:
@@ -1201,12 +1427,7 @@ func _update_info() -> void:
 	if String(_expand_key).begins_with("res_"):
 		_expand_key = ""
 	if not was:
-		var home := _info_x()
-		_info.position.x = home + (-400.0 if UiSettings.panel_left else 400.0)
-		_info.modulate.a = 0.0
-		var tw := create_tween().set_parallel(true).set_trans(Tween.TRANS_CUBIC).set_ease(Tween.EASE_OUT)
-		tw.tween_property(_info, "position:x", home, 0.25)
-		tw.tween_property(_info, "modulate:a", 1.0, 0.2)
+		_open_info()
 	var d: Dictionary = BuildingDefs.DEFS[rec.id]
 	var s: Settlement = world.settlements[world._settlement_of(rec)]
 	_info_title.text = String(d.name)
@@ -1246,6 +1467,7 @@ func _update_info() -> void:
 	if key != _expand_key:
 		_expand_key = key
 		for c in _expand_box.get_children():
+			_expand_box.remove_child(c)
 			c.queue_free()
 		if s == world.me() and have.size() < BuildingDefs.MAX_EXPANSIONS:
 			for e: String in exts:
@@ -1273,4 +1495,5 @@ func _update_info() -> void:
 	else:
 		_info_bar.value = float(rec.timer) / maxf(float(d.get("cycle", 10.0)), 0.1) * 100.0 if d.has("cycle") else 100.0
 	_demolish.visible = rec.id != "town_hall" and s == world.me()
+	_info.size = Vector2.ZERO
 	_info.reset_size()
