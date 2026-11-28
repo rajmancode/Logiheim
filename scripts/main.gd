@@ -80,8 +80,13 @@ func _find_maps() -> PackedStringArray:
 		var dir := MAPS_ROOT.path_join(d)
 		if FileAccess.file_exists(dir.path_join("map.json")):
 			out.append(dir)
-	out.sort()
-	return out
+	# Maps list by their "order" in map.json (then by name): the island made for settling first.
+	var order := func(d: String) -> int:
+		var meta = JSON.parse_string(FileAccess.get_file_as_string(d.path_join("map.json")))
+		return int(meta.get("order", 100)) if meta is Dictionary else 100
+	var arr := Array(out)
+	arr.sort_custom(func(a, b): return order.call(a) < order.call(b) or (order.call(a) == order.call(b) and a < b))
+	return PackedStringArray(arr)
 
 
 func _load_map(i: int) -> void:

@@ -86,6 +86,12 @@ func rebuild() -> void:
 	if settings == null:
 		settings = HexMapSettings.new()
 	MapSeed.set_seed(settings.seed)
+	# The map's own settings, for this build only (put back afterwards).
+	var restore := {}
+	for k in source.settings_overrides:
+		if k in settings:
+			restore[k] = settings.get(k)
+			settings.set(k, source.settings_overrides[k])
 	if _base_material == null:
 		_base_material = TerrainMaterial.create()
 	building = true
@@ -118,6 +124,8 @@ func rebuild() -> void:
 	_build_water()
 	print("HexMap: built %d levels for '%s' in %d ms" % [levels.size(), source.name, Time.get_ticks_msec() - _t0])
 
+	for k in restore:
+		settings.set(k, restore[k])
 	active_level = -1
 	set_level(0)
 	building = false

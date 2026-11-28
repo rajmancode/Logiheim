@@ -17,6 +17,9 @@ var height := 0
 var heights := PackedFloat32Array()
 ## mask name -> MaskImage
 var masks: Dictionary = {}
+## Game settings this map overrides (map.json "settings"): e.g. no volcano on an island made
+## for settling. Applied for this map's builds only.
+var settings_overrides: Dictionary = {}
 
 
 class MaskImage:
@@ -55,6 +58,8 @@ static func load_from_dir(dir: String) -> TerrainSource:
 	src.world_size = Vector2(float(ws[0]), float(ws[1]))
 	src.height_range = float(meta.get("height_range", 200.0))
 	src.sea_level = float(meta.get("sea_level", -1.0))
+	if meta.get("settings", null) is Dictionary:
+		src.settings_overrides = meta.settings
 
 	var hm: Dictionary = meta.get("heightmap", {})
 	if not src._load_heightmap(dir, hm):

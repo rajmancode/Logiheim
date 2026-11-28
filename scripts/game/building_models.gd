@@ -265,30 +265,82 @@ static func shape(kind: String) -> Dictionary:
 	return info
 
 
-## A longhouse: stone footing, plank walls bowed slightly, a steep roof (turf or thatch) with
-## crossed gable boards at each end, door in the long side.
+## A Viking longhouse: walls bowed outwards along the length (widest in the middle), a
+## hog-backed roof whose ridge dips towards the ends, deep eaves with a fascia board, slanted
+## buttress posts propping the walls, a stone footing, crossed gable boards (dragon heads on a
+## hall), a smoke louver on the ridge, and a framed door with iron straps in the long side.
 static func _longhouse(k: Kit, c: Vector3, length: float, width: float, wall: float, roof_col: Color, carved: bool) -> void:
-	k.box(c + Vector3(0, 0.15, 0), Vector3(length + 0.4, 0.5, width + 0.4), STONE)
-	k.planks(c + Vector3(0, 0.4, 0), Vector3(length, wall, width), WOOD)
-	k.roof(c + Vector3(0, 0.4 + wall, 0), length + 1.0, width + 1.6, width * 0.75, roof_col)
-	var top := 0.4 + wall + width * 0.75
-	for s: float in [-1.0, 1.0]:
-		var e := c + Vector3(s * (length * 0.5 + 0.5), 0, 0)
-		# Crossed gable boards (dragon heads on a hall).
-		k.box(e + Vector3(0, top + 0.5, -0.45), Vector3(0.18, 1.6, 0.18), DARK_WOOD, Vector3(0.5, 0, 0))
-		k.box(e + Vector3(0, top + 0.5, 0.45), Vector3(0.18, 1.6, 0.18), DARK_WOOD, Vector3(-0.5, 0, 0))
+	const N := 12
+	var hl := length * 0.5
+	var bow := 0.14
+	var sag := 0.16
+	var roof_h := width * 0.78
+	var over := 0.7
+	k.box(c + Vector3(0, 0.15, 0), Vector3(length + 0.5, 0.5, width + 0.5), STONE)
+	var hw := func(t: float) -> float: return width * 0.5 * (1.0 - bow * t * t)
+	var ridge := func(t: float) -> float: return 0.4 + wall + roof_h * (1.0 - sag * t * t)
+	for i in N:
+		var t0 := -1.0 + 2.0 * i / N
+		var t1 := -1.0 + 2.0 * (i + 1) / N
+		var x0 := c.x + t0 * hl
+		var x1 := c.x + t1 * hl
+		for sd: float in [-1.0, 1.0]:
+			var z0: float = c.z + sd * hw.call(t0)
+			var z1: float = c.z + sd * hw.call(t1)
+			var n := Vector3(0, 0, sd)
+			# Wall.
+			k.quad(Vector3(x0, 0.4, z0), Vector3(x1, 0.4, z1), Vector3(x1, 0.4 + wall, z1), Vector3(x0, 0.4 + wall, z0), n, WOOD)
+			# Roof: eave (overhanging, a little lower) up to the ridge.
+			var e0 := Vector3(x0 - (over if i == 0 else 0.0), 0.15 + wall, z0 + sd * over)
+			var e1 := Vector3(x1 + (over if i == N - 1 else 0.0), 0.15 + wall, z1 + sd * over)
+			var r0 := Vector3(e0.x, ridge.call(t0), c.z)
+			var r1 := Vector3(e1.x, ridge.call(t1), c.z)
+			var rn := (e1 - e0).cross(r0 - e0).normalized()
+			if rn.y < 0.0:
+				rn = -rn
+			k.quad(e0, e1, r1, r0, rn, roof_col)
+			k.quad(e0 + Vector3(0, -0.25, 0), e1 + Vector3(0, -0.25, 0), r1 + Vector3(0, -0.25, 0), r0 + Vector3(0, -0.25, 0), -rn, DARK_WOOD * 0.8)
+			# Fascia: the roof's thick edge along the eave.
+			k.quad(e0 + Vector3(0, -0.25, 0), e1 + Vector3(0, -0.25, 0), e1, e0, Vector3(0, 0, sd), DARK_WOOD)
+			# Ridge cap.
+			k.box((r0 + r1) * 0.5 + Vector3(0, 0.1, 0), Vector3(absf(x1 - x0) + 0.05, 0.22, 0.5), DARK_WOOD)
+		# Buttress posts leaning against the walls, every other segment.
+		if i % 2 == 1:
+			for sd: float in [-1.0, 1.0]:
+				var zw: float = c.z + sd * hw.call(t1)
+				k.log(Vector3(x1, 0.4 + wall * 0.45, zw + sd * 0.55), 0.13, wall * 1.05, DARK_WOOD, Vector3(0, 1, -sd * 0.45).normalized())
+	# Gable ends: planked, and crossed boards above the ridge ends.
+	for sd: float in [-1.0, 1.0]:
+		var x := c.x + sd * hl
+		var w2: float = hw.call(1.0)
+		k.quad(Vector3(x, 0.4, c.z - w2), Vector3(x, 0.4, c.z + w2), Vector3(x, 0.4 + wall, c.z + w2), Vector3(x, 0.4 + wall, c.z - w2), Vector3(sd, 0, 0), WOOD)
+		k.tri(Vector3(x, 0.4 + wall, c.z - w2), Vector3(x, 0.4 + wall, c.z + w2), Vector3(x, ridge.call(1.0) - 0.3, c.z), Vector3(sd, 0, 0), WOOD)
+		var top: float = ridge.call(1.0)
+		var ex := x + sd * (over + 0.1)
+		k.box(Vector3(ex, top + 0.45, c.z - 0.4), Vector3(0.16, 1.5, 0.16), DARK_WOOD, Vector3(0.55, 0, 0))
+		k.box(Vector3(ex, top + 0.45, c.z + 0.4), Vector3(0.16, 1.5, 0.16), DARK_WOOD, Vector3(-0.55, 0, 0))
 		if carved:
-			k.box(e + Vector3(0, top + 1.3, -0.9), Vector3(0.3, 0.3, 0.7), DARK_WOOD)
-	k.box(c + Vector3(0, 1.4, -width * 0.5 - 0.06), Vector3(1.4, 2.2, 0.1), DARK_WOOD)
-	k.box(c + Vector3(0, 2.7, -width * 0.5 - 0.12), Vector3(2.0, 0.2, 0.2), DARK_WOOD)
+			# A dragon's head on each crossed board.
+			k.box(Vector3(ex + sd * 0.3, top + 1.25, c.z - 0.85), Vector3(0.5, 0.28, 0.6), DARK_WOOD, Vector3(0, 0.4 * sd, 0))
+			k.box(Vector3(ex + sd * 0.3, top + 1.25, c.z + 0.85), Vector3(0.5, 0.28, 0.6), DARK_WOOD, Vector3(0, -0.4 * sd, 0))
+	# Smoke louver on the ridge.
+	var rt: float = ridge.call(0.0)
+	k.box(c + Vector3(0, rt + 0.35, 0), Vector3(1.3, 0.5, 0.9), DARK_WOOD)
+	k.roof(c + Vector3(0, rt + 0.6, 0), 1.6, 1.3, 0.45, roof_col)
+	# The door: posts and a lintel round a planked leaf with iron straps.
+	var dz: float = c.z - hw.call(0.0) - 0.06
+	k.box(Vector3(c.x - 0.8, 0.4 + 1.15, dz), Vector3(0.2, 2.3, 0.2), DARK_WOOD)
+	k.box(Vector3(c.x + 0.8, 0.4 + 1.15, dz), Vector3(0.2, 2.3, 0.2), DARK_WOOD)
+	k.box(Vector3(c.x, 0.4 + 2.35, dz - 0.02), Vector3(2.1, 0.25, 0.24), DARK_WOOD)
+	k.box(Vector3(c.x, 0.4 + 1.1, dz + 0.02), Vector3(1.4, 2.2, 0.08), DARK_WOOD * 0.85)
+	for y in [0.6, 1.7]:
+		k.box(Vector3(c.x, 0.4 + y, dz - 0.03), Vector3(1.3, 0.08, 0.04), IRON)
+	k.box(Vector3(c.x, 0.4, dz - 0.5), Vector3(2.2, 0.15, 0.9), STONE)
 
 
-## A small house: plank walls on a stone footing and a steep roof, door in the front.
+## A small house: the same build, shorter and less bowed.
 static func _house(k: Kit, c: Vector3, length: float, width: float, wall: float, roof_col: Color) -> void:
-	k.box(c + Vector3(0, 0.12, 0), Vector3(length + 0.3, 0.4, width + 0.3), STONE)
-	k.planks(c + Vector3(0, 0.3, 0), Vector3(length, wall, width), WOOD)
-	k.roof(c + Vector3(0, 0.3 + wall, 0), length + 0.8, width + 1.2, width * 0.7, roof_col)
-	k.box(c + Vector3(0, 1.2, -width * 0.5 - 0.06), Vector3(1.1, 1.9, 0.1), DARK_WOOD)
+	_longhouse(k, c, length, width, wall, roof_col, false)
 
 
 ## A wattle fence `length` long through c, turned by `ang` (radians, about y).
@@ -412,10 +464,29 @@ class Kit:
 			var t := b
 			b = c
 			c = t
+		var m := material_of(col)
 		for p in [a, b, c]:
 			st.set_color(col)
 			st.set_normal(n)
+			st.set_uv(Vector2(m, 0.0))
 			st.add_vertex(p)
+
+	## Which surface a colour is (shaders/building.gdshader draws each its own way):
+	## 0 timber (boards, beams), 1 thatch, 2 turf, 3 stone, 4 iron, 5 the owner's cloth, 6 plain.
+	static func material_of(col: Color) -> float:
+		if col.a < 0.25:
+			return 5.0
+		var mx := maxf(col.r, maxf(col.g, col.b))
+		var mn := minf(col.r, minf(col.g, col.b))
+		if mx - mn < 0.05:
+			return 4.0 if mx < 0.25 else 3.0
+		if col.g > col.r * 1.05 and col.g > col.b:
+			return 2.0
+		if col.r > 0.5 and col.g > col.r * 0.78 and col.b < col.g * 0.7:
+			return 1.0
+		if col.r > col.g and col.g > col.b:
+			return 0.0
+		return 6.0
 
 	func quad(a: Vector3, b: Vector3, c: Vector3, d: Vector3, n: Vector3, col: Color) -> void:
 		tri(a, b, c, n, col)
@@ -451,12 +522,6 @@ class Kit:
 	func planks(base: Vector3, s: Vector3, col: Color) -> void:
 		var boards := maxi(2, int(maxf(s.x, s.z) / 0.35))
 		box(base + Vector3(0, s.y * 0.5, 0), s, col)
-		# Board seams: thin dark strips proud of the wall on the long sides.
-		var n := int(s.x / 0.5)
-		for i in n:
-			var x := -s.x * 0.5 + (i + 0.5) * s.x / n
-			for zs: float in [-1.0, 1.0]:
-				box(base + Vector3(x, s.y * 0.5, zs * (s.z * 0.5 + 0.015)), Vector3(0.05, s.y, 0.03), col * (0.7 + 0.1 * float(i % 3)))
 		boards = boards
 
 	## A gabled roof whose eaves sit at `base` (ridge along x), `l` long, `w` wide, `h` high.
@@ -517,6 +582,36 @@ class Kit:
 			quad(c + o0, top + o0, top + o1, c + o1, n, col * (0.85 + 0.15 * maxf(n.y, 0.0)))
 			tri(top, top + o0, top + o1, f, col * 1.05)
 			tri(c, c + o0, c + o1, -f, col * 0.7)
+
+	## A tapered cylinder standing on c: radius r0 at the bottom, r1 at the top.
+	func frustum(c: Vector3, r0: float, r1: float, h: float, col: Color, sides := 10) -> void:
+		var top := c + Vector3(0, h, 0)
+		for i in sides:
+			var a0 := TAU * i / sides
+			var a1 := TAU * (i + 1) / sides
+			var d0 := Vector3(cos(a0), 0, sin(a0))
+			var d1 := Vector3(cos(a1), 0, sin(a1))
+			var dm := Vector3(cos((a0 + a1) * 0.5), 0, sin((a0 + a1) * 0.5))
+			var n := (dm * h + Vector3(0, r0 - r1, 0)).normalized()
+			quad(c + d0 * r0, c + d1 * r0, top + d1 * r1, top + d0 * r1, n, col * (0.88 + 0.12 * maxf(n.y, 0.0)))
+			tri(top, top + d0 * r1, top + d1 * r1, Vector3.UP, col)
+			tri(c, c + d0 * r0, c + d1 * r0, Vector3.DOWN, col * 0.8)
+
+	## A sphere of radius r round c (a low-poly globe).
+	func sphere(c: Vector3, r: float, col: Color, rings := 6, sides := 10) -> void:
+		for j in rings:
+			var p0 := PI * j / rings - PI * 0.5
+			var p1 := PI * (j + 1) / rings - PI * 0.5
+			for i in sides:
+				var a0 := TAU * i / sides
+				var a1 := TAU * (i + 1) / sides
+				var v := func(p: float, a: float) -> Vector3: return Vector3(cos(p) * cos(a), sin(p), cos(p) * sin(a))
+				var q0: Vector3 = v.call(p0, a0)
+				var q1: Vector3 = v.call(p0, a1)
+				var q2: Vector3 = v.call(p1, a1)
+				var q3: Vector3 = v.call(p1, a0)
+				var n := (q0 + q1 + q2 + q3).normalized()
+				quad(c + q0 * r, c + q1 * r, c + q2 * r, c + q3 * r, n, col * (0.9 + 0.1 * maxf(n.y, 0.0)))
 
 	func cone(c: Vector3, r: float, h: float, col: Color, sides := 10) -> void:
 		var top := c + Vector3(0, h, 0)

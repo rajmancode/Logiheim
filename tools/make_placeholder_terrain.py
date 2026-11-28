@@ -86,7 +86,56 @@ def make_valley(rng, res):
     return normalise(height), 0.10
 
 
-def write_map(name, title, res, world_size, height_range, maker, seed):
+def make_settlers_isle(rng, res):
+    """An island made for settling: broad, gentle coastal plains rising slowly to rolling hills,
+    sheltered bays cut into the coast, river valleys, and one rugged upland ridge (stone, ore)
+    kept to the north so most of the land stays buildable. A few islets offshore."""
+    h, w = res
+    yy, xx = np.mgrid[0:h, 0:w].astype(np.float32)
+    dx = (xx / w - 0.5) * 2.0
+    dy = (yy / h - 0.5) * 2.0
+    # A broad, lobed outline (wider than tall), its coast wandering.
+    warp = (fbm(res, 2.8, rng) - 0.5) * 0.28
+    dist = np.sqrt((dx / 0.86) ** 2 + (dy / 0.78) ** 2) + warp
+    # Sheltered bays: inlets bitten into the coast all round, longer than they are wide, each
+    # reaching in from the open sea.
+    for k in range(6):
+        ang = k * (2.0 * np.pi / 6.0) + rng.uniform(-0.3, 0.3)
+        ca, sa = np.cos(ang), np.sin(ang)
+        r = rng.uniform(0.86, 0.95)
+        bx, by = ca * r * 0.86, sa * r * 0.78
+        # Along the inlet (radial) and across it.
+        along = (dx - bx) * ca + (dy - by) * sa
+        across = -(dx - bx) * sa + (dy - by) * ca
+        width = rng.uniform(0.06, 0.1)
+        length = rng.uniform(0.16, 0.24)
+        dist += 0.4 * np.exp(-(across / width) ** 2 - (np.minimum(along, 0.0) / length) ** 2)
+    inland = np.clip(1.0 - dist, 0.0, 1.0)
+    # Gentle land: a low coastal plain that rises slowly inland.
+    plain = 0.16 + 0.22 * np.clip(inland / 0.6, 0, 1) ** 1.3
+    hills = (blur(fbm(res, 3.0, rng), 6) - 0.5) * 0.12 * np.clip(inland * 3.0, 0, 1)
+    # The upland ridge: rugged mountains confined to a band across the north.
+    band = np.exp(-((dy + 0.38) / 0.2) ** 2) * np.clip(1.0 - np.abs(dx) / 0.75, 0, 1)
+    ridge = blur(ridged(fbm(res, 2.1, rng)) ** 1.6, 2) * band * 0.42
+    # River valleys: soft troughs following the drainage of a smooth field.
+    vf = fbm(res, 3.0, rng)
+    valleys = blur(np.exp(-((vf - 0.5) / 0.07) ** 2), 4) * 0.05 * np.clip(inland * 2.5, 0, 1)
+    land_h = plain + hills + ridge - valleys
+    # Below the coast the sea floor shelves away.
+    sea_h = 0.15 * np.clip(1.0 + (1.0 - dist) * 2.0, 0, 1)
+    height = np.where(dist < 1.0, np.maximum(land_h * np.clip((1.0 - dist) / 0.08, 0, 1) + sea_h * (1 - np.clip((1.0 - dist) / 0.08, 0, 1)), 0), sea_h)
+    # A few islets offshore.
+    for k in range(4):
+        ang = rng.uniform(0, 2 * np.pi)
+        r = rng.uniform(1.18, 1.3)
+        ix, iy = np.cos(ang) * r * 0.86, np.sin(ang) * r * 0.78
+        height += 0.1 * np.exp(-(((dx - ix) ** 2 + (dy - iy) ** 2) / 0.0025))
+    height = normalise(blur(normalise(height), 2.0))
+    land_fraction = float((dist < 1.0).mean())
+    return height, 1.0 - land_fraction
+
+
+def write_map(name, title, res, world_size, height_range, maker, seed, order=None, settings=None):
     rng = np.random.default_rng(seed)
     height, water_fraction = maker(rng, res)
     sea_level = float(np.quantile(height, water_fraction))
@@ -121,10 +170,17 @@ def write_map(name, title, res, world_size, height_range, maker, seed):
         "masks": {k: f"{k}.png" for k in masks},
         "source": "placeholder (tools/make_placeholder_terrain.py)",
     }
+    if order is not None:
+        meta["order"] = order
+    if settings:
+        meta["settings"] = settings
     (out / "map.json").write_text(json.dumps(meta, indent=2) + "\n")
     print(f"wrote {out}  {res[1]}x{res[0]} px, {world_size[0]}x{world_size[1]} m, sea level {sea_level:.3f}")
 
 
 if __name__ == "__main__":
+    # Made for settling: no volcano burying the heart of the island in basalt.
+    write_map("vestervik", "Vestervik", (1024, 1024), (2048, 2048), 170.0, make_settlers_isle, 23, order=0,
+              settings={"volcano_count": 0})
     write_map("placeholder_island", "Placeholder Island", (1024, 1024), (2048, 2048), 260.0, make_island, 7)
     write_map("placeholder_valley", "Placeholder Valley", (512, 1024), (3072, 1536), 320.0, make_valley, 11)

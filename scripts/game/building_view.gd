@@ -94,16 +94,27 @@ func setup(p_record: Dictionary, p_settlement: Settlement, ground: Callable) -> 
 		add_child(_light)
 	# Builders at the site while it goes up.
 	for i in 2:
-		var v := _villager(Color(0.55, 0.45, 0.32))
+		var v := _villager(Color(0.55, 0.45, 0.32), "hammer")
 		_builders.append(v)
 	_place_builders()
 	_built = settlement.is_built(record)
 	_apply_build()
 
 
-func _villager(tunic: Color) -> Villager:
+## What its people do at their work, and what they carry home: [act, load].
+const TRADES := {
+	"woodcutter": ["chop", "log"], "quarry": ["pick", "stone"], "mine": ["pick", "stone"],
+	"farm": ["reap", "sack"], "fishing_hut": ["net", "fish"], "hunting_lodge": ["hammer", "sack"],
+	"sheepfold": ["idle", "sack"], "clay_pit": ["dig", "sack"], "salt_works": ["stir", "sack"],
+	"peat_cutter": ["dig", "sack"], "tar_kiln": ["stir", "log"], "amber_gatherer": ["dig", "sack"],
+	"brewery": ["stir", "sack"], "bakery": ["stir", "sack"], "smithy": ["hammer", ""],
+	"weaponsmith": ["hammer", ""], "weaver": ["stir", ""], "barracks": ["chop", ""],
+}
+
+
+func _villager(tunic: Color, a := "idle") -> Villager:
 	var v := Villager.new()
-	v.setup(settlement.color, tunic, _people_mat, height_at)
+	v.setup(settlement.color, tunic, _people_mat, height_at, a)
 	get_tree_root_add(v)
 	return v
 
@@ -178,20 +189,24 @@ func _place_builders() -> void:
 	for i in _builders.size():
 		var a: Vector3 = corners[i * 2 % corners.size()]
 		var b: Vector3 = corners[(i * 2 + 1) % corners.size()]
-		(_builders[i] as Villager).set_round([{"at": _world(a), "work": 4.0 + i}, {"at": _world(Vector3(a.x, 0, b.z)), "work": 3.0}, {"at": _world(b), "work": 4.0}])
+		(_builders[i] as Villager).set_round([{"at": _world(a), "work": 4.0 + i, "act": "hammer"},
+			{"at": _world(Vector3(a.x, 0, b.z)), "work": 3.0, "act": "hammer", "carry": "log"},
+			{"at": _world(b), "work": 4.0, "act": "hammer"}])
 
 
 ## Its people at work: from the door to the work and back, once per cycle or so.
 func _set_workers(n: int) -> void:
 	while _workers.size() < n:
-		var tunics := [Color(0.42, 0.36, 0.28), Color(0.3, 0.38, 0.32), Color(0.48, 0.32, 0.26)]
-		var v := _villager(tunics[_workers.size() % tunics.size()])
+		var tunics := [Color(0.42, 0.36, 0.28), Color(0.3, 0.38, 0.32), Color(0.48, 0.32, 0.26), Color(0.36, 0.33, 0.42)]
+		var trade: Array = TRADES.get(record.id, ["idle", ""])
+		var v := _villager(tunics[_workers.size() % tunics.size()], trade[0])
 		_workers.append(v)
 		var door: Vector3 = info.door
 		var work: Vector3 = info.work
-		var off := Vector3(1.2 * _workers.size() - 1.8, 0, 0)
-		v.set_round([{"at": _world(door + Vector3(0, 0, -1.0)), "work": 1.5 + _workers.size()},
-			{"at": _world(work + off), "work": 6.0}])
+		var off := Vector3(1.4 * _workers.size() - 2.1, 0, 0.6 * (_workers.size() % 2))
+		# To the work (empty-handed), work at it, then home with what was made, and set it down.
+		v.set_round([{"at": _world(work + off), "work": 7.0 + _workers.size(), "act": trade[0]},
+			{"at": _world(door + Vector3(0, 0, -1.2)), "work": 1.8, "act": "drop", "carry": trade[1]}])
 		if record.id == "watchtower":
 			v.top_level = false
 			v.position = work
