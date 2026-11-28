@@ -23,7 +23,7 @@ const IRON := Color(0.22, 0.22, 0.24)
 const TEAM := Color(1, 1, 1, 0.0)   # tinted to the owner's colour
 const SHINGLE := Color(0.47, 0.38, 0.38)  # weathered wooden shingles (drawn as such by the shader)
 const WINDOW := Color(0.11, 0.07, 0.031)
-const PAINT := Color(1, 1, 1, 0.5)  # painted in the household's colour (doors, shutters)  # a window or door opening: dark by day, lit from within at night
+const PAINT := Color(1, 0, 1, 1)  # painted in the household's colour (doors, shutters)  # a window or door opening: dark by day, lit from within at night
 
 static var _cache := {}
 
@@ -1269,8 +1269,15 @@ class Kit:
 			b = c
 			c = t
 		var m := material_of(col)
+		# Alpha says what the shader paints: 0 the owner's colour, 0.5 the household's paint
+		# (brightness in rgb), 1 the colour as it is. Set here, never by scaling a colour.
+		var out := Color(col.r, col.g, col.b, 1.0)
+		if m == 5.0:
+			out = Color(col.r, col.r, col.r, 0.0)
+		elif _is_paint(col):
+			out = Color(col.r, col.r, col.r, 0.5)
 		for p in [a, b, c]:
-			st.set_color(col)
+			st.set_color(out)
 			st.set_normal(n)
 			st.set_uv(Vector2(m, 0.0))
 			st.add_vertex(p * s)
@@ -1278,10 +1285,13 @@ class Kit:
 	## Which surface a colour is (shaders/building.gdshader draws each its own way):
 	## 0 timber (boards, beams), 1 thatch, 2 turf, 3 stone, 4 iron, 5 the owner's cloth, 6 plain,
 	## 7 wooden shingles.
+	static func _is_paint(col: Color) -> bool:
+		return col.g < 0.01 and col.r > 0.05 and absf(col.r - col.b) < 0.01
+
 	static func material_of(col: Color) -> float:
-		if col.a < 0.25:
+		if col.a < 0.25 and absf(col.r - col.g) < 0.01 and absf(col.g - col.b) < 0.01 and col.r > 0.2:
 			return 5.0
-		if col.a < 0.75:
+		if _is_paint(col):
 			return 0.0
 		if col.is_equal_approx(WINDOW):
 			return 9.0
