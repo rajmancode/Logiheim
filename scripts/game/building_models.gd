@@ -36,6 +36,7 @@ static func shape(kind: String) -> Dictionary:
 		return _cache[kind]
 	var k := Kit.new()
 	k.s = SCALE
+	seed(hash(kind))
 	var info := {"height": 6.0, "size": Vector2(8, 8), "chimney": null, "door": Vector3(0, 0, -4), "work": Vector3(0, 0, -7),
 		"flag": null, "cart": false, "boat": false}
 	match kind:
@@ -138,7 +139,7 @@ static func shape(kind: String) -> Dictionary:
 				var b0 := f * 4.4 + sd * 4.4 + Vector3(0, 4.6, 0)
 				var b1 := f * 4.4 - sd * 4.4 + Vector3(0, 4.6, 0)
 				var gn := (f * 1.6 + Vector3(0, 2.3, 0)).normalized()
-				k.quad(a0, a1, b1, b0, gn, SHINGLE)
+				k.roof_face(a0, a1, b0, b1, SHINGLE)
 				k.quad(a0 - Vector3(0, 0.2, 0), a1 - Vector3(0, 0.2, 0), b1 - Vector3(0, 0.2, 0), b0 - Vector3(0, 0.2, 0), -gn, DARK_WOOD * 0.7)
 			k.planks(Vector3(0, 0.9, 0), Vector3(8.8, 5.2, 8.8), DARK_WOOD)
 			var y := 6.1
@@ -629,7 +630,7 @@ static func _lean_to(k: Kit, c: Vector3, l: float, w: float, h: float) -> void:
 	var n := (b - a).cross(d - a).normalized()
 	if n.y < 0.0:
 		n = -n
-	k.quad(a, b, e, d, n, TURF)
+	k.roof_face(a, b, d, e, TURF)
 	k.quad(a - Vector3(0, 0.15, 0), b - Vector3(0, 0.15, 0), e - Vector3(0, 0.15, 0), d - Vector3(0, 0.15, 0), -n, DARK_WOOD * 0.7)
 
 
@@ -649,12 +650,26 @@ static func _trestle(k: Kit, c: Vector3) -> void:
 static func _portal(k: Kit, base: Vector3, h: float, grand: bool) -> void:
 	var hw := 1.0 if grand else 0.75
 	for s: float in [-1.0, 1.0]:
-		k.box(base + Vector3(s * hw, h * 0.5, -0.08), Vector3(0.28, h, 0.28), DARK_WOOD)
-		k.box(base + Vector3(s * hw, h * 0.35, -0.16), Vector3(0.3, 0.16, 0.1), TEAM)
-		k.box(base + Vector3(s * hw, h * 0.75, -0.16), Vector3(0.3, 0.16, 0.1), TEAM)
-	k.box(base + Vector3(0, h * 0.5 - 0.05, 0.0), Vector3(hw * 2.0 - 0.2, h, 0.08), DARK_WOOD * 0.8)
-	for y in [0.35, 0.75]:
-		k.box(base + Vector3(0, h * y, -0.06), Vector3(hw * 2.0 - 0.3, 0.07, 0.04), IRON)
+		# The posts carved in relief: a stack of swelling and narrowing blocks, interlace cut
+		# into the face, painted bands.
+		var y := 0.0
+		var j := 0
+		while y < h - 0.05:
+			var bh := minf(0.24, h - y)
+			var wide := 0.32 if j % 2 == 0 else 0.26
+			k.box(base + Vector3(s * hw, y + bh * 0.5, -0.08), Vector3(wide, bh, wide), DARK_WOOD * (1.0 if j % 2 == 0 else 0.85))
+			if j % 2 == 1:
+				k.box(base + Vector3(s * hw, y + bh * 0.5, -0.23), Vector3(0.14, 0.14, 0.04), DARK_WOOD * 1.15, Vector3(0, 0, PI * 0.25))
+			y += bh
+			j += 1
+		k.box(base + Vector3(s * hw, h * 0.35, -0.16), Vector3(0.34, 0.12, 0.1), TEAM)
+		k.box(base + Vector3(s * hw, h * 0.75, -0.16), Vector3(0.34, 0.12, 0.1), TEAM)
+	# The leaf: boards, and iron strap hinges with curled ends.
+	k.boards(base + Vector3(-hw + 0.12, 0, 0.04), base + Vector3(hw - 0.12, 0, 0.04), h - 0.05, Vector3(0, 0, -1), DARK_WOOD * 0.9)
+	for y in [0.3, 0.72]:
+		k.box(base + Vector3(-0.1, h * y, -0.06), Vector3(hw * 2.0 - 0.5, 0.07, 0.04), IRON)
+		k.cylinder(base + Vector3(hw - 0.42, h * y, -0.04), 0.07, 0.05, IRON, 8, Vector3(0, 0, -1))
+		k.box(base + Vector3(hw - 0.5, h * y + 0.07, -0.06), Vector3(0.05, 0.12, 0.04), IRON, Vector3(0, 0, 0.6))
 	const N := 7
 	for i in N:
 		var a := PI * (i + 0.5) / N
@@ -688,7 +703,11 @@ static func _longhouse(k: Kit, c: Vector3, length: float, width: float, wall: fl
 	var sag := 0.16
 	var roof_h := width * 0.78
 	var over := 0.7
-	k.box(c + Vector3(0, 0.15, 0), Vector3(length + 0.5, 0.5, width + 0.5), STONE)
+	# The footing: laid stones round the edge, rubble fill inside.
+	k.box(c + Vector3(0, 0.1, 0), Vector3(length + 0.2, 0.5, width + 0.2), DARK_STONE)
+	for sd: float in [-1.0, 1.0]:
+		k.stones(c + Vector3(-hl - 0.3, -0.12, sd * (width * 0.5 + 0.12)), c + Vector3(hl + 0.3, -0.12, sd * (width * 0.5 + 0.12)), 0.62, 0.5, 2, STONE)
+		k.stones(c + Vector3(sd * (hl + 0.12), -0.12, -width * 0.5), c + Vector3(sd * (hl + 0.12), -0.12, width * 0.5), 0.62, 0.5, 2, STONE)
 	var hw := func(t: float) -> float: return width * 0.5 * (1.0 - bow * t * t)
 	var ridge := func(t: float) -> float: return 0.4 + wall + roof_h * (1.0 - sag * t * t)
 	for i in N:
@@ -700,8 +719,11 @@ static func _longhouse(k: Kit, c: Vector3, length: float, width: float, wall: fl
 			var z0: float = c.z + sd * hw.call(t0)
 			var z1: float = c.z + sd * hw.call(t1)
 			var n := Vector3(0, 0, sd)
-			# Wall.
-			k.quad(Vector3(x0, 0.4, z0), Vector3(x1, 0.4, z1), Vector3(x1, 0.4 + wall, z1), Vector3(x0, 0.4 + wall, z0), n, WOOD)
+			# Wall: upright boards between a sill beam and a wall plate.
+			k.boards(Vector3(x0, 0.4, z0), Vector3(x1, 0.4, z1), wall, n, WOOD)
+			var seg := Vector3(x1 - x0, 0, z1 - z0)
+			k.log(Vector3((x0 + x1) * 0.5, 0.48, (z0 + z1) * 0.5) + n * 0.1, 0.1, seg.length() + 0.05, DARK_WOOD, seg)
+			k.log(Vector3((x0 + x1) * 0.5, 0.4 + wall - 0.08, (z0 + z1) * 0.5) + n * 0.1, 0.13, seg.length() + 0.05, DARK_WOOD, seg)
 			# Roof: eave (overhanging, a little lower) up to the ridge.
 			var e0 := Vector3(x0 - (over if i == 0 else 0.0), 0.15 + wall, z0 + sd * over)
 			var e1 := Vector3(x1 + (over if i == N - 1 else 0.0), 0.15 + wall, z1 + sd * over)
@@ -710,7 +732,10 @@ static func _longhouse(k: Kit, c: Vector3, length: float, width: float, wall: fl
 			var rn := (e1 - e0).cross(r0 - e0).normalized()
 			if rn.y < 0.0:
 				rn = -rn
-			k.quad(e0, e1, r1, r0, rn, roof_col)
+			k.roof_face(e0, e1, r0, r1, roof_col)
+			# Rafter ends showing under the eave.
+			if i > 0:
+				k.log(Vector3(x0, 0.15 + wall - 0.4, z0 + sd * over * 0.55), 0.08, 1.0, DARK_WOOD, Vector3(0, -0.45, sd).normalized())
 			k.quad(e0 + Vector3(0, -0.25, 0), e1 + Vector3(0, -0.25, 0), r1 + Vector3(0, -0.25, 0), r0 + Vector3(0, -0.25, 0), -rn, DARK_WOOD * 0.8)
 			# Fascia: the roof's thick edge along the eave.
 			k.quad(e0 + Vector3(0, -0.25, 0), e1 + Vector3(0, -0.25, 0), e1, e0, Vector3(0, 0, sd), DARK_WOOD)
@@ -733,7 +758,7 @@ static func _longhouse(k: Kit, c: Vector3, length: float, width: float, wall: fl
 				var gn := (gi1 - gi0).cross(go0 - gi0).normalized()
 				if gn.y < 0.0:
 					gn = -gn
-				k.quad(gi0, gi1, go1, go0, gn, roof_col)
+				k.roof_face(go0, go1, gi0, gi1, roof_col)
 				k.quad(gi0 - Vector3(0, 0.15, 0), gi1 - Vector3(0, 0.15, 0), go1 - Vector3(0, 0.15, 0), go0 - Vector3(0, 0.15, 0), -gn, DARK_WOOD * 0.7)
 		# Buttress posts leaning against the walls, every other segment.
 		if i % 2 == 1 and not opts.get("gallery", false):
@@ -744,8 +769,12 @@ static func _longhouse(k: Kit, c: Vector3, length: float, width: float, wall: fl
 	for sd: float in [-1.0, 1.0]:
 		var x := c.x + sd * hl
 		var w2: float = hw.call(1.0)
-		k.quad(Vector3(x, 0.4, c.z - w2), Vector3(x, 0.4, c.z + w2), Vector3(x, 0.4 + wall, c.z + w2), Vector3(x, 0.4 + wall, c.z - w2), Vector3(sd, 0, 0), WOOD)
-		k.tri(Vector3(x, 0.4 + wall, c.z - w2), Vector3(x, 0.4 + wall, c.z + w2), Vector3(x, ridge.call(1.0) - 0.3, c.z), Vector3(sd, 0, 0), WOOD)
+		# The gable wall: boards rising to the roof line, stout corner posts.
+		var gtop: float = ridge.call(1.0) - 0.3 - 0.4
+		k.boards(Vector3(x, 0.4, c.z - w2), Vector3(x, 0.4, c.z), wall, Vector3(sd, 0, 0), WOOD, gtop)
+		k.boards(Vector3(x, 0.4, c.z), Vector3(x, 0.4, c.z + w2), gtop, Vector3(sd, 0, 0), WOOD, wall)
+		for zs: float in [-1.0, 1.0]:
+			k.post(Vector3(x, 0.4, c.z + zs * w2), wall, 0.17, DARK_WOOD)
 		var top: float = ridge.call(1.0)
 		var ex := x + sd * (over + 0.1)
 		k.box(Vector3(ex, top + 0.45, c.z - 0.4), Vector3(0.16, 1.5, 0.16), DARK_WOOD, Vector3(0.55, 0, 0))
@@ -979,11 +1008,131 @@ class Kit:
 			var shade := 0.82 + 0.18 * maxf(n.y, 0.0) - 0.08 * maxf(-n.y, 0.0)
 			quad(c + bs * (o - du - dv), c + bs * (o + du - dv), c + bs * (o + du + dv), c + bs * (o - du + dv), bs * n, col * shade)
 
-	## Plank walls: a box whose sides are striped in boards of slightly different shades.
-	func planks(base: Vector3, s: Vector3, col: Color) -> void:
-		var boards := maxi(2, int(maxf(s.x, s.z) / 0.35))
-		box(base + Vector3(0, s.y * 0.5, 0), s, col)
-		boards = boards
+	## Plank walls round a box: a dark core with upright boards on all four sides and stout
+	## posts at the corners.
+	func planks(base: Vector3, sz: Vector3, col: Color) -> void:
+		box(base + Vector3(0, sz.y * 0.5, 0), sz - Vector3(0.1, 0.0, 0.1), col * 0.4)
+		var hx := sz.x * 0.5
+		var hz := sz.z * 0.5
+		boards(base + Vector3(-hx, 0, -hz), base + Vector3(hx, 0, -hz), sz.y, Vector3(0, 0, -1), col)
+		boards(base + Vector3(-hx, 0, hz), base + Vector3(hx, 0, hz), sz.y, Vector3(0, 0, 1), col)
+		boards(base + Vector3(-hx, 0, -hz), base + Vector3(-hx, 0, hz), sz.y, Vector3(-1, 0, 0), col)
+		boards(base + Vector3(hx, 0, -hz), base + Vector3(hx, 0, hz), sz.y, Vector3(1, 0, 0), col)
+		for x in [-hx, hx]:
+			for z in [-hz, hz]:
+				box(base + Vector3(x, sz.y * 0.5, z), Vector3(0.24, sz.y, 0.24), DARK_WOOD)
+
+	## Upright boards standing side by side along a ground line a -> b (y is their foot), `h`
+	## high (rising to `h_end` at b if given), facing `out`: each its own width of the run,
+	## shade and slight lean, a dark gap and a backing behind them.
+	func boards(a: Vector3, b: Vector3, h: float, out: Vector3, col: Color, h_end := -1.0) -> void:
+		var d := b - a
+		var run := Vector2(d.x, d.z).length()
+		if run < 0.05:
+			return
+		var dir := d / run
+		var o := out.normalized()
+		var ang := atan2(-dir.z, dir.x)
+		var he := h if h_end < 0.0 else h_end
+		var back := -o * 0.03
+		quad(a + back, b + back, b + back + Vector3(0, he, 0), a + back + Vector3(0, h, 0), o, col * 0.3)
+		var n := maxi(1, int(ceil(run / 0.3)))
+		var w := run / n
+		for i in n:
+			var t := (i + 0.5) / n
+			var bh := lerpf(h, he, t)
+			if bh < 0.05:
+				continue
+			var p := a.lerp(b, t) + o * (0.03 + randf() * 0.025)
+			box(p + Vector3(0, bh * 0.5, 0), Vector3(w - 0.035, bh + randf() * 0.05, 0.08), col * (0.82 + randf() * 0.3), Vector3(0, ang, (randf() - 0.5) * 0.015))
+
+	## A wall of laid stones along a -> b (y is its foot), `h` high in `courses` rows, `depth`
+	## thick: each stone its own length, shade and set.
+	func stones(a: Vector3, b: Vector3, h: float, depth: float, courses: int, col: Color) -> void:
+		var d := b - a
+		var run := Vector2(d.x, d.z).length()
+		if run < 0.05:
+			return
+		var dir := d / run
+		var ang := atan2(-dir.z, dir.x)
+		var ch := h / courses
+		for r in courses:
+			var x := -randf() * 0.4
+			while x < run:
+				var x0 := maxf(x, 0.0)
+				var x1 := minf(x + randf_range(0.45, 0.95), run)
+				if x1 - x0 > 0.08:
+					var p := a + dir * ((x0 + x1) * 0.5) + Vector3(0, ch * (r + 0.5), 0)
+					box(p, Vector3(x1 - x0 - 0.05, ch - 0.04 + randf() * 0.05, depth + randf() * 0.1), col * (0.75 + randf() * 0.4),
+						Vector3((randf() - 0.5) * 0.06, ang + (randf() - 0.5) * 0.06, (randf() - 0.5) * 0.06))
+				x = x1 + 0.03
+
+	## A roof face from its eave (e0 -> e1) up to the ridge (r0 -> r1), built up the way it is
+	## laid: thatch in thick courses, shingles in rows of single shingles, each course stepping
+	## out over the one below with its butt edge showing; turf as a lumpy mat over a thick edge
+	## of birch bark. Anything else is one plain face.
+	func roof_face(e0: Vector3, e1: Vector3, r0: Vector3, r1: Vector3, col: Color) -> void:
+		var n := (e1 - e0).cross(r0 - e0).normalized()
+		if n.y < 0.0:
+			n = -n
+		var m := material_of(col)
+		var slope := (r0 - e0).length()
+		if m == 1.0 or m == 7.0:
+			var thatch := m == 1.0
+			var row := 0.42 if thatch else 0.3
+			var lip := 0.17 if thatch else 0.05
+			var rows := maxi(2, int(ceil(slope / row)))
+			var cols := 1 if thatch else maxi(1, int(ceil((e1 - e0).length() / 0.3)))
+			for i in rows:
+				# Per course, the same everywhere along the roof, so segments meet cleanly.
+				var hsh := fposmod(sin(float(i) * 12.9898 + slope) * 43758.5453, 1.0)
+				var t0 := float(i) / rows
+				var t1 := minf(float(i + 1) / rows + 0.4 / rows, 1.0)
+				for j in cols:
+					var g := 0.015 / maxf((e1 - e0).length(), 0.1) if cols > 1 else 0.0
+					var u0 := float(j) / cols + g
+					var u1 := float(j + 1) / cols - g
+					var off := 0.0 if thatch or i % 2 == 0 else 0.5 / cols
+					u0 = clampf(u0 - off, 0.0, 1.0)
+					u1 = clampf(u1 - off, 0.0, 1.0)
+					if u1 - u0 < 0.002:
+						continue
+					var lo0 := e0.lerp(r0, t0)
+					var lo1 := e1.lerp(r1, t0)
+					var hi0 := e0.lerp(r0, t1)
+					var hi1 := e1.lerp(r1, t1)
+					var a0 := lo0.lerp(lo1, u0)
+					var a1 := lo0.lerp(lo1, u1)
+					var b0 := hi0.lerp(hi1, u0)
+					var b1 := hi0.lerp(hi1, u1)
+					var l := lip * (0.8 + 0.4 * (hsh if thatch else randf()))
+					var sh := col * (0.86 + 0.22 * (hsh if thatch else randf()))
+					quad(a0 + n * l, a1 + n * l, b1, b0, n, sh)
+					quad(a0, a1, a1 + n * l, a0 + n * l, (a0 - b0).normalized(), sh * 0.72)
+		elif m == 2.0:
+			var rows := maxi(2, int(ceil(slope / 0.55)))
+			var cols := maxi(1, int(ceil((e1 - e0).length() / 0.55)))
+			var lump := func(q: Vector3) -> float:
+				return 0.2 + 0.07 * sin(q.x * 2.3 + q.z * 1.7) + 0.05 * sin(q.x * 5.1 - q.z * 3.7 + q.y * 2.0)
+			for i in rows:
+				for j in cols:
+					var c00 := e0.lerp(r0, float(i) / rows).lerp(e1.lerp(r1, float(i) / rows), float(j) / cols)
+					var c01 := e0.lerp(r0, float(i) / rows).lerp(e1.lerp(r1, float(i) / rows), float(j + 1) / cols)
+					var c10 := e0.lerp(r0, float(i + 1) / rows).lerp(e1.lerp(r1, float(i + 1) / rows), float(j) / cols)
+					var c11 := e0.lerp(r0, float(i + 1) / rows).lerp(e1.lerp(r1, float(i + 1) / rows), float(j + 1) / cols)
+					var p00: Vector3 = c00 + n * float(lump.call(c00))
+					var p01: Vector3 = c01 + n * float(lump.call(c01))
+					var p10: Vector3 = c10 + n * float(lump.call(c10))
+					var p11: Vector3 = c11 + n * float(lump.call(c11))
+					var qn := (p01 - p00).cross(p10 - p00).normalized()
+					if qn.dot(n) < 0.0:
+						qn = -qn
+					quad(p00, p01, p11, p10, qn, col * (0.9 + 0.15 * sin(c00.x * 3.0 + c00.z)))
+			# The turf's thick edge over a layer of birch bark at the eave.
+			var bark := Color(0.62, 0.55, 0.45)
+			quad(e0, e1, e1 + n * float(lump.call(e1)), e0 + n * float(lump.call(e0)), (e0 - r0).normalized(), bark)
+		else:
+			quad(e0, e1, r1, r0, n, col)
 
 	## A gabled roof whose eaves sit at `base` (ridge along x), `l` long, `w` wide, `h` high.
 	## `along_z`: the ridge runs along z instead (for crossing roofs).
@@ -997,13 +1146,15 @@ class Kit:
 			var e0: Vector3 = base + m.call(Vector3(-hl, 0, sd * hw))
 			var e1: Vector3 = base + m.call(Vector3(hl, 0, sd * hw))
 			var n: Vector3 = m.call(Vector3(0, hw, sd * h).normalized())
-			quad(e0, e1, r1, r0, n, col)
+			roof_face(e0, e1, r0, r1, col)
 			# Underside, darker.
 			quad(e0 + Vector3(0, -0.12, 0), e1 + Vector3(0, -0.12, 0), r1 + Vector3(0, -0.12, 0), r0 + Vector3(0, -0.12, 0), -n, DARK_WOOD * 0.6)
-		# Gable ends, walled in planks.
+		# Gable ends, walled in boards.
 		for sd: float in [-1.0, 1.0]:
 			var x := sd * (hl - 0.5)
-			tri(base + m.call(Vector3(x, 0, -hw + 0.5)), base + m.call(Vector3(x, 0, hw - 0.5)), base + m.call(Vector3(x, h - 0.4, 0)), m.call(Vector3(sd, 0, 0)), DARK_WOOD)
+			tri(base + m.call(Vector3(x, 0, -hw + 0.5)), base + m.call(Vector3(x, 0, hw - 0.5)), base + m.call(Vector3(x, h - 0.4, 0)), m.call(Vector3(sd, 0, 0)), DARK_WOOD * 0.4)
+			boards(base + m.call(Vector3(x, 0, -hw + 0.5)), base + m.call(Vector3(x, 0, 0)), 0.02, m.call(Vector3(sd, 0, 0)), DARK_WOOD, (h - 0.4) * 0.98)
+			boards(base + m.call(Vector3(x, 0, 0)), base + m.call(Vector3(x, 0, hw - 0.5)), (h - 0.4) * 0.98, m.call(Vector3(sd, 0, 0)), DARK_WOOD, 0.02)
 		# Ridge.
 		var rs: Vector3 = m.call(Vector3(l, 0.25, 0.4))
 		box((r0 + r1) * 0.5 + Vector3(0, 0.08, 0), rs, DARK_WOOD)
