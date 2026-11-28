@@ -30,6 +30,9 @@ var game_hud: GameHUD
 
 
 func _ready() -> void:
+	var sfx := Sfx.new()
+	sfx.name = "Sfx"
+	add_child(sfx)
 	atmosphere = Atmosphere.new()
 	atmosphere.name = "Atmosphere"
 	add_child(atmosphere)
@@ -171,7 +174,34 @@ func _on_landings_chosen(players: Array) -> void:
 	hud_panel.visible = false
 
 
+var _last_hour := -1.0
+
+
+## The world's sounds round the player: the sea, the wind as strong as it blows, birdsong by
+## day and crickets by night (hushed by rain), the rain itself; a bell at dawn.
+func _update_sound() -> void:
+	if atmosphere == null:
+		return
+	var night := Atmosphere.night
+	var rain := clampf(atmosphere.rain, 0.0, 1.0)
+	var near := 1.0 - clampf((cam.distance - 200.0) / 900.0, 0.0, 0.7) if cam != null else 1.0
+	Sfx.set_ambience({
+		"amb_sea": 0.5 * near,
+		"amb_wind": (0.12 + 0.55 * atmosphere.wind_now),
+		"amb_birds": 0.45 * (1.0 - night) * (1.0 - rain) * near,
+		"amb_crickets": 0.35 * night * (1.0 - rain) * near,
+		"amb_rain": 0.6 * rain,
+	})
+	var h := atmosphere.time_of_day
+	if game_world.running and _last_hour >= 0.0 and _last_hour < 6.0 and h >= 6.0 and h - _last_hour < 1.0:
+		Sfx.play("dawn", -6.0)
+	_last_hour = h
+
+
 func _process(_delta: float) -> void:
+	_update_sound()
+	if cam != null:
+		cam.wasd = not game_world.running
 	if hex_map.current_level() == null or hex_map.building:
 		return
 	if landing_ui.is_open():
@@ -256,6 +286,7 @@ func _unhandled_input(event: InputEvent) -> void:
 				return
 			KEY_SPACE:
 				game_world.paused = not game_world.paused
+				Sfx.play("pause" if game_world.paused else "resume")
 				return
 	match key.keycode:
 		KEY_C:

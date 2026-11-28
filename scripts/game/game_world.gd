@@ -453,6 +453,7 @@ func _lay_road(cell: int, say: bool) -> bool:
 		_plan_road(cell)
 	if _road_path.is_empty() or _road_paid == 0:
 		if say:
+			Sfx.play("error", -4.0)
 			var r := check(placing, cell)
 			message.emit(String(r[1]) if not r[0] and String(r[1]) != "" else ("Not enough to lay that road" if not _road_path.is_empty() else "No way to run a road there from your roads"))
 		return false
@@ -461,6 +462,9 @@ func _lay_road(cell: int, say: bool) -> bool:
 		var kind := Infrastructure.kind_for(lv(), j)
 		s.pay(Infrastructure.cost_for(kind))
 		s.roads[j] = kind
+	var mid: int = _road_path[_road_paid / 2]
+	var mc := lv().cell_center(mid)
+	Sfx.play_at("road", Vector3(mc.x, ground(mc), mc.y), 0.0 if say else -6.0)
 	if say and _road_paid < _road_path.size():
 		message.emit("Laid %d of %d hexes of road - not enough for the rest" % [_road_paid, _road_path.size()])
 	_infra_dirty = true
@@ -560,7 +564,10 @@ func muster() -> Dictionary:
 	var n := mini(int(s.stock.get("warriors", 0)), 24)
 	if n < 2:
 		message.emit("Not enough warriors to muster (2 at least - train them at the barracks)")
+		Sfx.play("error", -4.0)
 		return {}
+	Sfx.play("horn", -3.0)
+	Sfx.play("drums", -4.0)
 	s.stock["warriors"] = float(s.stock.get("warriors", 0)) - n
 	var hall_v: BuildingView = _views.get(s.hall.uid)
 	var front := Vector2(s.hall.pos.x, s.hall.pos.z)
@@ -654,6 +661,9 @@ func order_army(a: Dictionary, target: Vector2) -> void:
 	var to := l.cell_at(target)
 	if to < 0 or not _army_can_cross(to):
 		message.emit("The army can't go there")
+		Sfx.play("error", -4.0)
+	else:
+		Sfx.play("march", -3.0)
 		return
 	if _occupied.has(to):
 		message.emit("A building stands there")
@@ -883,6 +893,7 @@ func click(cell: int) -> bool:
 		var r := check(placing, cell)
 		if not r[0]:
 			message.emit(String(r[1]) if String(r[1]) != "" else "Can't build there")
+			Sfx.play("error", -4.0)
 			return true
 		var s := me()
 		var d: Dictionary = BuildingDefs.DEFS[placing]
@@ -892,6 +903,8 @@ func click(cell: int) -> bool:
 			return true
 		s.pay(d.cost)
 		var rec := _raise(s, placing, cell, false, int(r[2]), _expand_parent if d.has("expansion_of") else {})
+		Sfx.play_at("place", rec.pos)
+		Sfx.play("coins", -12.0)
 		message.emit("%s is being built." % String(d.name))
 		# Keep placing more of the same with shift held; otherwise done.
 		if not Input.is_key_pressed(KEY_SHIFT):
@@ -905,6 +918,7 @@ func click(cell: int) -> bool:
 	if cell >= 0 and resource_at(cell) != 0:
 		selected_resource = cell
 		resource_selected.emit(cell)
+		Sfx.play("pluck", -5.0)
 	return false
 
 
@@ -973,6 +987,7 @@ func select(rec: Dictionary) -> void:
 		resource_selected.emit(-1)
 	if not rec.is_empty() and _views.has(rec.uid):
 		(_views[rec.uid] as BuildingView).set_selected(true)
+		Sfx.play("select", -3.0)
 	selection_changed.emit(rec)
 
 
@@ -999,6 +1014,7 @@ func demolish(rec: Dictionary) -> void:
 	if d.has("territory"):
 		_territory_dirty = true
 	select({})
+	Sfx.play_at("demolish", rec.pos)
 	message.emit("%s pulled down." % String(d.name))
 
 
@@ -1008,7 +1024,9 @@ func expand() -> void:
 		return
 	if s.influence < s.expand_cost():
 		message.emit("Not enough influence (%d needed)." % s.expand_cost())
+		Sfx.play("error", -4.0)
 		return
+	Sfx.play("horn", -4.0)
 	s.influence -= s.expand_cost()
 	s.expansions += 1
 	_territory_dirty = true
@@ -1217,4 +1235,5 @@ func _process(delta: float) -> void:
 				_territory_dirty = true
 			if s.index == active and b.id != "town_hall":
 				message.emit("%s finished." % String(BuildingDefs.DEFS[b.id].name))
+				Sfx.play("build_done", -6.0)
 		s.just_finished.clear()

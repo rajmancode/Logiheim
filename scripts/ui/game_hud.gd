@@ -427,6 +427,7 @@ func _slide_ledger(on: bool) -> void:
 	var away := home + (440.0 if UiSettings.ledger_right else -440.0)
 	var tw := create_tween().set_parallel(true).set_trans(Tween.TRANS_CUBIC).set_ease(Tween.EASE_OUT)
 	# The clock shares the ledger's corner: it steps aside while the ledger is open.
+	Sfx.play("ui_open" if on else "ui_close", -4.0)
 	_clock_aside = on and UiSettings.panel_left == UiSettings.ledger_right
 	tw.tween_property(_clock, "modulate:a", 0.0 if _clock_aside else 1.0, 0.18)
 	if on:
@@ -535,6 +536,31 @@ func _build_options(theme: Theme) -> void:
 		UiSettings.scale = slider.value / 100.0
 		_changed_settings())
 	slider.value_changed.connect(func(x: float) -> void: _scale_label.text = "%d%%" % int(x))
+	var vrow := HBoxContainer.new()
+	v.add_child(vrow)
+	var vl := Label.new()
+	vl.text = "Sound"
+	vl.custom_minimum_size = Vector2(170, 0)
+	vrow.add_child(vl)
+	var vol := HSlider.new()
+	vol.min_value = 0
+	vol.max_value = 100
+	vol.step = 5
+	vol.value = UiSettings.sound * 100.0
+	vol.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	vol.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+	vol.focus_mode = Control.FOCUS_NONE
+	vrow.add_child(vol)
+	var vol_l := Label.new()
+	vol_l.custom_minimum_size = Vector2(56, 0)
+	vol_l.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
+	vol_l.text = "%d%%" % int(vol.value) if vol.value > 0 else "Off"
+	vrow.add_child(vol_l)
+	vol.value_changed.connect(func(x: float) -> void:
+		UiSettings.sound = x / 100.0
+		vol_l.text = "%d%%" % int(x) if x > 0 else "Off"
+		Sfx.play("ui_click"))
+	vol.drag_ended.connect(func(_c: bool) -> void: UiSettings.save())
 	v.add_child(_choice("Resource bar", ["Top", "Bottom"], 0 if UiSettings.bar_top else 1, func(i: int) -> void: UiSettings.bar_top = i == 0))
 	v.add_child(_choice("Build menu", ["Bottom", "Top"], 0 if UiSettings.build_bottom else 1, func(i: int) -> void: UiSettings.build_bottom = i == 0))
 	v.add_child(_choice("Building panel", ["Left", "Right"], 0 if UiSettings.panel_left else 1, func(i: int) -> void: UiSettings.panel_left = i == 0))
@@ -849,12 +875,42 @@ func _unhandled_key_input(event: InputEvent) -> void:
 	if not visible:
 		return
 	var k := event as InputEventKey
-	if k != null and k.pressed and not k.echo and k.keycode == KEY_L:
+	if k != null and k.pressed and not k.echo and world != null and world.running and not k.ctrl_pressed and not k.alt_pressed and _hotkey(k.keycode):
+		get_viewport().set_input_as_handled()
+	elif k != null and k.pressed and not k.echo and k.keycode == KEY_L:
 		_ledger_btn.button_pressed = not _ledger_btn.button_pressed
 		get_viewport().set_input_as_handled()
 	elif k != null and k.pressed and not k.echo and k.keycode == KEY_F10:
 		_options.visible = not _options.visible
 		get_viewport().set_input_as_handled()
+
+
+## A building's key, or 1-9 and 0 for the cards of the open tab: picks it to place (again
+## to put it down). Returns whether the key was one.
+func _hotkey(code: int) -> bool:
+	var id := ""
+	for b: String in BuildingDefs.HOTKEYS:
+		if BuildingDefs.HOTKEYS[b] == code:
+			id = b
+	if id == "" and (code >= KEY_1 and code <= KEY_9 or code == KEY_0):
+		var ids := BuildingDefs.in_category(_tab)
+		var i := 9 if code == KEY_0 else code - KEY_1
+		if i >= ids.size():
+			return true
+		id = ids[i]
+	if id == "":
+		return false
+	if world.placing == id:
+		world.cancel_placement()
+	else:
+		var cat := String(BuildingDefs.DEFS[id].category)
+		if cat != _tab:
+			_tab = cat
+			Sfx.play("ui_tab", -4.0)
+		world.begin_placement(id)
+		Sfx.play("select", -4.0)
+	_build_cards()
+	return true
 
 
 ## The wheel over the cards scrolls them sideways.
@@ -926,7 +982,27 @@ func _build_cards() -> void:
 		cost.add_theme_constant_override("line_separation", -2)
 		cost.text = Goods.bbcode(d.cost, 20 if d.cost.size() <= 2 else 17) if not d.cost.is_empty() else "Free"
 		col.add_child(cost)
-		b.tooltip_text = _card_tip(id)
+		var keys := PackedStringArray()
+		var idx := BuildingDefs.in_category(_tab).find(id)
+		if idx >= 0 and idx < 10:
+			keys.append(str((idx + 1) % 10))
+		if BuildingDefs.HOTKEYS.has(id):
+			keys.append(BuildingDefs.hotkey_name(id))
+		if not keys.is_empty():
+			var cap := Label.new()
+			cap.text = " · ".join(keys)
+			cap.add_theme_font_size_override("font_size", 11)
+			cap.add_theme_color_override("font_color", Color(1.0, 0.92, 0.7))
+			cap.add_theme_color_override("font_outline_color", Color(0.05, 0.03, 0.02))
+			cap.add_theme_constant_override("outline_size", 4)
+			cap.set_anchors_and_offsets_preset(Control.PRESET_TOP_RIGHT)
+			cap.offset_left = -70
+			cap.offset_right = -20
+			cap.offset_top = 7
+			cap.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
+			cap.mouse_filter = Control.MOUSE_FILTER_IGNORE
+			b.add_child(cap)
+		b.tooltip_text = _card_tip(id) + ("\nKey: %s" % " or ".join(keys) if not keys.is_empty() else "")
 		if s != null and not s.can_afford(d.cost):
 			b.modulate = Color(1, 1, 1, 0.45)
 		b.pressed.connect(func() -> void:
@@ -1300,7 +1376,7 @@ func _fill_tip(key: String) -> void:
 			_res_tip_text.text = (ctl.get_meta("tipfn") as Callable).call()
 	elif key.begins_with("g"):
 		var g := key.substr(1)
-		_res_tip_icon.texture = load("res://assets/icons/buildings/warehouse.png") if g == "_store" else Goods.icon("bread" if g == "_food" else g)
+		_res_tip_icon.texture = _hud_icon(g.substr(1) if g.begins_with("_") else g)
 		_res_tip_text.text = _good_tip(g)
 	else:
 		var cell := world.hover_cell

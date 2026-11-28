@@ -21,6 +21,8 @@ var ground_height := 0.0
 
 var _target := Vector3.ZERO
 var _target_distance := 800.0
+## Whether W, A, S and D pan (the arrow keys always do).
+var wasd := true
 var _target_yaw := 0.0
 var _pan_drag := false
 var _rot_drag := false
@@ -73,13 +75,15 @@ func _unhandled_input(event: InputEvent) -> void:
 
 func _process(delta: float) -> void:
 	var move := Vector2.ZERO
-	if Input.is_key_pressed(KEY_W) or Input.is_key_pressed(KEY_UP):
+	# WASD pan only outside a game: in one the letters pick buildings (BuildingDefs.HOTKEYS).
+	var letters := wasd
+	if Input.is_key_pressed(KEY_UP) or (letters and Input.is_key_pressed(KEY_W)):
 		move.y -= 1.0
-	if Input.is_key_pressed(KEY_S) or Input.is_key_pressed(KEY_DOWN):
+	if Input.is_key_pressed(KEY_DOWN) or (letters and Input.is_key_pressed(KEY_S)):
 		move.y += 1.0
-	if Input.is_key_pressed(KEY_A) or Input.is_key_pressed(KEY_LEFT):
+	if Input.is_key_pressed(KEY_LEFT) or (letters and Input.is_key_pressed(KEY_A)):
 		move.x -= 1.0
-	if Input.is_key_pressed(KEY_D) or Input.is_key_pressed(KEY_RIGHT):
+	if Input.is_key_pressed(KEY_RIGHT) or (letters and Input.is_key_pressed(KEY_D)):
 		move.x += 1.0
 	if move != Vector2.ZERO:
 		_pan(move.normalized() * distance * pan_speed * delta)

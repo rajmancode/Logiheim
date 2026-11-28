@@ -698,9 +698,18 @@ func _apply_build() -> void:
 		(b as Villager).visible = not _built
 
 
+var _hammer_t := randf() * 1.5
+
+
 func _process(delta: float) -> void:
 	_t += delta
 	var built := settlement.is_built(record)
+	# Hammering while it goes up (heard near the camera).
+	if not built and visible and float(record.progress) > 0.0:
+		_hammer_t -= delta
+		if _hammer_t <= 0.0:
+			_hammer_t = randf_range(0.45, 1.3)
+			Sfx.play_at("hammer%d" % (randi() % 3), global_position + Vector3(0, 2, 0), -8.0)
 	if built and not _built:
 		_built = true
 		_finish()

@@ -11,6 +11,7 @@ static var build_bottom := true      ## the build menu at the bottom (else the t
 static var panel_left := true        ## the selected building's panel on the left (else right)
 static var ledger_right := true      ## the ledger on the right (else left)
 static var pops := true              ## "+2 Wood" coins rising over working buildings
+static var sound := 0.8              ## sound volume, 0 (off) .. 1
 static var _loaded := false
 
 
@@ -27,6 +28,7 @@ static func ensure_loaded() -> void:
 	panel_left = bool(cf.get_value("hud", "panel_left", true))
 	ledger_right = bool(cf.get_value("hud", "ledger_right", true))
 	pops = bool(cf.get_value("hud", "pops", true))
+	sound = clampf(float(cf.get_value("audio", "sound", 0.8)), 0.0, 1.0)
 
 
 static func save() -> void:
@@ -37,6 +39,7 @@ static func save() -> void:
 	cf.set_value("hud", "panel_left", panel_left)
 	cf.set_value("hud", "ledger_right", ledger_right)
 	cf.set_value("hud", "pops", pops)
+	cf.set_value("audio", "sound", sound)
 	cf.save(PATH)
 
 
@@ -47,3 +50,4 @@ static func reset() -> void:
 	panel_left = true
 	ledger_right = true
 	pops = true
+	sound = 0.8

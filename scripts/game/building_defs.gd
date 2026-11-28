@@ -272,6 +272,20 @@ static func get_def(id: String) -> Dictionary:
 	return DEFS.get(id, {})
 
 
+## Keys that pick a building to place while playing (1-9 and 0 pick the cards of the open tab).
+const HOTKEYS := {
+	"road": KEY_R, "woodcutter": KEY_W, "quarry": KEY_S, "mine": KEY_M, "farm": KEY_F,
+	"longhouse": KEY_H, "warehouse": KEY_G, "hunting_lodge": KEY_J, "fishing_hut": KEY_N,
+	"bakery": KEY_B, "brewery": KEY_K, "sheepfold": KEY_P, "tavern": KEY_V, "smithy": KEY_I,
+	"outpost": KEY_O, "watchtower": KEY_T, "barracks": KEY_X, "charcoal": KEY_U,
+}
+
+
+## The key letter for a building ("" if none).
+static func hotkey_name(id: String) -> String:
+	return OS.get_keycode_string(HOTKEYS[id]) if HOTKEYS.has(id) else ""
+
+
 static func in_category(cat: String) -> Array:
 	var out: Array = []
 	for id in DEFS:
