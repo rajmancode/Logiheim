@@ -79,9 +79,23 @@ func rebuild(views: Array) -> void:
 				mine.append(bv)
 		if mine.is_empty():
 			continue
+		var views_by := {}
+		for bv: BuildingView in mine:
+			views_by[int(bv.record.uid)] = bv
 		for bv: BuildingView in mine:
 			var built := s.is_built(bv.record)
 			_add_yard(yard, bv, surface, 1.0 if built else 0.65, 0.06 + 0.012 * (cleared.size() % 4))
+			var par: BuildingView = views_by.get(int(bv.record.get("link", bv.record.get("parent", -1))))
+			if par != null:
+				# One works: its worked ground runs on into the main building's plot.
+				var a := Vector2(bv.position.x, bv.position.z)
+				var b := Vector2(par.position.x, par.position.z)
+				var w := minf(float(bv.info.size.x), 11.0)
+				_add_band(yard, a, b, w, surface, 0.055)
+				var n := int(a.distance_to(b) / 3.0)
+				for i in n + 1:
+					cleared.append(a.lerp(b, float(i) / maxf(n, 1)))
+					radii.append(w * 0.55)
 			var c := Vector2(bv.position.x, bv.position.z)
 			cleared.append(c)
 			radii.append(maxf(bv.info.size.x, bv.info.size.y) * 0.5 + 3.0)
@@ -210,6 +224,31 @@ func _add_yard(arr: _Arrays, bv: BuildingView, surface: TerrainSurface, grow: fl
 			var sj := (si + 1) % SEGS
 			arr.tri(r0 + si, r1 + si, r1 + sj)
 			arr.tri(r0 + si, r1 + sj, r0 + sj)
+
+
+## A straight band of plot ground from a to b, `w` wide, frayed along its sides.
+func _add_band(arr: _Arrays, a: Vector2, b: Vector2, w: float, surface: TerrainSurface, lift: float) -> void:
+	var d := (b - a).normalized()
+	var side := Vector2(-d.y, d.x) * w * 0.5
+	var n := maxi(2, int(a.distance_to(b) / 2.0))
+	var kinds: Array = RoadNetwork._ground_kinds(PackedVector2Array([a.lerp(b, 0.5)]), surface)[0]
+	var prev := -1
+	for k in n + 1:
+		var c := a.lerp(b, float(k) / n)
+		var base := arr.verts.size()
+		for i in ACROSS * 2 + 1:
+			var u := float(i) / (ACROSS * 2)
+			var q := c + side * (u * 2.0 - 1.0)
+			arr.verts.append(Vector3(q.x, surface.sample_mesh(q) + lift, q.y))
+			arr.normals.append(surface.normal_at(q))
+			arr.uvs.append(Vector2(absf(u * 2.0 - 1.0), 0))
+			arr.colors.append(kinds[0])
+			arr.uv2s.append(kinds[1])
+		if prev >= 0:
+			for i in ACROSS * 2:
+				arr.tri(prev + i, base + i, prev + i + 1)
+				arr.tri(prev + i + 1, base + i, base + i + 1)
+		prev = base
 
 
 ## A path strip along pts, `w` wide, draped on the ground; left out where it would be in water.

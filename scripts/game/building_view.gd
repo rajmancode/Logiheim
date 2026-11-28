@@ -358,6 +358,139 @@ func set_level(n: int) -> void:
 	_flash = 1.0
 
 
+var _link: MeshInstance3D
+var _link_len := -1.0
+
+
+## An expansion is joined to its main building by its own work: the field's grain runs on up a
+## fenced strip to the farm, a skid road of logs runs to the woodcutter, a cart track to the
+## quarry or mine, a boardwalk to the fishing hut or across the cut banks; and a gate at the main
+## building's end with a band in the clan's colours. The link runs from this building's edge
+## along its front (it faces its main building) for `length` metres, following the ground.
+func set_link(length: float) -> void:
+	if absf(length - _link_len) < 0.5:
+		return
+	_link_len = length
+	if _link != null:
+		_link.queue_free()
+		_link = null
+	var z0 := -float(info.size.y) * 0.5 * 0.8
+	var z1 := -length
+	if z1 > z0 - 2.0:
+		return
+	var model := String(BuildingDefs.DEFS[record.id].model)
+	var k := BuildingModels.Kit.new()
+	var gy := func(x: float, z: float) -> float:
+		return _ground_local(Vector3(x, 0, z))
+	var span := z0 - z1
+	var W := BuildingModels.WOOD
+	var DW := BuildingModels.DARK_WOOD
+	var PW := BuildingModels.PALE_WOOD
+	# Rails or fences: a line of logs from post to post that follows the ground.
+	var rail := func(x: float, h: float, r: float, col: Color, step: float) -> void:
+		var n := maxi(1, int(span / step))
+		for i in n:
+			var za := z0 - span * i / n
+			var zb := z0 - span * (i + 1) / n
+			var a := Vector3(x, gy.call(x, za) + h, za)
+			var b := Vector3(x, gy.call(x, zb) + h, zb)
+			k.log((a + b) * 0.5, r, a.distance_to(b) + r, col, b - a)
+	var posts := func(x: float, h: float, step: float) -> void:
+		var n := maxi(1, int(span / step))
+		for i in n + 1:
+			var z := z0 - span * i / n
+			k.post(Vector3(x, gy.call(x, z) - 0.2, z), h + 0.2, 0.08, DW)
+	var across := func(w: float, step: float, r: float, col: Color, h: float) -> void:
+		var n := maxi(1, int(span / step))
+		for i in n + 1:
+			var z := z0 - span * i / n
+			var a := Vector3(-w * 0.5, gy.call(-w * 0.5, z) + h, z)
+			var b := Vector3(w * 0.5, gy.call(w * 0.5, z) + h, z)
+			k.log((a + b) * 0.5, r, w, col * (0.9 + 0.1 * float(i % 3)), b - a)
+	var half := 3.0
+	match model:
+		"ext_field":
+			# The grain itself runs on to the farm between two wattle fences.
+			half = 4.0
+			for x: float in [-half, half]:
+				posts.call(x, 1.1, 1.6)
+				for h: float in [0.45, 0.9]:
+					rail.call(x, h, 0.05, W, 1.6)
+			var n := int(span / 1.0)
+			for row in 5:
+				var x := -2.8 + row * 1.4
+				for i in n:
+					var z := z0 - 0.5 - i * 1.0
+					if i % 9 == 4 and row == 2:
+						continue
+					k.cone(Vector3(x + (i % 2) * 0.2 - 0.1, gy.call(x, z) + 0.05, z), 0.42, 0.85, Color(0.86, 0.72, 0.36) * (0.92 + 0.08 * float((row + i) % 3)), 6)
+		"ext_pasture":
+			# A droveway between fences for the beasts to come and go.
+			half = 3.2
+			for x: float in [-half, half]:
+				posts.call(x, 1.2, 1.8)
+				for h: float in [0.4, 0.8, 1.15]:
+					rail.call(x, h, 0.05, W, 1.8)
+		"ext_woodlot":
+			# A skid road: logs laid across, trunks being hauled on a sled.
+			half = 2.0
+			across.call(3.4, 0.75, 0.16, W, 0.12)
+			var m := z0 - span * 0.5
+			var g := float(gy.call(0.0, m))
+			k.box(Vector3(0, g + 0.4, m), Vector3(1.6, 0.12, 3.2), DW)
+			for i in 3:
+				k.log(Vector3(-0.45 + i * 0.45, g + 0.65, m), 0.2, 5.0, W, Vector3.BACK)
+			k.log(Vector3(0, g + 1.0, m), 0.2, 5.0, W, Vector3.BACK)
+		"ext_quarry", "ext_shaft":
+			# A cart track: sleepers and wooden rails, a cart loaded with stone or ore.
+			half = 2.0
+			across.call(2.4, 1.1, 0.1, DW, 0.08)
+			for x: float in [-0.75, 0.75]:
+				rail.call(x, 0.22, 0.07, PW, 1.4)
+			var m := z0 - span * 0.45
+			var g := float(gy.call(0.0, m))
+			k.box(Vector3(0, g + 0.85, m), Vector3(1.4, 0.7, 2.0), W)
+			var load := BuildingModels.STONE if model == "ext_quarry" else Color(0.36, 0.3, 0.28)
+			k.box(Vector3(0, g + 1.3, m), Vector3(1.15, 0.35, 1.7), load)
+			for sx: float in [-0.8, 0.8]:
+				for sz: float in [-0.65, 0.65]:
+					k.cylinder(Vector3(sx, g + 0.42, m + sz), 0.32, 0.12, DW, 10, Vector3.RIGHT)
+		"ext_jetty":
+			# A boardwalk on short posts.
+			half = 1.4
+			across.call(2.2, 0.5, 0.13, PW, 0.45)
+			posts.call(-1.0, 0.45, 2.4)
+			posts.call(1.0, 0.45, 2.4)
+		_:
+			# Peat, clay, reeds: a plank way over the soft ground with the cut drying beside it.
+			half = 2.6
+			across.call(1.8, 0.55, 0.11, W, 0.1)
+			var col := Color(0.32, 0.23, 0.16) if model == "ext_peat" else (Color(0.7, 0.45, 0.32) if model == "ext_clay" else Color(0.74, 0.68, 0.42))
+			var n := int(span / 3.0)
+			for i in n:
+				var z := z0 - 1.5 - i * 3.0
+				var x := 2.2 if i % 2 == 0 else -2.2
+				var g := float(gy.call(x, z))
+				if model == "ext_reeds":
+					k.cone(Vector3(x, g, z), 0.45, 2.0, col, 6)
+				else:
+					for lv in 3:
+						k.box(Vector3(x, g + 0.15 + lv * 0.28, z), Vector3(0.9 - lv * 0.2, 0.25, 0.5), col * (0.9 + 0.05 * lv))
+	# The gate at the main building's end, banded in the clan's colours.
+	for sd: float in [-1.0, 1.0]:
+		var x := sd * (half + 0.3)
+		var g := float(gy.call(x, z1))
+		k.post(Vector3(x, g - 0.2, z1), 2.9, 0.15, DW)
+		k.box(Vector3(x, g + 2.1, z1), Vector3(0.36, 0.3, 0.36), BuildingModels.TEAM)
+	var gl := float(gy.call(0.0, z1))
+	k.box(Vector3(0, gl + 2.75, z1), Vector3(half * 2.0 + 1.2, 0.22, 0.26), DW)
+	_link = MeshInstance3D.new()
+	_link.name = "Link"
+	_link.mesh = k.commit()
+	_link.material_override = _mat
+	add_child(_link)
+
+
 func _make_fires() -> void:
 	var lights := 0
 	for f: Array in info.get("fires", []):

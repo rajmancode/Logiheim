@@ -235,6 +235,20 @@ const SYNERGIES := {
 }
 
 
+## The buildings (not expansions) that gather a resource, best first.
+static func harvesters_for(kind: int) -> Array:
+	var out: Array = []
+	for k in DEFS:
+		var d: Dictionary = DEFS[k]
+		if d.has("expansion_of"):
+			continue
+		var needs = d.get("needs", null)
+		if (needs is Array and (needs as Array).has(kind)) or (d.has("near") and (d.near as Array).has(kind)) \
+				or (needs is String and needs == "fish" and kind == NaturalResources.Kind.FISH):
+			out.append(k)
+	return out
+
+
 static func is_expansion(id: String) -> bool:
 	return DEFS.has(id) and DEFS[id].has("expansion_of")
 

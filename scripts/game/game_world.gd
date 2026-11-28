@@ -16,6 +16,8 @@ signal selection_changed(record: Dictionary)
 ## An army was selected or let go ({} when none).
 signal army_selected(army: Dictionary)
 signal message(text: String)
+## A resource hex was clicked (-1: let go).
+signal resource_selected(cell: int)
 
 var hex_map: HexMap
 var settlements: Array[Settlement] = []
@@ -42,6 +44,8 @@ var _infra: Infrastructure      # roads, hill roads and bridges
 var _infra_dirty := false
 var _reach := {}                # settlement index -> {cell: true} it can get to
 var _army_views := {}           # army id -> ArmyView
+var hover_cell := -1                  # the hex under the mouse (-1 over the interface)
+var selected_resource := -1           # the resource hex whose panel is open
 var _expand_parent: Dictionary = {}   # the building an expansion being placed belongs to
 var _synergy_dirty := true
 var selected_army: Dictionary = {}
@@ -610,6 +614,11 @@ func _update_synergies() -> void:
 			b.synergy = why
 		for b: Dictionary in s.buildings:
 			var v: BuildingView = _views.get(b.uid)
+			if v != null and int(b.get("parent", -1)) >= 0:
+				var pv: BuildingView = _views.get(int(b.get("link", b.parent)))
+				if pv != null:
+					var d := Vector2(v.position.x, v.position.z).distance_to(Vector2(pv.position.x, pv.position.z))
+					v.set_link(d - minf(float(pv.info.size.x), float(pv.info.size.y)) * 0.5 - 1.0)
 			if v != null and not BuildingDefs.expansions_for(String(b.id)).is_empty():
 				var n := s.expansions_of(b).filter(func(e: Dictionary) -> bool: return s.is_built(e)).size()
 				v.set_level(n)
@@ -638,6 +647,7 @@ func _missing(s: Settlement, cost: Dictionary) -> Dictionary:
 
 ## The mouse over a hex while placing: move the ghost there and colour it.
 func hover(cell: int) -> void:
+	hover_cell = cell
 	if placing == "" or not running:
 		return
 	if cell == _ghost_cell:
@@ -710,7 +720,31 @@ func click(cell: int) -> bool:
 		select(_occupied[cell])
 		return true
 	select({})
+	if cell >= 0 and resource_at(cell) != 0:
+		selected_resource = cell
+		resource_selected.emit(cell)
 	return false
+
+
+## The main resource on a hex (0 if none).
+func resource_at(cell: int) -> int:
+	var l := lv()
+	if cell < 0 or cell >= l.resource.size():
+		return 0
+	return int(l.resource[cell])
+
+
+## "Build <id>" from a resource's panel: raised on that hex if it can be, otherwise placing starts
+## so it can go on a hex nearby.
+func build_here(id: String, cell: int) -> void:
+	begin_placement(id)
+	var r := check(id, cell)
+	if r[0]:
+		click(cell)
+		if placing == id:
+			cancel_placement()
+		return
+	message.emit("%s - %s. Place it on a hex nearby." % [String(BuildingDefs.DEFS[id].name), String(r[1]) if String(r[1]) != "" else "can't go on this hex"])
 
 
 func select(rec: Dictionary) -> void:
@@ -719,6 +753,9 @@ func select(rec: Dictionary) -> void:
 	if not selected.is_empty() and _views.has(selected.uid):
 		(_views[selected.uid] as BuildingView).set_selected(false)
 	selected = rec
+	if selected_resource >= 0:
+		selected_resource = -1
+		resource_selected.emit(-1)
 	if not rec.is_empty() and _views.has(rec.uid):
 		(_views[rec.uid] as BuildingView).set_selected(true)
 	selection_changed.emit(rec)
@@ -783,7 +820,16 @@ func _raise(s: Settlement, id: String, cell: int, built: bool, kind := 0, parent
 	if not parent.is_empty():
 		# An expansion turns to face its main building.
 		rec.parent = int(parent.uid)
-		var to := Vector2(parent.pos.x, parent.pos.z) - c
+		# It joins its main building if it touches it, else the part of the works it touches.
+		var join: Dictionary = parent
+		var l := lv()
+		if HexCoords.distance(l.coords[cell], l.coords[int(parent.cell)]) > 1:
+			for e: Dictionary in s.expansions_of(parent):
+				if e != rec and HexCoords.distance(l.coords[cell], l.coords[int(e.cell)]) == 1:
+					join = e
+					break
+		rec.link = int(join.uid)
+		var to := Vector2(join.pos.x, join.pos.z) - c
 		v.rotation.y = atan2(-to.x, -to.y)
 	v.set_meta("sea_y", hex_map.sea_y)
 	add_child(v)

@@ -44,6 +44,12 @@ var _info_bar: ProgressBar
 var _demolish: Button
 var _expand_box: HBoxContainer
 var _expand_key := ""
+var _res_tip: PanelContainer        # the tooltip over a resource hex
+var _res_tip_icon: TextureRect
+var _res_tip_text: RichTextLabel
+var _tip_cell := -1
+var _tip_t := 0.0
+const TIP_DELAY := 0.55
 var _toast: Label
 var _toast_box: PanelContainer
 var _team_style := {}
@@ -243,6 +249,33 @@ func _ready() -> void:
 	_demolish.pressed.connect(func() -> void: world.demolish(world.selected))
 	iv.add_child(_demolish)
 	_info.visible = false
+
+	# --- Tooltip over a resource hex -----------------------------------------------------------
+	_res_tip = PanelContainer.new()
+	_res_tip.theme = theme
+	_res_tip.add_theme_stylebox_override("panel", UiStyle.box("tooltip", 16, Vector4(14, 10, 14, 10)))
+	_res_tip.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_root.add_child(_res_tip)
+	var th := HBoxContainer.new()
+	th.add_theme_constant_override("separation", 10)
+	th.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_res_tip.add_child(th)
+	_res_tip_icon = _icon_rect(null, 48, "")
+	_res_tip_icon.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	th.add_child(_res_tip_icon)
+	_res_tip_text = RichTextLabel.new()
+	_res_tip_text.bbcode_enabled = true
+	_res_tip_text.fit_content = true
+	_res_tip_text.scroll_active = false
+	_res_tip_text.autowrap_mode = TextServer.AUTOWRAP_OFF
+	_res_tip_text.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_res_tip_text.add_theme_color_override("default_color", Color(0.16, 0.1, 0.05))
+	_res_tip_text.add_theme_font_override("normal_font", UiStyle.font(700))
+	_res_tip_text.add_theme_font_override("bold_font", UiStyle.font(900))
+	_res_tip_text.add_theme_font_size_override("normal_font_size", 14)
+	_res_tip_text.add_theme_font_size_override("bold_font_size", 17)
+	th.add_child(_res_tip_text)
+	_res_tip.visible = false
 
 	# --- Ledger --------------------------------------------------------------------------------
 	_ledger = PanelContainer.new()
@@ -702,6 +735,9 @@ func open(p_world: GameWorld) -> void:
 		world.message.connect(show_message)
 		world.army_selected.connect(func(_a: Dictionary) -> void: _update_army())
 		world.selection_changed.connect(func(_r: Dictionary) -> void: _update_info())
+		world.resource_selected.connect(func(_c: int) -> void:
+			_expand_key = ""
+			_update_info())
 	visible = true
 	_build_cards()
 
@@ -903,6 +939,7 @@ func _process(delta: float) -> void:
 		_hint.text = "Placing %s: click a hex on your land (Shift: more). Right-click or Esc to stop." % String(BuildingDefs.DEFS[world.placing].name)
 	else:
 		_hint.text = "Click a building to see what it's doing. L: ledger."
+	_update_res_tip(delta)
 	if _toast_t > 0.0:
 		_toast_t -= delta
 		_toast_box.modulate.a = clampf(_toast_t, 0.0, 1.0)
@@ -1016,12 +1053,153 @@ func _update_army() -> void:
 	_army_panel.reset_size()
 
 
+## What a resource hex holds, for its tooltip and panel: [name, amount word, lines (bbcode)].
+func _resource_lines(cell: int, full: bool) -> Array:
+	var l := world.lv()
+	var kind := int(l.resource[cell])
+	var amount: String = ["", "Small", "Good", "Rich"][clampi(int(l.resource_amount[cell]), 0, 3)]
+	var lines := PackedStringArray()
+	lines.append(NaturalResources.description(kind))
+	var extra := PackedStringArray()
+	if l.resource2.size() > cell and l.resource2[cell] != 0:
+		extra.append("with %s" % NaturalResources.display_name(l.resource2[cell]))
+	var dep := l.deposit[cell]
+	if dep >= 0 and dep < l.deposits.size():
+		extra.append("a %d-hex deposit" % int(l.deposits[dep].size))
+	if full:
+		extra.append(String(NaturalResources.GROUP_NAMES[NaturalResources.group(kind)]).to_lower() + " resource")
+	if not extra.is_empty():
+		lines.append("[color=#8a6a40]%s[/color]" % ", ".join(extra))
+	var who := int(world._owner.get(cell, -1))
+	if full:
+		if who == world.active:
+			lines.append("[color=#8fd07a]On your land[/color]")
+		elif who >= 0:
+			lines.append("[color=#e08a70]Held by %s[/color]" % world.settlements[who].player_name)
+		else:
+			lines.append("[color=#c8a050]Outside your land - expand, or raise an outpost near it[/color]")
+	var hs := BuildingDefs.harvesters_for(kind)
+	if not hs.is_empty():
+		var names := PackedStringArray()
+		for id: String in hs:
+			names.append(String(BuildingDefs.DEFS[id].name))
+		if full:
+			lines.append("")
+			lines.append("[color=#c8a050]Gathered by:[/color]")
+			for id: String in hs:
+				var d: Dictionary = BuildingDefs.DEFS[id]
+				var recs := BuildingDefs.recipes(id, kind)
+				var gives := (" - " + _recipe_bb(recs[0], 18)) if not recs.is_empty() else ""
+				var where := ""
+				if d.has("near") or d.get("needs", null) is String:
+					where = " [color=#a09070](on the shore nearby)[/color]"
+				lines.append("[b]%s[/b]%s every %ds%s" % [String(d.name), gives, int(d.get("cycle", 10)), where])
+				var exts := BuildingDefs.expansions_for(id)
+				if not exts.is_empty():
+					lines.append("   [color=#a09070]grows %ss onto the hexes beside it[/color]" % String(BuildingDefs.DEFS[exts[0]].name).to_lower())
+		else:
+			lines.append("Gathered by: " + ", ".join(names))
+	if not full:
+		lines.append("[color=#8a6a40]Click for more[/color]")
+	return [NaturalResources.display_name(kind), amount, lines]
+
+
+func _update_res_tip(delta: float) -> void:
+	var cell := world.hover_cell
+	var show := cell >= 0 and world.placing == "" and world.resource_at(cell) != 0 and not world._occupied.has(cell) \
+			and cell != world.selected_resource and get_viewport().gui_get_hovered_control() == null
+	if not show:
+		_tip_cell = -1
+		_res_tip.visible = false
+		return
+	if cell != _tip_cell:
+		_tip_cell = cell
+		_tip_t = 0.0
+		_res_tip.visible = false
+	_tip_t += delta
+	if _tip_t < TIP_DELAY:
+		return
+	if not _res_tip.visible:
+		var info := _resource_lines(cell, false)
+		_res_tip_icon.texture = HexMap.icon_texture(NaturalResources.key(world.resource_at(cell)))
+		_res_tip_text.text = "[b]%s[/b]  [color=#8a6a40]%s[/color]\n%s" % [info[0], info[1], "\n".join(info[2])]
+		_res_tip.visible = true
+		_res_tip.modulate.a = 0.0
+		_res_tip.reset_size()
+		create_tween().tween_property(_res_tip, "modulate:a", 1.0, 0.15)
+	var m := get_viewport().get_mouse_position() / maxf(_root.scale.x, 0.01)
+	var area := _area()
+	var p := m + Vector2(22, 22)
+	if p.x + _res_tip.size.x > area.x - 8.0:
+		p.x = m.x - _res_tip.size.x - 12.0
+	if p.y + _res_tip.size.y > area.y - 8.0:
+		p.y = m.y - _res_tip.size.y - 12.0
+	_res_tip.position = p.clamp(Vector2(8, 8), (area - _res_tip.size - Vector2(8, 8)).max(Vector2(8, 8)))
+
+
+## The panel for a clicked resource hex: what it is, who gathers it, and buttons to build them.
+func _show_resource(cell: int) -> void:
+	var was := _info.visible
+	_info.visible = true
+	_res_tip.visible = false
+	if not was:
+		var home := _info_x()
+		_info.position.x = home + (-400.0 if UiSettings.panel_left else 400.0)
+		_info.modulate.a = 0.0
+		var tw := create_tween().set_parallel(true).set_trans(Tween.TRANS_CUBIC).set_ease(Tween.EASE_OUT)
+		tw.tween_property(_info, "position:x", home, 0.25)
+		tw.tween_property(_info, "modulate:a", 1.0, 0.2)
+	var kind := world.resource_at(cell)
+	var info := _resource_lines(cell, true)
+	_info_title.text = "%s  (%s)" % [info[0], String(info[1]).to_lower()]
+	_info_icon.texture = HexMap.icon_texture(NaturalResources.key(kind))
+	_info_text.text = "\n".join(info[2])
+	_info_bar.visible = false
+	_demolish.visible = false
+	var key := "res_%d" % cell
+	if key != _expand_key:
+		_expand_key = key
+		for c in _expand_box.get_children():
+			c.queue_free()
+		var col := VBoxContainer.new()
+		col.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		col.add_theme_constant_override("separation", 6)
+		_expand_box.add_child(col)
+		for id: String in BuildingDefs.harvesters_for(kind):
+			var d: Dictionary = BuildingDefs.DEFS[id]
+			var b := Button.new()
+			b.text = "Build %s   (%s)" % [String(d.name).to_lower(), Goods.describe(d.cost)]
+			b.icon = BuildingDefs.icon(id)
+			b.expand_icon = false
+			b.add_theme_constant_override("icon_max_width", 28)
+			b.focus_mode = Control.FOCUS_NONE
+			b.alignment = HORIZONTAL_ALIGNMENT_LEFT
+			b.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+			b.tooltip_text = _card_tip(id)
+			b.pressed.connect(func() -> void: world.build_here(id, cell))
+			col.add_child(b)
+	var s := world.me()
+	var col2 := _expand_box.get_child(0) if _expand_box.get_child_count() > 0 else null
+	if col2 != null:
+		var hs := BuildingDefs.harvesters_for(kind)
+		for i in mini(hs.size(), col2.get_child_count()):
+			(col2.get_child(i) as Button).modulate.a = 1.0 if s.can_afford(BuildingDefs.DEFS[hs[i]].cost) else 0.5
+	_info.reset_size()
+
+
 func _update_info() -> void:
 	var rec := world.selected if world != null else {}
+	if rec.is_empty() and world != null and world.selected_resource >= 0:
+		_show_resource(world.selected_resource)
+		return
 	var was := _info.visible
 	_info.visible = not rec.is_empty()
 	if rec.is_empty():
 		return
+	_info_bar.visible = true
+	_demolish.visible = true
+	if String(_expand_key).begins_with("res_"):
+		_expand_key = ""
 	if not was:
 		var home := _info_x()
 		_info.position.x = home + (-400.0 if UiSettings.panel_left else 400.0)

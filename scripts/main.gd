@@ -223,7 +223,7 @@ func _unhandled_input(event: InputEvent) -> void:
 				if game_world.placing != "":
 					game_world.cancel_placement()
 					return
-				if not game_world.selected.is_empty():
+				if not game_world.selected.is_empty() or game_world.selected_resource >= 0:
 					game_world.select({})
 					return
 				if not game_world.selected_army.is_empty():
