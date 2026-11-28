@@ -613,7 +613,9 @@ func _build_resource_icons() -> void:
 		root.visible = _show_icons
 		_level_roots[li].add_child(root)
 		_icon_roots.append(root)
-		var outline := ResourceProps.build_outlines(level, surfaces[li], sea_y)
+		# Every level outlines the same (finest) deposits, so the outlines keep their shape as
+		# the view zooms between levels; only the ground they are draped on changes.
+		var outline := ResourceProps.build_outlines(levels[0], surfaces[li], sea_y, 0.6 + 0.8 * li)
 		if outline != null:
 			root.add_child(outline)
 		var centers := {}

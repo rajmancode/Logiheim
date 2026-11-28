@@ -6,7 +6,8 @@ extends CanvasLayer
 ## their stars and what they offer. Set how many players there are (1-6) and their names, then
 ## for each player pick a site - click its banner on the map or its entry in the list - and
 ## claim it. Sites already claimed are taken. "Random landings" fills in the rest; "Set sail"
-## starts once everyone has a landing. Reopen with L.
+## starts once everyone has a landing. Reopen with L. Each player's shield shows their clan's
+## emblem; "Banner" opens the EmblemEditor to choose colours, pattern and charge.
 
 signal site_focused(index: int)
 ## Emitted with [{name, color, site (index)}] once every player has a landing.
@@ -29,21 +30,16 @@ var _claim: Button
 var _start: Button
 var _count_label: Label
 var _map_name: Label
+var _editor: EmblemEditor
 
 
 func _ready() -> void:
 	layer = 20
 	_panel = PanelContainer.new()
 	_panel.theme = UiStyle.hud_theme()
-	var style := StyleBoxFlat.new()
-	style.bg_color = Color(0.06, 0.05, 0.04, 0.88)
-	style.set_corner_radius_all(8)
-	style.set_content_margin_all(14)
-	style.border_color = Color(0.85, 0.68, 0.32, 0.9)
-	style.set_border_width_all(2)
-	_panel.add_theme_stylebox_override("panel", style)
+	_panel.add_theme_stylebox_override("panel", UiStyle.panel())
 	_panel.set_anchors_and_offsets_preset(Control.PRESET_RIGHT_WIDE)
-	_panel.offset_left = -400
+	_panel.offset_left = -440
 	_panel.offset_right = -12
 	_panel.offset_top = 12
 	_panel.offset_bottom = -12
@@ -118,6 +114,14 @@ func _ready() -> void:
 	row.add_child(_start)
 	for b in [_claim, rnd, _start]:
 		(b as Button).focus_mode = Control.FOCUS_NONE
+	_editor = EmblemEditor.new()
+	_editor.set_anchors_and_offsets_preset(Control.PRESET_CENTER_RIGHT)
+	_editor.offset_right = -460
+	_editor.offset_left = -860
+	_editor.offset_top = -340
+	_editor.offset_bottom = 340
+	_editor.changed.connect(func() -> void: _refresh_players())
+	add_child(_editor)
 	visible = false
 
 
@@ -185,7 +189,7 @@ func _set_count(n: int, refresh := true) -> void:
 	n = clampi(n, 1, mini(COLORS.size(), maxi(sites.size(), 1)))
 	while players.size() < n:
 		var k := players.size()
-		players.append({"name": DEFAULT_NAMES[k], "color": COLORS[k], "site": -1})
+		players.append({"name": DEFAULT_NAMES[k], "color": COLORS[k], "site": -1, "emblem": Emblem.default_for(k)})
 	while players.size() > n:
 		players.pop_back()
 	current = clampi(current, 0, players.size() - 1)
@@ -231,22 +235,37 @@ func _on_start() -> void:
 
 
 func _refresh() -> void:
+	_refresh_players()
+	_refresh_sites()
+
+
+func _refresh_players() -> void:
 	_count_label.text = str(players.size())
 	for c in _players_box.get_children():
 		c.queue_free()
 	for k in players.size():
 		var p: Dictionary = players[k]
 		var row := HBoxContainer.new()
+		# The clan's shield: click to choose for this player.
 		var sw := Button.new()
-		sw.custom_minimum_size = Vector2(28, 28)
+		sw.custom_minimum_size = Vector2(40, 44)
 		sw.focus_mode = Control.FOCUS_NONE
+		sw.flat = true
 		var st := StyleBoxFlat.new()
-		st.bg_color = p.color
-		st.set_corner_radius_all(4)
-		st.set_border_width_all(3 if k == current else 1)
-		st.border_color = UiStyle.GOLD if k == current else Color(0, 0, 0, 0.6)
+		st.bg_color = Color(0, 0, 0, 0)
+		st.set_corner_radius_all(6)
+		st.set_border_width_all(2 if k == current else 0)
+		st.border_color = UiStyle.GOLD
 		for state in ["normal", "hover", "pressed"]:
 			sw.add_theme_stylebox_override(state, st)
+		var sh := Emblem.shield(p.color, p.get("emblem", Emblem.default_for(k)), 40.0)
+		sh.set_anchors_and_offsets_preset(Control.PRESET_CENTER)
+		sh.offset_left = -17
+		sh.offset_right = 17
+		sh.offset_top = -20
+		sh.offset_bottom = 20
+		sh.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		sw.add_child(sh)
 		sw.tooltip_text = "Choose for this player"
 		sw.pressed.connect(func() -> void:
 			current = k
@@ -269,8 +288,17 @@ func _refresh() -> void:
 		where.text = ("→ " + sites[p.site].name) if p.site >= 0 else ("choosing…" if k == current else "—")
 		where.modulate = Color(1, 1, 1, 1.0 if p.site >= 0 or k == current else 0.6)
 		row.add_child(where)
+		var ban := Button.new()
+		ban.text = "Banner"
+		ban.focus_mode = Control.FOCUS_NONE
+		ban.tooltip_text = "Choose this clan's colours, pattern and charge"
+		ban.add_theme_font_size_override("font_size", 12)
+		ban.pressed.connect(func() -> void: _editor.edit(p))
+		row.add_child(ban)
 		_players_box.add_child(row)
 
+
+func _refresh_sites() -> void:
 	for c in _sites_box.get_children():
 		c.queue_free()
 	for i in sites.size():

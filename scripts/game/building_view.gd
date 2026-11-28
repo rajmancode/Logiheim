@@ -19,7 +19,13 @@ var _model: MeshInstance3D
 var _scaffold: MeshInstance3D
 var _dust: CPUParticles3D
 var _smoke: CPUParticles3D
-var _flag: MeshInstance3D
+var _flag: Node3D
+var _flag_mesh: MeshInstance3D
+
+## The paints a household might pick for its doors and shutters: red and yellow ochre, woad
+## blue, verdigris, lime white, a soot black, a madder pink.
+const PAINTS := [Color(0.62, 0.18, 0.1), Color(0.8, 0.6, 0.2), Color(0.18, 0.3, 0.55), Color(0.2, 0.48, 0.38),
+	Color(0.88, 0.85, 0.76), Color(0.14, 0.12, 0.11), Color(0.7, 0.35, 0.38)]
 var _cart: MeshInstance3D
 var _boat: MeshInstance3D
 var _light: OmniLight3D
@@ -73,12 +79,11 @@ func setup(p_record: Dictionary, p_settlement: Settlement, ground: Callable) -> 
 		_smoke.gravity = Vector3(0.4, 0.5, 0)
 		_smoke.scale_amount_min = 1.5
 		_smoke.scale_amount_max = 3.5
-	if info.flag != null:
-		_flag = MeshInstance3D.new()
-		_flag.mesh = BuildingModels.banner()
-		_flag.material_override = _people_mat
-		_flag.position = info.flag
-		add_child(_flag)
+	_make_flag()
+	# Doors, shutters and painted boards in a colour of this household's own.
+	var rng := RandomNumberGenerator.new()
+	rng.seed = int(record.uid) * 104729 + settlement.index
+	_mat.set_shader_parameter("accent_color", PAINTS[rng.randi() % PAINTS.size()])
 	if info.cart:
 		_cart = MeshInstance3D.new()
 		_cart.mesh = BuildingModels.cart()
@@ -188,6 +193,52 @@ const FOOT := 0.82
 func _ground_local(p: Vector3) -> float:
 	var w := global_transform * p
 	return float(height_at.call(Vector2(w.x, w.z))) - global_position.y
+
+
+## The clan's flag: on the hall's and the towers' own masts a big one; on every other building
+## a smaller one on a pole at its front corner, with a gilded finial. Painted with the clan's
+## emblem (shaders/flag.gdshader), rippling and streaming downwind.
+func _make_flag() -> void:
+	var at: Vector3
+	var w := 2.2
+	var h := 1.4
+	if info.flag != null:
+		at = info.flag
+		w = 3.6
+		h = 2.3
+	else:
+		var hx := float(info.size.x) * 0.5 * 0.8
+		var hz := float(info.size.y) * 0.5 * 0.8
+		var base := Vector3(-hx, 0, -hz)
+		var ph := clampf(float(info.height) * 0.7, 5.0, 8.5)
+		var k := BuildingModels.Kit.new()
+		k.post(base, ph, 0.07, BuildingModels.DARK_WOOD)
+		k.sphere(base + Vector3(0, ph + 0.12, 0), 0.14, Color(0.9, 0.72, 0.3), 4, 8)
+		var pole := MeshInstance3D.new()
+		pole.mesh = k.commit()
+		pole.material_override = _people_mat
+		pole.name = "FlagPole"
+		add_child(pole)
+		_pole = pole
+		at = base + Vector3(0, ph - 0.05, 0)
+	_flag = Node3D.new()
+	_flag.position = at
+	add_child(_flag)
+	_flag_mesh = MeshInstance3D.new()
+	var pm := PlaneMesh.new()
+	pm.orientation = PlaneMesh.FACE_Z
+	pm.size = Vector2(w, h)
+	pm.subdivide_width = 14
+	pm.subdivide_depth = 7
+	_flag_mesh.mesh = pm
+	_flag_mesh.position = Vector3(w * 0.5, -h * 0.5, 0)
+	_flag_mesh.material_override = Emblem.flag_material(settlement.color, settlement.emblem)
+	_flag_mesh.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_ON
+	_flag.add_child(_flag_mesh)
+	_flag.visible = false
+
+
+var _pole: MeshInstance3D
 
 
 func _make_fires() -> void:
@@ -412,8 +463,14 @@ func _process(delta: float) -> void:
 		_set_workers(int(record.staff) if record.id != "town_hall" else 1)
 		for w in _workers:
 			(w as Villager).active = working or record.id == "town_hall"
+	if _pole != null:
+		_pole.visible = _built
 	if _flag != null:
-		_flag.rotation = Vector3(0, sin(_t * 1.1) * 0.35, sin(_t * 2.3) * 0.06)
+		_flag.visible = _built
+		# The flag streams downwind.
+		var wd := Atmosphere.wind_now_dir
+		var want := atan2(-wd.y, wd.x)
+		_flag.global_rotation.y = lerp_angle(_flag.global_rotation.y, want, minf(delta * 1.5, 1.0))
 	if _cart != null:
 		# Back and forth between the face and the heap.
 		var k := 0.5 - 0.5 * cos(_t * (0.5 if working else 0.0) * 1.0)
@@ -475,6 +532,8 @@ func _place_boat() -> void:
 ## What a work cycle gave and took, over the roof: each good's coin with "+2" beside it, and
 ## underneath, smaller and in red, the goods it used up ("-1"). Rises and fades.
 func pop(gains: Dictionary, uses: Dictionary = {}) -> void:
+	if not UiSettings.pops:
+		return
 	var root := Node3D.new()
 	root.position = Vector3(0, float(info.height) + 1.0, 0)
 	add_child(root)

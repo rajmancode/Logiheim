@@ -15,6 +15,10 @@ extends CanvasLayer
 ##     click to select one) and People (homes, food, each want and how well it is met,
 ##     contentment and what it does, where influence comes from).
 ##   - Short messages ("Longhouse finished.") under the top bar.
+##   - Options (the Options button, F10): the interface's scale, where the resource bar, build
+##     menu, building panel and ledger sit, and the production pops (UiSettings, saved).
+##   All of it hangs under one root control drawn at UiSettings.scale; _layout() places the
+##   parts for the window size and the chosen placements.
 
 var world: GameWorld
 
@@ -48,32 +52,53 @@ var _store_rows := {}          # good -> [row, amount label, rate label]
 var _buildings_box: VBoxContainer
 var _people_text: RichTextLabel
 var _needs_box: VBoxContainer
+var _root: Control
+var _top: PanelContainer
+var _bottom: PanelContainer
+var _crest_box: CenterContainer
+var _crest_for := -1
+var _options: PanelContainer
+var _scale_label: Label
+var _narrow := false            # little room across: fewer icons, one speed button
+var _bar_icons: Array[Control] = []
+const BAR_H := 60.0
+const BUILD_H := 168.0
 
 
 func _ready() -> void:
 	layer = 15
 	var theme := UiStyle.hud_theme()
+	UiSettings.ensure_loaded()
+	_root = Control.new()
+	_root.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_root.theme = theme
+	add_child(_root)
+	get_viewport().size_changed.connect(_layout)
 	# --- Top bar -----------------------------------------------------------------------------
 	var top := PanelContainer.new()
+	_top = top
 	top.theme = theme
 	top.add_theme_stylebox_override("panel", UiStyle.box("topbar", 24, Vector4(14, 6, 14, 12)))
-	top.set_anchors_and_offsets_preset(Control.PRESET_TOP_WIDE)
-	top.offset_bottom = 60
-	add_child(top)
+	_root.add_child(top)
 	var row := HBoxContainer.new()
 	row.add_theme_constant_override("separation", 12)
 	top.add_child(row)
+	_crest_box = CenterContainer.new()
+	_crest_box.custom_minimum_size = Vector2(36, 40)
+	row.add_child(_crest_box)
 	_player_btn = Button.new()
 	_player_btn.focus_mode = Control.FOCUS_NONE
 	_player_btn.tooltip_text = "Pass the controls to the next player (Tab)"
 	_player_btn.pressed.connect(func() -> void: world.set_active(world.active + 1))
 	row.add_child(_player_btn)
-	row.add_child(_icon_rect(load("res://assets/icons/buildings/longhouse.png"), 28, "People"))
+	_bar_icons.append(_icon_rect(load("res://assets/icons/buildings/longhouse.png"), 28, "People"))
+	row.add_child(_bar_icons[-1])
 	_people = Label.new()
 	_people.tooltip_text = "People: how many / room in your homes (idle hands)"
 	_people.mouse_filter = Control.MOUSE_FILTER_PASS
 	row.add_child(_people)
-	row.add_child(_icon_rect(Goods.icon("jewellery"), 26, "Contentment"))
+	_bar_icons.append(_icon_rect(Goods.icon("jewellery"), 26, "Contentment"))
+	row.add_child(_bar_icons[-1])
 	_content = Label.new()
 	_content.tooltip_text = "Contentment: how well your people's wants are met (see the ledger's People tab)"
 	_content.mouse_filter = Control.MOUSE_FILTER_PASS
@@ -108,21 +133,29 @@ func _ready() -> void:
 		b.pressed.connect(func() -> void:
 			if v == 0.0:
 				world.paused = not world.paused
+			elif _narrow:
+				# One button cycles 1x, 2x, 4x.
+				world.speed = 1.0 if world.paused else {1.0: 2.0, 2.0: 4.0, 4.0: 1.0}.get(world.speed, 1.0)
+				world.paused = false
 			else:
 				world.paused = false
 				world.speed = v)
 		row.add_child(b)
 		_speed_btns.append(b)
+	var opt := Button.new()
+	opt.text = "Options"
+	opt.focus_mode = Control.FOCUS_NONE
+	opt.tooltip_text = "Interface size and layout (F10)"
+	opt.add_theme_font_size_override("font_size", 13)
+	opt.pressed.connect(func() -> void: _options.visible = not _options.visible)
+	row.add_child(opt)
 
 	# --- Build menu ----------------------------------------------------------------------------
 	var bottom := PanelContainer.new()
+	_bottom = bottom
 	bottom.theme = theme
 	bottom.add_theme_stylebox_override("panel", UiStyle.box("panel", 44, Vector4(18, 12, 18, 14)))
-	bottom.set_anchors_and_offsets_preset(Control.PRESET_BOTTOM_WIDE)
-	bottom.offset_top = -168
-	bottom.offset_left = 160
-	bottom.offset_right = -160
-	add_child(bottom)
+	_root.add_child(bottom)
 	var bv := VBoxContainer.new()
 	bottom.add_child(bv)
 	var tabs := HBoxContainer.new()
@@ -170,9 +203,8 @@ func _ready() -> void:
 	_info = PanelContainer.new()
 	_info.theme = theme
 	_info.add_theme_stylebox_override("panel", UiStyle.panel())
-	_info.position = Vector2(12, 70)
 	_info.custom_minimum_size = Vector2(360, 0)
-	add_child(_info)
+	_root.add_child(_info)
 	var iv := VBoxContainer.new()
 	_info.add_child(iv)
 	var head := HBoxContainer.new()
@@ -203,12 +235,7 @@ func _ready() -> void:
 	_ledger = PanelContainer.new()
 	_ledger.theme = theme
 	_ledger.add_theme_stylebox_override("panel", UiStyle.panel())
-	_ledger.set_anchors_and_offsets_preset(Control.PRESET_RIGHT_WIDE)
-	_ledger.offset_left = -420
-	_ledger.offset_right = -10
-	_ledger.offset_top = 70
-	_ledger.offset_bottom = -176
-	add_child(_ledger)
+	_root.add_child(_ledger)
 	_ledger_tabs = TabContainer.new()
 	_ledger.add_child(_ledger_tabs)
 	_build_stores_tab()
@@ -218,13 +245,10 @@ func _ready() -> void:
 
 	_toast_box = PanelContainer.new()
 	_toast_box.add_theme_stylebox_override("panel", UiStyle.box("banner", 34, Vector4(56, 12, 56, 14)))
-	_toast_box.set_anchors_and_offsets_preset(Control.PRESET_CENTER_TOP)
-	_toast_box.offset_top = 70
-	_toast_box.offset_left = -300
-	_toast_box.offset_right = 300
+	_toast_box.custom_minimum_size = Vector2(600, 0)
 	_toast_box.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	_toast_box.modulate.a = 0.0
-	add_child(_toast_box)
+	_root.add_child(_toast_box)
 	_toast = Label.new()
 	_toast.theme = theme
 	_toast.add_theme_font_override("font", UiStyle.font(800))
@@ -235,7 +259,9 @@ func _ready() -> void:
 	_toast.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	_toast.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	_toast_box.add_child(_toast)
+	_build_options(theme)
 	visible = false
+	_layout.call_deferred()
 
 
 # ------------------------------------------------------------------------------- helpers
@@ -260,23 +286,168 @@ func _chip(tex: Texture2D, text: String, tip: String) -> PanelContainer:
 	return c
 
 
-## The ledger slides in from the right and out again.
+## The ledger slides in from its side and out again.
 func _slide_ledger(on: bool) -> void:
+	var home := _ledger_x()
+	var away := home + (440.0 if UiSettings.ledger_right else -440.0)
 	var tw := create_tween().set_parallel(true).set_trans(Tween.TRANS_CUBIC).set_ease(Tween.EASE_OUT)
 	if on:
 		_ledger.visible = true
-		_ledger.offset_left = 20.0
-		_ledger.offset_right = 430.0
+		_ledger.position.x = away
 		_ledger.modulate.a = 0.0
-		tw.tween_property(_ledger, "offset_left", -420.0, 0.28)
-		tw.tween_property(_ledger, "offset_right", -10.0, 0.28)
+		tw.tween_property(_ledger, "position:x", home, 0.28)
 		tw.tween_property(_ledger, "modulate:a", 1.0, 0.2)
 		_refresh_t = 0.0
 	else:
-		tw.tween_property(_ledger, "offset_left", 20.0, 0.22)
-		tw.tween_property(_ledger, "offset_right", 430.0, 0.22)
+		tw.tween_property(_ledger, "position:x", away, 0.22)
 		tw.tween_property(_ledger, "modulate:a", 0.0, 0.2)
 		tw.chain().tween_callback(func() -> void: _ledger.visible = false)
+
+
+## The interface's size in its own (unscaled) units.
+func _area() -> Vector2:
+	return get_viewport().get_visible_rect().size / UiSettings.scale
+
+
+## Where everything goes, for this window and the chosen placements.
+func _layout() -> void:
+	if _root == null:
+		return
+	var s := UiSettings.scale
+	var size := _area()
+	_root.scale = Vector2(s, s)
+	_root.position = Vector2.ZERO
+	_root.size = size
+	# The resource bar along the top or the bottom.
+	_top.position = Vector2(0, 0 if UiSettings.bar_top else size.y - BAR_H)
+	_top.size = Vector2(size.x, BAR_H)
+	_narrow = size.x < 1500.0
+	for ic in _bar_icons:
+		ic.visible = not _narrow
+	_speed_btns[2].visible = not _narrow
+	_speed_btns[3].visible = not _narrow
+	# The build menu at the bottom or the top, clear of the resource bar.
+	var y_top := BAR_H if UiSettings.bar_top else 0.0
+	var y_bot := size.y - (0.0 if UiSettings.bar_top else BAR_H)
+	var bw := minf(size.x - 40.0, 1400.0)
+	if UiSettings.build_bottom:
+		_bottom.position = Vector2((size.x - bw) * 0.5, y_bot - BUILD_H)
+		y_bot -= BUILD_H
+	else:
+		_bottom.position = Vector2((size.x - bw) * 0.5, y_top)
+		y_top += BUILD_H
+	_bottom.size = Vector2(bw, BUILD_H)
+	# The side panels in the band between.
+	_ledger.size = Vector2(410, maxf(y_bot - y_top - 20.0, 200.0))
+	_ledger.position = Vector2(_ledger_x(), y_top + 10.0)
+	_info.position = Vector2(_info_x(), y_top + 10.0)
+	_toast_box.position = Vector2((size.x - 600.0) * 0.5, y_top + 10.0)
+	_options.position = (size - _options.size) * 0.5
+	if _scale_label != null:
+		_scale_label.text = "%d%%" % int(round(s * 100.0))
+
+
+func _ledger_x() -> float:
+	return _area().x - 420.0 if UiSettings.ledger_right else 10.0
+
+
+func _info_x() -> float:
+	var x := 12.0 if UiSettings.panel_left else _area().x - 384.0
+	# Beside the ledger if both are on the same side.
+	if UiSettings.panel_left != UiSettings.ledger_right and _ledger.visible:
+		x += 420.0 if UiSettings.panel_left else -420.0
+	return x
+
+
+## The options panel: interface scale and where its parts sit.
+func _build_options(theme: Theme) -> void:
+	_options = PanelContainer.new()
+	_options.theme = theme
+	_options.add_theme_stylebox_override("panel", UiStyle.panel())
+	_options.custom_minimum_size = Vector2(460, 0)
+	_root.add_child(_options)
+	var v := VBoxContainer.new()
+	v.add_theme_constant_override("separation", 10)
+	_options.add_child(v)
+	v.add_child(UiStyle.heading("Options", 22))
+	var srow := HBoxContainer.new()
+	v.add_child(srow)
+	var sl := Label.new()
+	sl.text = "Interface size"
+	sl.custom_minimum_size = Vector2(170, 0)
+	srow.add_child(sl)
+	var slider := HSlider.new()
+	slider.min_value = 75
+	slider.max_value = 150
+	slider.step = 5
+	slider.value = UiSettings.scale * 100.0
+	slider.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	slider.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+	slider.focus_mode = Control.FOCUS_NONE
+	srow.add_child(slider)
+	_scale_label = Label.new()
+	_scale_label.custom_minimum_size = Vector2(56, 0)
+	_scale_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
+	srow.add_child(_scale_label)
+	slider.drag_ended.connect(func(_c: bool) -> void:
+		UiSettings.scale = slider.value / 100.0
+		_changed_settings())
+	slider.value_changed.connect(func(x: float) -> void: _scale_label.text = "%d%%" % int(x))
+	v.add_child(_choice("Resource bar", ["Top", "Bottom"], 0 if UiSettings.bar_top else 1, func(i: int) -> void: UiSettings.bar_top = i == 0))
+	v.add_child(_choice("Build menu", ["Bottom", "Top"], 0 if UiSettings.build_bottom else 1, func(i: int) -> void: UiSettings.build_bottom = i == 0))
+	v.add_child(_choice("Building panel", ["Left", "Right"], 0 if UiSettings.panel_left else 1, func(i: int) -> void: UiSettings.panel_left = i == 0))
+	v.add_child(_choice("Ledger", ["Right", "Left"], 0 if UiSettings.ledger_right else 1, func(i: int) -> void: UiSettings.ledger_right = i == 0))
+	v.add_child(_choice("Production pops", ["Shown", "Hidden"], 0 if UiSettings.pops else 1, func(i: int) -> void: UiSettings.pops = i == 0))
+	var brow := HBoxContainer.new()
+	brow.add_theme_constant_override("separation", 10)
+	v.add_child(brow)
+	var reset := Button.new()
+	reset.text = "Defaults"
+	reset.focus_mode = Control.FOCUS_NONE
+	reset.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	reset.pressed.connect(func() -> void:
+		UiSettings.reset()
+		_options.queue_free()
+		_build_options(theme)
+		_options.visible = true
+		_changed_settings())
+	brow.add_child(reset)
+	var close := Button.new()
+	close.text = "Close"
+	close.focus_mode = Control.FOCUS_NONE
+	close.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	close.pressed.connect(func() -> void: _options.visible = false)
+	brow.add_child(close)
+	_options.visible = false
+
+
+## A labelled row of toggle buttons, one chosen.
+func _choice(label: String, items: Array, chosen: int, cb: Callable) -> HBoxContainer:
+	var row := HBoxContainer.new()
+	row.add_theme_constant_override("separation", 6)
+	var l := Label.new()
+	l.text = label
+	l.custom_minimum_size = Vector2(170, 0)
+	row.add_child(l)
+	var group := ButtonGroup.new()
+	for i in items.size():
+		var b := Button.new()
+		b.text = items[i]
+		b.toggle_mode = true
+		b.button_group = group
+		b.button_pressed = i == chosen
+		b.focus_mode = Control.FOCUS_NONE
+		b.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		b.pressed.connect(func() -> void:
+			cb.call(i)
+			_changed_settings())
+		row.add_child(b)
+	return row
+
+
+func _changed_settings() -> void:
+	UiSettings.save()
+	_layout()
 
 
 func _icon_rect(tex: Texture2D, size: int, tip: String) -> TextureRect:
@@ -535,6 +706,9 @@ func _unhandled_key_input(event: InputEvent) -> void:
 	if k != null and k.pressed and not k.echo and k.keycode == KEY_L:
 		_ledger_btn.button_pressed = not _ledger_btn.button_pressed
 		get_viewport().set_input_as_handled()
+	elif k != null and k.pressed and not k.echo and k.keycode == KEY_F10:
+		_options.visible = not _options.visible
+		get_viewport().set_input_as_handled()
 
 
 ## The wheel over the cards scrolls them sideways.
@@ -639,6 +813,11 @@ func _process(delta: float) -> void:
 	if not visible or world == null or world.me() == null:
 		return
 	var s := world.me()
+	if _crest_for != s.index:
+		_crest_for = s.index
+		for c in _crest_box.get_children():
+			c.queue_free()
+		_crest_box.add_child(Emblem.shield(s.color, s.emblem, 40.0))
 	_player_btn.text = "  %s  " % s.player_name
 	if not _team_style.has(s.index):
 		_team_style[s.index] = UiStyle.box("button_pressed", 14, Vector4(14, 7, 14, 7), Color(s.color.r * 1.7, s.color.g * 1.7, s.color.b * 1.7))
@@ -654,6 +833,11 @@ func _process(delta: float) -> void:
 	_speed_btns[0].button_pressed = world.paused
 	for i in range(1, 4):
 		_speed_btns[i].button_pressed = not world.paused and is_equal_approx(world.speed, [0.0, 1.0, 2.0, 4.0][i])
+	if _narrow:
+		_speed_btns[1].text = "%dx" % int(world.speed)
+		_speed_btns[1].button_pressed = not world.paused
+	else:
+		_speed_btns[1].text = "1x"
 	_refresh_t -= delta
 	if _refresh_t <= 0.0:
 		_refresh_t = 0.5
@@ -673,14 +857,19 @@ func _process(delta: float) -> void:
 ## The top bar's goods: the stores' fill, food, and the few goods everything is built from.
 func _update_goods(s: Settlement) -> void:
 	for c in _goods_box.get_children():
+		_goods_box.remove_child(c)
 		c.queue_free()
 	var store := _chip(load("res://assets/icons/buildings/warehouse.png"), "%d/%d" % [int(s.stored()), s.storage()], "Goods in store / room in your stores")
 	if s.stored() >= s.storage():
 		store.modulate = Color(1, 0.7, 0.6)
 	_goods_box.add_child(store)
 	_goods_box.add_child(_chip(Goods.icon("bread"), "%d" % int(s.food()), "Food: fish, meat, bread and salt fish"))
-	for id in Goods.TOP:
+	# As many of the key goods as there is room for (the ledger has them all).
+	var room := clampi(int((_area().x - (1250.0 if _narrow else 1330.0)) / 88.0), 0, Goods.TOP.size())
+	for id in Goods.TOP.slice(0, room):
 		_goods_box.add_child(_chip(Goods.icon(id), "%d" % int(s.stock.get(id, 0)), Goods.display_name(id)))
+	# A container grows to fit and never shrinks back by itself: hold the bar to the window.
+	_top.size = Vector2(_area().x, BAR_H)
 
 
 func _build_cards_affordable(s: Settlement) -> void:
@@ -698,10 +887,11 @@ func _update_info() -> void:
 	if rec.is_empty():
 		return
 	if not was:
-		_info.position.x = -380
+		var home := _info_x()
+		_info.position.x = home + (-400.0 if UiSettings.panel_left else 400.0)
 		_info.modulate.a = 0.0
 		var tw := create_tween().set_parallel(true).set_trans(Tween.TRANS_CUBIC).set_ease(Tween.EASE_OUT)
-		tw.tween_property(_info, "position:x", 12.0, 0.25)
+		tw.tween_property(_info, "position:x", home, 0.25)
 		tw.tween_property(_info, "modulate:a", 1.0, 0.2)
 	var d: Dictionary = BuildingDefs.DEFS[rec.id]
 	var s: Settlement = world.settlements[world._settlement_of(rec)]
@@ -738,3 +928,4 @@ func _update_info() -> void:
 	else:
 		_info_bar.value = float(rec.timer) / maxf(float(d.get("cycle", 10.0)), 0.1) * 100.0 if d.has("cycle") else 100.0
 	_demolish.visible = rec.id != "town_hall" and s == world.me()
+	_info.reset_size()

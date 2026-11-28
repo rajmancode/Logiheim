@@ -22,7 +22,8 @@ const EARTH := Color(0.36, 0.28, 0.2)
 const IRON := Color(0.22, 0.22, 0.24)
 const TEAM := Color(1, 1, 1, 0.0)   # tinted to the owner's colour
 const SHINGLE := Color(0.47, 0.38, 0.38)  # weathered wooden shingles (drawn as such by the shader)
-const WINDOW := Color(0.11, 0.07, 0.031)  # a window or door opening: dark by day, lit from within at night
+const WINDOW := Color(0.11, 0.07, 0.031)
+const PAINT := Color(1, 1, 1, 0.5)  # painted in the household's colour (doors, shutters)  # a window or door opening: dark by day, lit from within at night
 
 static var _cache := {}
 
@@ -876,7 +877,7 @@ static func _window(k: Kit, c: Vector3, n: Vector3, w: float, h: float) -> void:
 		k.box(p + f * 0.03 + side * sd * (w * 0.5 + 0.05), Vector3(0.1, h + 0.2, 0.1) if absf(f.z) > 0.5 else Vector3(0.1, h + 0.2, 0.1), DARK_WOOD)
 		k.box(p + f * 0.03 + Vector3(0, sd * (h * 0.5 + 0.05), 0), side.abs() * (w + 0.2) + Vector3(0, 0.1, 0) + f.abs() * 0.1, DARK_WOOD)
 	# The shutter, swung open against the wall.
-	k.box(p + f * 0.06 + side * (w * 0.5 + 0.1 + w * 0.5), side.abs() * w + Vector3(0, h, 0) + f.abs() * 0.05, WOOD * 0.9)
+	k.box(p + f * 0.06 + side * (w * 0.5 + 0.1 + w * 0.5), side.abs() * w + Vector3(0, h, 0) + f.abs() * 0.05, PAINT)
 
 
 ## A rune stone, carved and painted in bands of the owner's colour.
@@ -944,7 +945,7 @@ static func _portal(k: Kit, base: Vector3, h: float, grand: bool) -> void:
 		k.box(base + Vector3(s * hw, h * 0.35, -0.16), Vector3(0.34, 0.12, 0.1), TEAM)
 		k.box(base + Vector3(s * hw, h * 0.75, -0.16), Vector3(0.34, 0.12, 0.1), TEAM)
 	# The leaf: boards, and iron strap hinges with curled ends.
-	k.boards(base + Vector3(-hw + 0.12, 0, 0.04), base + Vector3(hw - 0.12, 0, 0.04), h - 0.05, Vector3(0, 0, -1), DARK_WOOD * 0.9)
+	k.boards(base + Vector3(-hw + 0.12, 0, 0.04), base + Vector3(hw - 0.12, 0, 0.04), h - 0.05, Vector3(0, 0, -1), PAINT)
 	for y in [0.3, 0.72]:
 		k.box(base + Vector3(-0.1, h * y, -0.06), Vector3(hw * 2.0 - 0.5, 0.07, 0.04), IRON)
 		k.cylinder(base + Vector3(hw - 0.42, h * y, -0.04), 0.07, 0.05, IRON, 8, Vector3(0, 0, -1))
@@ -1089,7 +1090,11 @@ static func _longhouse(k: Kit, c: Vector3, length: float, width: float, wall: fl
 	k.box(Vector3(c.x - 0.8, 0.4 + 1.15, dz), Vector3(0.2, 2.3, 0.2), DARK_WOOD)
 	k.box(Vector3(c.x + 0.8, 0.4 + 1.15, dz), Vector3(0.2, 2.3, 0.2), DARK_WOOD)
 	k.box(Vector3(c.x, 0.4 + 2.35, dz - 0.02), Vector3(2.1, 0.25, 0.24), DARK_WOOD)
-	k.box(Vector3(c.x, 0.4 + 1.1, dz + 0.02), Vector3(1.4, 2.2, 0.08), DARK_WOOD * 0.85)
+	k.box(Vector3(c.x, 0.4 + 1.1, dz + 0.02), Vector3(1.4, 2.2, 0.08), PAINT)
+	# Shields hung by the door, in the owner's colour.
+	if length >= 10.0:
+		for sd: float in [-1.0, 1.0]:
+			k.disc(Vector3(c.x + sd * 2.6, 0.4 + wall * 0.55, dz - 0.04), 0.45, TEAM, Vector3(0, 0, -1))
 	for y in [0.6, 1.7]:
 		k.box(Vector3(c.x, 0.4 + y, dz - 0.03), Vector3(1.3, 0.08, 0.04), IRON)
 	k.box(Vector3(c.x, 0.4, dz - 0.5), Vector3(2.2, 0.15, 0.9), STONE)
@@ -1236,6 +1241,8 @@ class Kit:
 	static func material_of(col: Color) -> float:
 		if col.a < 0.25:
 			return 5.0
+		if col.a < 0.75:
+			return 0.0
 		if col.is_equal_approx(WINDOW):
 			return 9.0
 		var mx := maxf(col.r, maxf(col.g, col.b))
@@ -1309,7 +1316,8 @@ class Kit:
 		var ang := atan2(-dir.z, dir.x)
 		var he := h if h_end < 0.0 else h_end
 		var back := -o * 0.03
-		quad(a + back, b + back, b + back + Vector3(0, he, 0), a + back + Vector3(0, h, 0), o, col * 0.3)
+		var back_col := DARK_WOOD * 0.6 if col.a < 0.75 else col * 0.3
+		quad(a + back, b + back, b + back + Vector3(0, he, 0), a + back + Vector3(0, h, 0), o, back_col)
 		var n := maxi(1, int(ceil(run / 0.3)))
 		var w := run / n
 		for i in n:

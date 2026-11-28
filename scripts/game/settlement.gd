@@ -22,6 +22,8 @@ signal changed
 var index := 0
 var player_name := ""
 var color := Color.WHITE
+## The clan's emblem (Emblem): {charge, pattern, metal}; the field is `color`.
+var emblem: Dictionary = {}
 var stock := {}
 var buildings: Array = []     # records, see add_building()
 var population := 4

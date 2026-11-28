@@ -19,6 +19,7 @@ render_mode cull_back, diffuse_burley, specular_schlick_ggx;
 #include "res://shaders/include/environment.gdshaderinc"
 
 uniform vec3 team_color : source_color = vec3(0.8, 0.2, 0.2);
+uniform vec3 accent_color : source_color = vec3(0.62, 0.18, 0.1);   // the household's paint
 uniform float build = 1.0;
 uniform float height = 8.0;
 uniform float flash = 0.0;     // brief highlight (selected, just finished)
@@ -51,7 +52,9 @@ void fragment() {
 		discard;
 	}
 	// (The kit's colours are written in sRGB, like the rest of the palette.)
-	vec3 col = COLOR.a < 0.25 ? team_color : pow(max(COLOR.rgb, vec3(0.0)), vec3(2.2));
+	// Vertex alpha marks what is painted: < 0.25 the owner's colour, < 0.75 the household's own
+	// paint (its brightness kept in rgb), else the kit's own colour.
+	vec3 col = COLOR.a < 0.25 ? team_color : (COLOR.a < 0.75 ? accent_color * COLOR.r : pow(max(COLOR.rgb, vec3(0.0)), vec3(2.2)));
 	vec3 n = normalize(v_lnormal);
 	// The coordinate across a wall (along it horizontally) and up it.
 	float across = abs(n.x) > abs(n.z) ? v_local.z : v_local.x;

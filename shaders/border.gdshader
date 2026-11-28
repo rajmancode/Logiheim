@@ -40,7 +40,8 @@ void fragment() {
 		float glint = pow(0.5 + 0.5 * sin(along * 0.05 - TIME * 1.2), 24.0);
 		float sd = w * 2.6 + 0.6;
 		float stitch_band = 1.0 - smoothstep(w * 0.18, w * 0.35, abs(m - sd));
-		float stitch = stitch_band * step(0.45, fract(along / max(1.4, px * 6.0)));
+		// Fixed spacings along the ground, so nothing crawls along the line as the camera zooms.
+		float stitch = stitch_band * step(0.45, fract(along / 3.0));
 		float reach = max(v_width * (1.0 - v_line) - w, 0.1);
 		float wash = smoothstep(w, w * 2.0, m) * pow(clamp(1.0 - (m - w) / reach, 0.0, 1.0), 1.3) * 0.42;
 		vec3 bright = mix(col * 1.2, vec3(1.0, 0.96, 0.85), 0.2 + 0.55 * glint);
@@ -52,7 +53,7 @@ void fragment() {
 		float w = max(0.22, px * 0.9);
 		float core = 1.0 - smoothstep(w * 0.5, w, abs(m));
 		float rim = 1.0 - smoothstep(w * 1.4, w * 2.1, abs(m));
-		float period = max(2.6, px * 9.0);
+		float period = 6.0;
 		float dash = smoothstep(0.0, 0.08, fract(along / period)) * smoothstep(0.72, 0.62, fract(along / period));
 		float reach = max(v_width * (1.0 - v_line) - w, 0.1);
 		float glow = smoothstep(w, w * 2.5, m) * pow(clamp(1.0 - (m - w) / reach, 0.0, 1.0), 2.0) * 0.3;

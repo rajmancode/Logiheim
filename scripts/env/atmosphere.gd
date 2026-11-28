@@ -24,6 +24,9 @@ const COMPASS := ["N", "NE", "E", "SE", "S", "SW", "W", "NW"]
 @export var weather := Weather.CLEAR
 ## 0 in daylight, 1 at night (also darker under heavy cloud): when torches are lit and windows glow.
 static var night := 0.0
+## Where the wind blows (unit, in the xz plane) and how hard (0..1), for flags.
+static var wind_now_dir := Vector2.RIGHT
+static var wind_now_strength := 0.3
 
 var sun: DirectionalLight3D
 var moon: DirectionalLight3D
@@ -145,6 +148,8 @@ func _update(delta: float) -> void:
 	wind_now = clampf(wind * (0.8 + 0.45 * _noise.get_noise_1d(_t * 2.0 + 100.0)), 0.0, 1.0)
 	wind_time += delta * (0.5 + wind_now * 1.6)
 	var wind_dir := Vector2(cos(wind_angle), sin(wind_angle))
+	wind_now_dir = wind_dir
+	wind_now_strength = wind_now
 	cloud_offset += wind_dir * (6.0 + 30.0 * wind_now) * delta
 
 	# Occasional lightning in heavy rain.

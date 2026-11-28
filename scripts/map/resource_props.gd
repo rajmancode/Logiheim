@@ -324,7 +324,7 @@ static func same_deposit(level: HexLevel, i: int, j: int) -> bool:
 
 ## Outlines round every deposit (shown with the resource icons): a smooth dashed line in the
 ## resource's colour with a faint glow inward (BorderRibbon, style 1).
-static func build_outlines(level: HexLevel, surface: TerrainSurface, sea_y: float) -> MeshInstance3D:
+static func build_outlines(level: HexLevel, surface: TerrainSurface, sea_y: float, lift := 0.6) -> MeshInstance3D:
 	var groups := {}
 	for i in level.cell_count():
 		var kind := level.resource[i]
@@ -341,7 +341,7 @@ static func build_outlines(level: HexLevel, surface: TerrainSurface, sea_y: floa
 		var kind := level.resource[i0]
 		var col: Color = PATCH.get(kind, Color(0.3, 0.6, 1.0)).lightened(0.3)
 		var loops := BorderRibbon.loops(level, cells, func(j: int) -> bool: return level.resource[j] == kind and same_deposit(level, i0, j))
-		BorderRibbon.add_ribbons(data, loops, surface, sea_y, level.hex_size * 0.22, 2.0, 0.6, col)
+		BorderRibbon.add_ribbons(data, loops, surface, sea_y, level.hex_size * 0.22, 2.0, lift, col)
 	if data.verts.is_empty():
 		return null
 	var mi := MeshInstance3D.new()

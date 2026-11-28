@@ -65,6 +65,11 @@ static func load_from_dir(dir: String) -> TerrainSource:
 	if not src._load_heightmap(dir, hm):
 		return null
 
+	var flatten := float(meta.get("flatten", 0.9))
+	if OS.has_environment("LOGIHEIM_FLATTEN"):
+		flatten = float(OS.get_environment("LOGIHEIM_FLATTEN"))
+	src.ease_lowlands(flatten)
+
 	var mask_defs: Dictionary = meta.get("masks", {})
 	for key in mask_defs:
 		var mask := _load_mask(dir.path_join(str(mask_defs[key])))
@@ -73,6 +78,44 @@ static func load_from_dir(dir: String) -> TerrainSource:
 			continue
 		src.masks[str(key)] = mask
 	return src
+
+
+## Gentler lowlands to build on, the mountains kept: land is drawn towards a smoothed copy of
+## itself (about 50 m across), fully in the lowlands and less and less up the slopes, not at all
+## in the top part of the land's height range (the mountains and high hills). The sea floor is
+## left alone and land never sinks below a quarter of its height above the sea, so coastlines,
+## rivers' courses and peaks stay where they were. `strength` 0 leaves the map as it is (map.json
+## "flatten", default 0.9).
+func ease_lowlands(strength: float) -> void:
+	if strength <= 0.0 or heights.is_empty():
+		return
+	var sea := sea_level if sea_level >= 0.0 else 0.3
+	# The land's high point (ignoring stray spikes): the 99.5th percentile.
+	var sample := PackedFloat32Array()
+	var step := maxi(1, heights.size() / 20000)
+	for i in range(0, heights.size(), step):
+		if heights[i] > sea:
+			sample.append(heights[i])
+	if sample.size() < 10:
+		return
+	sample.sort()
+	var top := sample[int(sample.size() * 0.995)]
+	var lo := sea + 0.5 * (top - sea)
+	var hi := sea + 0.8 * (top - sea)
+	# A smoothed copy: shrink and grow back (the image scaler does the blurring, fast).
+	var img := Image.create_from_data(width, height, false, Image.FORMAT_RF, heights.to_byte_array())
+	var metres_per_px := world_size.x / float(width)
+	var f := clampi(int(round(50.0 / metres_per_px)), 2, 64)
+	img.resize(maxi(2, width / f), maxi(2, height / f), Image.INTERPOLATE_BILINEAR)
+	img.resize(width, height, Image.INTERPOLATE_CUBIC)
+	var blur := img.get_data().to_float32_array()
+	for i in heights.size():
+		var h := heights[i]
+		if h <= sea:
+			continue
+		var b := blur[i]
+		var k := strength * (1.0 - smoothstep(lo, hi, maxf(h, b)))
+		heights[i] = maxf(lerpf(h, b, k), sea + 0.25 * (h - sea))
 
 
 func uv_of(p: Vector2) -> Vector2:

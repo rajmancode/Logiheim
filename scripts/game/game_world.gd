@@ -73,6 +73,7 @@ func start(map: HexMap, players: Array, sites: Array) -> void:
 	for k in players.size():
 		var p: Dictionary = players[k]
 		var s := Settlement.new(k, String(p.name), p.color)
+		s.emblem = p.get("emblem", Emblem.default_for(k))
 		settlements.append(s)
 		var site: Dictionary = sites[p.site]
 		var cell := lv().nearest_cell(site.p)

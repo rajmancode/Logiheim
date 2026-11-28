@@ -91,6 +91,14 @@ Any mask you leave out falls back to a height or slope rule in `HexMapSettings` 
 
 Godot only packs files it recognises as resources, so add `*.json, *.r16, *.r32` to **Export → Resources → Filters to export non-resource files**. PNG/EXR masks are imported as textures and packed automatically.
 
+## Gentler lowlands
+
+When a map loads its lowlands are eased into gentler ground for building (TerrainSource.ease_lowlands):
+land is drawn towards a smoothed copy of itself (about 50 m across), fully in the lowlands and
+less and less up the slopes, not at all in the top fifth of the land's height range, so
+mountains and high hills keep their shape. The sea floor and coastlines stay put. Set
+`"flatten"` in map.json to change how much (0 = none, default 0.9).
+
 ## Game icons
 
 The settlement icons do not come from Gaea; they are drawn from the game's own models. After
