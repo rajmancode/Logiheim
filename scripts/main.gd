@@ -165,6 +165,8 @@ func _on_landings_chosen(players: Array) -> void:
 	if not players.is_empty():
 		_on_site_focused(players[0].site)
 	game_world.start(hex_map, players, landing_sites.sites)
+	atmosphere.day = 0
+	game_hud.atmosphere = atmosphere
 	game_hud.open(game_world)
 	hud_panel.visible = false
 

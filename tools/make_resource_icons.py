@@ -198,8 +198,8 @@ def picture_badge(group: str, render_path: Path, out_path: Path) -> None:
     for y in range(SS):
         for x in range(SS):
             r = min(1.0, math.hypot(x - SS * 0.5, y - SS * 0.42) / (SS * 0.62))
-            k = 1.25 - 0.75 * r * r
-            lift = 60 * (1 - r) ** 2
+            k = 0.92 - 0.5 * r * r
+            lift = 22 * (1 - r) ** 2
             px[x, y] = tuple(min(255, int(c * k + lift)) for c in brgb) + (255,)
     pic = Image.open(render_path).convert("RGBA")
     box = pic.getbbox() or (0, 0, pic.width, pic.height)
@@ -207,9 +207,9 @@ def picture_badge(group: str, render_path: Path, out_path: Path) -> None:
     # Livelier picture, with a white sticker edge and a soft shadow so it reads on any colour.
     a_ch = pic.getchannel("A")
     rgbp = pic.convert("RGB")
-    rgbp = ImageEnhance.Brightness(rgbp).enhance(1.12)
-    rgbp = ImageEnhance.Contrast(rgbp).enhance(1.2)
-    rgbp = ImageEnhance.Color(rgbp).enhance(1.3)
+    rgbp = ImageEnhance.Brightness(rgbp).enhance(1.0)
+    rgbp = ImageEnhance.Contrast(rgbp).enhance(1.1)
+    rgbp = ImageEnhance.Color(rgbp).enhance(1.12)
     pic = rgbp.convert("RGBA")
     pic.putalpha(a_ch)
     fit = SS * 0.78
@@ -222,7 +222,7 @@ def picture_badge(group: str, render_path: Path, out_path: Path) -> None:
     shade = alpha.filter(ImageFilter.MaxFilter(9)).filter(ImageFilter.GaussianBlur(10))
     layer.paste(Image.new("RGBA", (SS, SS), (0, 0, 0, 150)), (6, 10), shade)
     edge = alpha.point(lambda v: 255 if v > 90 else 0).filter(ImageFilter.MaxFilter(7))
-    layer.paste(Image.new("RGBA", (SS, SS), (255, 252, 240, 215)), (0, 0), edge)
+    layer.paste(Image.new("RGBA", (SS, SS), (240, 230, 205, 140)), (0, 0), edge)
     layer.paste(pic, at, pic)
     face = Image.alpha_composite(back, layer)
     out = Image.new("RGBA", (SS, SS), (0, 0, 0, 0))

@@ -24,6 +24,15 @@ extends CanvasLayer
 ##   parts for the window size and the chosen placements.
 
 var world: GameWorld
+var atmosphere: Atmosphere
+var _clock: PanelContainer
+var _opt_btn: Button
+var _dial: ClockDial
+var _clock_time: Label
+var _clock_date: Label
+var _clock_season: Label
+var _clock_day := -1
+const CLOCK_W := 200.0
 
 var _player_btn: Button
 var _people: Label
@@ -168,6 +177,7 @@ func _ready() -> void:
 		_speed_btns.append(b)
 	var opt := Button.new()
 	opt.text = "Options"
+	_opt_btn = opt
 	opt.focus_mode = Control.FOCUS_NONE
 	opt.tooltip_text = "Interface size and layout (F10)"
 	opt.add_theme_font_size_override("font_size", 13)
@@ -258,6 +268,42 @@ func _ready() -> void:
 	iv.add_child(_demolish)
 	_info.visible = false
 
+	# --- Clock and calendar -------------------------------------------------------------------
+	_clock = PanelContainer.new()
+	_clock.theme = theme
+	_clock.add_theme_stylebox_override("panel", UiStyle.panel())
+	_clock.custom_minimum_size = Vector2(CLOCK_W, 0)
+	_clock.mouse_filter = Control.MOUSE_FILTER_PASS
+	_clock.set_meta("tipfn", _clock_tip)
+	_root.add_child(_clock)
+	var cv := VBoxContainer.new()
+	cv.add_theme_constant_override("separation", 0)
+	cv.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_clock.add_child(cv)
+	_dial = ClockDial.new()
+	_dial.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
+	cv.add_child(_dial)
+	_clock_time = Label.new()
+	_clock_time.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	_clock_time.add_theme_font_override("font", UiStyle.font(900))
+	_clock_time.add_theme_font_size_override("font_size", 22)
+	_clock_time.add_theme_color_override("font_color", UiStyle.GOLD)
+	_clock_time.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	UiStyle.gild(_clock_time)
+	cv.add_child(_clock_time)
+	_clock_date = Label.new()
+	_clock_date.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	_clock_date.add_theme_font_size_override("font_size", 12)
+	_clock_date.add_theme_color_override("font_color", Color(1.0, 0.93, 0.76))
+	_clock_date.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	cv.add_child(_clock_date)
+	_clock_season = Label.new()
+	_clock_season.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	_clock_season.add_theme_font_size_override("font_size", 11)
+	_clock_season.add_theme_color_override("font_color", Color(0.78, 0.7, 0.52))
+	_clock_season.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	cv.add_child(_clock_season)
+
 	# --- Tooltip over a resource hex -----------------------------------------------------------
 	_res_tip = PanelContainer.new()
 	_res_tip.theme = theme
@@ -333,10 +379,25 @@ func _chip(tex: Texture2D, text: String, tip: String) -> PanelContainer:
 	h.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	c.add_child(h)
 	if tex != null:
-		h.add_child(_icon_rect(tex, 24, ""))
+		# The coin sits on a small lit medallion so it stands off the dark bar.
+		var med := PanelContainer.new()
+		var st := StyleBoxFlat.new()
+		st.bg_color = Color(0.93, 0.85, 0.66)
+		st.border_color = Color(0.98, 0.84, 0.48)
+		st.set_border_width_all(2)
+		st.set_corner_radius_all(32)
+		st.set_content_margin_all(1)
+		st.shadow_color = Color(1.0, 0.8, 0.4, 0.35)
+		st.shadow_size = 3
+		med.add_theme_stylebox_override("panel", st)
+		med.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		med.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+		med.add_child(_icon_rect(tex, 26, ""))
+		h.add_child(med)
 	var l := Label.new()
 	l.text = text
 	l.add_theme_font_size_override("font_size", 14)
+	l.add_theme_color_override("font_color", Color(1.0, 0.94, 0.78))
 	l.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	h.add_child(l)
 	return c
@@ -394,8 +455,14 @@ func _layout() -> void:
 		y_top += BUILD_H
 	_bottom.size = Vector2(bw, BUILD_H)
 	# The side panels in the band between.
-	_ledger.size = Vector2(410, maxf(y_bot - y_top - 20.0, 200.0))
-	_ledger.position = Vector2(_ledger_x(), y_top + 10.0)
+	var clock_right := UiSettings.panel_left
+	_clock.reset_size()
+	_clock.position = Vector2(size.x - _clock.size.x - 10.0 if clock_right else 10.0, y_top + 8.0)
+	var ledger_top := y_top
+	if clock_right == UiSettings.ledger_right:
+		ledger_top += _clock.get_combined_minimum_size().y + 8.0
+	_ledger.size = Vector2(410, maxf(y_bot - ledger_top - 20.0, 200.0))
+	_ledger.position = Vector2(_ledger_x(), ledger_top + 10.0)
 	_info.position = Vector2(_info_x(), y_top + 10.0)
 	_army_panel.position = _info.position
 	_toast_box.position = Vector2((size.x - 600.0) * 0.5, y_top + 10.0)
@@ -927,6 +994,14 @@ func _process(delta: float) -> void:
 	_content.modulate = Color(1, 0.65, 0.55) if s.contentment < 0.3 else (Color(0.75, 1, 0.7) if s.contentment > 0.7 else Color.WHITE)
 	_influence.text = "%d (+%.1f/s)" % [int(s.influence), s.influence_rate()]
 	_expand.text = "Expand (%d)" % s.expand_cost()
+	_opt_btn.text = "Options"
+	# Too little room across for the whole bar: shorter words, then the name to its initial.
+	var room := _area().x - 4.0
+	if _top.get_combined_minimum_size().x > room:
+		_opt_btn.text = "Opt."
+		_expand.text = "Exp. %d" % s.expand_cost()
+	if _top.get_combined_minimum_size().x > room:
+		_player_btn.text = "  %s  " % s.player_name.left(1)
 	_expand.disabled = s.influence < s.expand_cost()
 	_speed_btns[0].button_pressed = world.paused
 	for i in range(1, 4):
@@ -949,6 +1024,7 @@ func _process(delta: float) -> void:
 	else:
 		_hint.text = "Click a building to see what it's doing. L: ledger."
 	_update_res_tip(delta)
+	_update_clock()
 	if _toast_t > 0.0:
 		_toast_t -= delta
 		_toast_box.modulate.a = clampf(_toast_t, 0.0, 1.0)
@@ -957,7 +1033,7 @@ func _process(delta: float) -> void:
 ## The top bar's goods: the stores' fill, food, and the few goods everything is built from.
 func _update_goods(s: Settlement) -> void:
 	# As many of the key goods as there is room for (the ledger has them all).
-	var room := clampi(int((_area().x - (1250.0 if _narrow else 1330.0)) / 88.0), 0, Goods.TOP.size())
+	var room := clampi(int((_area().x - (1290.0 if _narrow else 1400.0)) / 92.0), 0, Goods.TOP.size())
 	var ids: Array = ["_store", "_food"] + Goods.TOP.slice(0, room)
 	# The chips stay put (so a tooltip over one isn't torn down); only their numbers change.
 	if ids != _goods_ids:
@@ -1143,6 +1219,10 @@ func _update_res_tip(delta: float) -> void:
 			want = "g" + String(c.get_meta("good"))
 			anchor_ctl = c
 			break
+		if c.has_meta("tipfn"):
+			want = "f%d" % c.get_instance_id()
+			anchor_ctl = c
+			break
 		c = c.get_parent() as Control
 	if want == "" and hov == null:
 		var cell := world.hover_cell
@@ -1185,7 +1265,12 @@ func _update_res_tip(delta: float) -> void:
 
 
 func _fill_tip(key: String) -> void:
-	if key.begins_with("g"):
+	_res_tip_icon.visible = not key.begins_with("f")
+	if key.begins_with("f"):
+		var ctl := instance_from_id(int(key.substr(1))) as Control
+		if ctl != null and ctl.has_meta("tipfn"):
+			_res_tip_text.text = (ctl.get_meta("tipfn") as Callable).call()
+	elif key.begins_with("g"):
 		var g := key.substr(1)
 		_res_tip_icon.texture = load("res://assets/icons/buildings/warehouse.png") if g == "_store" else Goods.icon("bread" if g == "_food" else g)
 		_res_tip_text.text = _good_tip(g)
@@ -1256,6 +1341,42 @@ func _hide_tip() -> void:
 
 
 ## A good's tooltip: what is in store and how fast it comes and goes, and who makes and uses it.
+func _update_clock() -> void:
+	if atmosphere == null:
+		_clock.visible = false
+		return
+	_clock.visible = true
+	# Kept to its corner as its text changes width.
+	_clock.reset_size()
+	if UiSettings.panel_left:
+		_clock.position.x = _area().x - _clock.size.x - 10.0
+	_dial.set_time(atmosphere.time_of_day, atmosphere.season())
+	_clock_time.text = atmosphere.clock_text()
+	if _clock_day != atmosphere.day:
+		var first := _clock_day < 0
+		_clock_day = atmosphere.day
+		_clock_date.text = atmosphere.date_text()
+		if not first:
+			# A new day: the date glints.
+			_clock_date.modulate = Color(2.0, 1.7, 1.0)
+			create_tween().tween_property(_clock_date, "modulate", Color.WHITE, 1.2)
+	_clock_season.text = "%s · %s · %s" % [Atmosphere.SEASONS[atmosphere.season()], atmosphere.part_of_day(), Atmosphere.WEATHER_NAMES[atmosphere.weather]]
+
+
+func _clock_tip() -> String:
+	var a := atmosphere
+	var lines := PackedStringArray()
+	lines.append("[b]%s, %s[/b]" % [a.part_of_day(), a.clock_text()])
+	lines.append("%s: day %d of %s, year %d" % [Atmosphere.SEASONS[a.season()], a.day_of_month(), a.month_name(), a.year()])
+	lines.append("%d days since the landing" % (a.day + 1))
+	lines.append("Weather: %s, wind %s" % [Atmosphere.WEATHER_NAMES[a.weather].to_lower(), a.wind_text()])
+	if a.flood > 0.05:
+		lines.append("[color=#2f5a8a]Rivers in flood (%d%%)[/color]" % roundi(a.flood * 100.0))
+	var real := a.day_length_minutes / maxf(Atmosphere.time_scale, 0.001)
+	lines.append("[color=#8a6a40]%s[/color]" % ("Time stands still while paused" if Atmosphere.time_scale <= 0.0 else "A day passes in %s at this speed; a month is %d days" % [("%.0f min" % real) if real >= 1.0 else ("%.0f s" % (real * 60.0)), Atmosphere.DAYS_PER_MONTH]))
+	return "\n".join(lines)
+
+
 func _good_tip(g: String) -> String:
 	var s := world.me()
 	var lines := PackedStringArray()

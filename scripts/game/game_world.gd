@@ -1005,7 +1005,9 @@ func _border_mesh(s: Settlement) -> MeshInstance3D:
 
 func _process(delta: float) -> void:
 	if not running:
+		Atmosphere.time_scale = 1.0
 		return
+	Atmosphere.time_scale = 0.0 if paused else speed
 	if _territory_dirty:
 		_update_territory()
 	if _ground_dirty:

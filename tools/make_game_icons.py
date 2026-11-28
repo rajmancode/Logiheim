@@ -87,13 +87,17 @@ def coin(size, col, render=None):
     ring = int(S * 0.075)
     face_mask = Image.new("L", (S, S), 0)
     ImageDraw.Draw(face_mask).ellipse((m + ring, m + ring, S - m - ring, S - m - ring), fill=255)
-    face = radial(S, mix(col, (255, 255, 255), 0.35), mix(col, (30, 28, 26), 0.45))
+    face = radial(S, mix(col, (255, 248, 230), 0.55), mix(col, (60, 54, 46), 0.25))
     out.paste(face, (0, 0), face_mask)
     # A thin bright edge on the ring, catching the light at the top.
     d = ImageDraw.Draw(out)
     lw = max(2, S // 64)
     d.arc((m + lw, m + lw, S - m - lw, S - m - lw), 200, 340, fill=mix(col, (255, 255, 255), 0.6) + (255,), width=lw)
     d.ellipse((m + ring, m + ring, S - m - ring, S - m - ring), outline=mix(col, (0, 0, 0), 0.55) + (255,), width=lw)
+    # A gilded outer rim, so the coin stands off dark panels and its own colour.
+    gw = max(3, int(S * 0.035))
+    d.ellipse((m, m, S - m, S - m), outline=(236, 204, 128, 255), width=gw)
+    d.arc((m, m, S - m, S - m), 200, 340, fill=(255, 240, 196, 255), width=gw)
     out = out.resize((size, size), Image.LANCZOS)
     if render is not None:
         inner = int(size * 0.70)

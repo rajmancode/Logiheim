@@ -18,6 +18,15 @@ const COMPASS := ["N", "NE", "E", "SE", "S", "SW", "W", "NW"]
 
 ## Hours, 0..24.
 @export var time_of_day := 10.0
+## Days since the landing; with DAYS_PER_MONTH and the Norse months, the calendar.
+var day := 0
+## How fast game time runs (the game's speed; 0 while paused). The day cycle follows it.
+static var time_scale := 1.0
+## The old Norse months, from Harpa (the first of summer, mid-April) on: [name, season].
+const MONTHS := [["Harpa", 0], ["Skerpla", 0], ["Sólmánuður", 1], ["Heyannir", 1], ["Tvímánuður", 1],
+	["Haustmánuður", 2], ["Gormánuður", 2], ["Ýlir", 2], ["Mörsugur", 3], ["Þorri", 3], ["Góa", 3], ["Einmánuður", 0]]
+const SEASONS := ["Spring", "Summer", "Autumn", "Winter"]
+const DAYS_PER_MONTH := 3
 ## Real minutes for one in-game day.
 @export var day_length_minutes := 8.0
 @export var cycle_running := true
@@ -94,7 +103,62 @@ func cycle_weather() -> void:
 
 
 func shift_time(hours: float) -> void:
-	time_of_day = fposmod(time_of_day + hours, 24.0)
+	_advance(hours)
+
+
+## Moves the clock on, turning the calendar over at midnight.
+func _advance(hours: float) -> void:
+	var t := time_of_day + hours
+	day = maxi(day + int(floor(t / 24.0)), 0)
+	time_of_day = fposmod(t, 24.0)
+
+
+func month() -> int:
+	return (day / DAYS_PER_MONTH) % MONTHS.size()
+
+
+func day_of_month() -> int:
+	return day % DAYS_PER_MONTH + 1
+
+
+func year() -> int:
+	return day / (DAYS_PER_MONTH * MONTHS.size()) + 1
+
+
+func season() -> int:
+	return int(MONTHS[month()][1])
+
+
+func month_name() -> String:
+	return String(MONTHS[month()][0])
+
+
+func clock_text() -> String:
+	var hh := int(time_of_day)
+	return "%02d:%02d" % [hh, int((time_of_day - hh) * 60.0)]
+
+
+func date_text() -> String:
+	return "Day %d of %s, year %d" % [day_of_month(), month_name(), year()]
+
+
+## The time of day as people would say it.
+func part_of_day() -> String:
+	var h := time_of_day
+	if h < 4.5: return "Deep night"
+	if h < 6.5: return "Dawn"
+	if h < 11.0: return "Morning"
+	if h < 13.5: return "Midday"
+	if h < 17.5: return "Afternoon"
+	if h < 20.0: return "Evening"
+	if h < 22.0: return "Dusk"
+	return "Night"
+
+
+func wind_text() -> String:
+	var from := -Vector2(cos(wind_angle), sin(wind_angle))
+	var bearing := fposmod(rad_to_deg(atan2(from.x, -from.y)), 360.0)
+	return "%d km/h from the %s" % [roundi(5.0 + wind_now * 60.0), COMPASS[int(round(bearing / 45.0)) % 8]]
 
 
 ## One HUD line: time, weather and wind.
@@ -130,7 +194,7 @@ func _process(delta: float) -> void:
 func _update(delta: float) -> void:
 	_t += delta
 	if cycle_running and day_length_minutes > 0.0:
-		time_of_day = fposmod(time_of_day + delta * 24.0 / (day_length_minutes * 60.0), 24.0)
+		_advance(delta * time_scale * 24.0 / (day_length_minutes * 60.0))
 
 	var target: Dictionary = WEATHER_PRESETS[weather]
 	var k := 1.0 - exp(-delta * 0.35)
